@@ -4,20 +4,22 @@ import semantic_world.spatial_types.spatial_types as cas
 import numpy as np
 import pytest
 import urdf_parser_py.urdf as up
-from giskardpy.data_types.data_types import PrefixName, Derivatives, ColorRGBA
 from giskardpy.god_map import god_map
 from giskardpy.middleware import set_middleware
 from giskardpy.model.collision_avoidance_config import CollisionAvoidanceConfig
 from giskardpy.model.collision_avoidance_config import DefaultCollisionAvoidanceConfig
 from giskardpy.model.collision_world_syncer import CollisionCheckerLib
-from giskardpy.model.joints import OmniDrive, PrismaticJoint
-from giskardpy.model.links import Link, BoxGeometry
 from giskardpy.model.utils import hacky_urdf_parser_fix
-from giskardpy.model.world import WorldTree
 from giskardpy.model.world_config import EmptyWorld, WorldWithOmniDriveRobot
 from giskardpy.qp.qp_controller_config import QPControllerConfig
 from giskardpy.user_interface import GiskardWrapper
 from giskardpy.utils.utils import suppress_stderr
+from semantic_world.connections import FixedConnection, PrismaticConnection, UnitVector, OmniDrive
+from semantic_world.geometry import Box, Scale, Color
+from semantic_world.prefixed_name import PrefixedName
+from semantic_world.spatial_types.derivatives import Derivatives
+from semantic_world.world import World
+from semantic_world.world_entity import Body
 
 
 class PR2CollisionAvoidance(CollisionAvoidanceConfig):
@@ -87,7 +89,7 @@ def visualize():
 
 
 @pytest.fixture()
-def empty_world() -> WorldTree:
+def empty_world() -> World:
     config = EmptyWorld()
     config.setup()
     god_map.tmp_folder = 'tmp'
@@ -95,102 +97,86 @@ def empty_world() -> WorldTree:
 
 
 @pytest.fixture()
-def fixed_box_world() -> WorldTree:
+def fixed_box_world() -> World:
     class WorldWithFixedBox(EmptyWorld):
-        box_name = PrefixName('box')
-        joint_name = PrefixName('box_joint')
+        box_name = PrefixedName('box')
+        joint_name = PrefixedName('box_joint')
 
         def setup(self) -> None:
             super().setup()
             with self.world.modify_world():
-                box = Link(self.box_name)
-                box_geometry = BoxGeometry(1, 1, 1, color=ColorRGBA(1, 0, 0, 1))
-                box.collisions.append(box_geometry)
-                box.visuals.append(box_geometry)
-                self.world.add_link(box)
-                self.world.add_fixed_joint(parent_link=self.world.root_link, child_link=box, joint_name=self.joint_name)
+                box = Body(self.box_name)
+                box_geometry = Box(scale=Scale(1, 1, 1), color=Color(1, 0, 0, 1))
+                box.collision.append(box_geometry)
+                box.visual.append(box_geometry)
+                connection = FixedConnection(parent=self.world.root, child=box)
+                # self.world.add_body(box)
+                self.world.add_connection(connection)
 
     config = WorldWithFixedBox()
-    collision_avoidance = DefaultCollisionAvoidanceConfig()
+    # collision_avoidance = DefaultCollisionAvoidanceConfig()
     config.setup()
-    collision_avoidance.setup()
+    # collision_avoidance.setup()
     return config.world
 
 
 @pytest.fixture()
-def box_world_prismatic() -> WorldTree:
+def box_world_prismatic() -> World:
     class WorldWithPrismaticBox(EmptyWorld):
-        box_name = PrefixName('box')
-        joint_name = PrefixName('box_joint')
+        box_name = PrefixedName('box')
 
         def setup(self) -> None:
             super().setup()
             with self.world.modify_world():
-                box = Link(self.box_name)
-                box_geometry = BoxGeometry(1, 1, 1, color=ColorRGBA(1, 0, 0, 1))
-                box.collisions.append(box_geometry)
-                box.visuals.append(box_geometry)
-                self.world.add_link(box)
-                joint = PrismaticJoint(name=self.joint_name,
-                                       free_variable_name=self.joint_name,
-                                       parent_link_name=self.world.root_link_name,
-                                       child_link_name=self.box_name,
-                                       axis=(1, 0, 0),
-                                       lower_limits={Derivatives.position: -1,
-                                                     Derivatives.velocity: -1,
-                                                     Derivatives.acceleration: -np.inf,
-                                                     Derivatives.jerk: -30},
-                                       upper_limits={Derivatives.position: 1,
-                                                     Derivatives.velocity: 1,
-                                                     Derivatives.acceleration: np.inf,
-                                                     Derivatives.jerk: 30})
-                self.world.add_joint(joint)
+                box = Body(self.box_name)
+                box_geometry = Box(scale=Scale(1, 1, 1), color=Color(1, 0, 0, 1))
+                box.collision.append(box_geometry)
+                box.visual.append(box_geometry)
+                self.world.add_body(box)
+                joint = PrismaticConnection(parent=self.world.root, child=box, axis=UnitVector(1, 0, 0))
+                joint.dof.set_lower_limit(Derivatives.position, -1)
+                joint.dof.set_lower_limit(Derivatives.velocity, -1)
+                joint.dof.set_upper_limit(Derivatives.position, 1)
+                joint.dof.set_upper_limit(Derivatives.velocity, 1)
+                self.world.add_connection(joint)
 
     config = WorldWithPrismaticBox()
     collision_avoidance = DefaultCollisionAvoidanceConfig()
     config.setup()
     collision_avoidance.setup()
-    assert config.joint_name in config.world.joints
-    assert config.box_name in config.world.links
+    assert config.box_name in config.world.bodies
     return config.world
 
 
 @pytest.fixture()
 def box_world():
     class WorldWithOmniBox(EmptyWorld):
-        box_name = PrefixName('box')
-        joint_name = PrefixName('box_joint')
+        box_name = PrefixedName('box')
+        joint_name = PrefixedName('box_joint')
 
         def setup(self) -> None:
             super().setup()
             with self.world.modify_world():
-                box = Link(self.box_name)
-                box_geometry = BoxGeometry(1, 1, 1, color=ColorRGBA(1, 0, 0, 1))
-                box.collisions.append(box_geometry)
-                box.visuals.append(box_geometry)
-                self.world.add_link(box)
-                joint = OmniDrive(name=self.joint_name,
-                                  parent_link_name=self.world.root_link_name,
-                                  child_link_name=self.box_name,
-                                  translation_limits={Derivatives.velocity: 1,
-                                                      Derivatives.acceleration: np.inf,
-                                                      Derivatives.jerk: 30},
-                                  rotation_limits={Derivatives.velocity: 1,
-                                                   Derivatives.acceleration: np.inf,
-                                                   Derivatives.jerk: 30})
-                self.world.add_joint(joint)
+                box = Body(self.box_name)
+                box_geometry = Box(scale=Scale(1, 1, 1), color=Color(1, 0, 0, 1))
+                box.collision.append(box_geometry)
+                box.visual.append(box_geometry)
+                self.world.add_body(box)
+                joint = OmniDrive(parent=self.world.root, child=box,
+                                  translation_velocity_limits=1,
+                                  rotation_velocity_limits=1)
+                self.world.add_connection(joint)
 
     config = WorldWithOmniBox()
     collision_avoidance = DefaultCollisionAvoidanceConfig()
     config.setup()
     collision_avoidance.setup()
-    assert config.joint_name in config.world.joints
-    assert config.box_name in config.world.links
+    assert config.box_name in config.world.bodies
     return config.world
 
 
 @pytest.fixture()
-def simple_two_arm_world() -> WorldTree:
+def simple_two_arm_world() -> World:
     urdf = open('urdfs/simple_two_arm_robot.urdf', 'r').read()
     config = WorldWithOmniDriveRobot(urdf)
     with config.world.modify_world():
@@ -202,29 +188,29 @@ def simple_two_arm_world() -> WorldTree:
 
 
 @pytest.fixture()
-def pr2_world() -> WorldTree:
+def pr2_world() -> World:
     urdf = open('urdfs/pr2.urdf', 'r').read()
     config = WorldWithOmniDriveRobot(urdf=urdf)
     with config.world.modify_world():
         config.setup()
-    config.world.register_controlled_joints([PrefixName('torso_lift_joint', 'pr2'),
-                                             PrefixName('head_pan_joint', 'pr2'),
-                                             PrefixName('head_tilt_joint', 'pr2'),
-                                             PrefixName('r_shoulder_pan_joint', 'pr2'),
-                                             PrefixName('r_shoulder_lift_joint', 'pr2'),
-                                             PrefixName('r_upper_arm_roll_joint', 'pr2'),
-                                             PrefixName('r_forearm_roll_joint', 'pr2'),
-                                             PrefixName('r_elbow_flex_joint', 'pr2'),
-                                             PrefixName('r_wrist_flex_joint', 'pr2'),
-                                             PrefixName('r_wrist_roll_joint', 'pr2'),
-                                             PrefixName('l_shoulder_pan_joint', 'pr2'),
-                                             PrefixName('l_shoulder_lift_joint', 'pr2'),
-                                             PrefixName('l_upper_arm_roll_joint', 'pr2'),
-                                             PrefixName('l_forearm_roll_joint', 'pr2'),
-                                             PrefixName('l_elbow_flex_joint', 'pr2'),
-                                             PrefixName('l_wrist_flex_joint', 'pr2'),
-                                             PrefixName('l_wrist_roll_joint', 'pr2'),
-                                             PrefixName('brumbrum', 'pr2')])
+    config.world.register_controlled_joints([PrefixedName('torso_lift_joint', 'pr2'),
+                                             PrefixedName('head_pan_joint', 'pr2'),
+                                             PrefixedName('head_tilt_joint', 'pr2'),
+                                             PrefixedName('r_shoulder_pan_joint', 'pr2'),
+                                             PrefixedName('r_shoulder_lift_joint', 'pr2'),
+                                             PrefixedName('r_upper_arm_roll_joint', 'pr2'),
+                                             PrefixedName('r_forearm_roll_joint', 'pr2'),
+                                             PrefixedName('r_elbow_flex_joint', 'pr2'),
+                                             PrefixedName('r_wrist_flex_joint', 'pr2'),
+                                             PrefixedName('r_wrist_roll_joint', 'pr2'),
+                                             PrefixedName('l_shoulder_pan_joint', 'pr2'),
+                                             PrefixedName('l_shoulder_lift_joint', 'pr2'),
+                                             PrefixedName('l_upper_arm_roll_joint', 'pr2'),
+                                             PrefixedName('l_forearm_roll_joint', 'pr2'),
+                                             PrefixedName('l_elbow_flex_joint', 'pr2'),
+                                             PrefixedName('l_wrist_flex_joint', 'pr2'),
+                                             PrefixedName('l_wrist_roll_joint', 'pr2'),
+                                             PrefixedName('brumbrum', 'pr2')])
     return config.world
 
 
@@ -238,25 +224,25 @@ def giskard_pr2() -> GiskardWrapper:
 
 
 class TestWorld:
-    def test_empty_world(self, empty_world: WorldTree):
-        assert len(empty_world.joints) == 0
+    def test_empty_world(self, empty_world: World):
+        assert len(empty_world.connections) == 0
 
-    def test_fixed_box_world(self, fixed_box_world: WorldTree):
-        assert len(fixed_box_world.joints) == 1
-        assert len(fixed_box_world.links) == 2
-        visualize()
+    def test_fixed_box_world(self, fixed_box_world: World):
+        assert len(fixed_box_world.connections) == 1
+        assert len(fixed_box_world.bodies) == 2
+        # visualize()
 
-    def test_simple_two_arm_robot(self, simple_two_arm_world: WorldTree):
-        simple_two_arm_world.state[PrefixName('prismatic_joint', 'muh')].position = 0.4
-        simple_two_arm_world.state[PrefixName('r_joint_1', 'muh')].position = 0.2
-        simple_two_arm_world.state[PrefixName('r_joint_2', 'muh')].position = 0.2
-        simple_two_arm_world.state[PrefixName('r_joint_3', 'muh')].position = 0.2
-        simple_two_arm_world.state[PrefixName('l_joint_1', 'muh')].position = 0.2
-        simple_two_arm_world.state[PrefixName('l_joint_2', 'muh')].position = 0.2
-        simple_two_arm_world.state[PrefixName('l_joint_3', 'muh')].position = 0.2
-        visualize()
+    def test_simple_two_arm_robot(self, simple_two_arm_world: World):
+        simple_two_arm_world.state[PrefixedName('prismatic_joint', 'muh')].position = 0.4
+        simple_two_arm_world.state[PrefixedName('r_joint_1', 'muh')].position = 0.2
+        simple_two_arm_world.state[PrefixedName('r_joint_2', 'muh')].position = 0.2
+        simple_two_arm_world.state[PrefixedName('r_joint_3', 'muh')].position = 0.2
+        simple_two_arm_world.state[PrefixedName('l_joint_1', 'muh')].position = 0.2
+        simple_two_arm_world.state[PrefixedName('l_joint_2', 'muh')].position = 0.2
+        simple_two_arm_world.state[PrefixedName('l_joint_3', 'muh')].position = 0.2
+        # visualize()
 
-    def test_compute_fk(self, box_world_prismatic: WorldTree):
+    def test_compute_fk(self, box_world_prismatic: World):
         joint_name = box_world_prismatic.joint_names[0]
         box_name = box_world_prismatic.link_names[-1]
 
@@ -267,7 +253,7 @@ class TestWorld:
         assert fk[0] == 1
         visualize()
 
-    # def test_compute_self_collision_matrix(self, pr2_world: WorldTree):
+    # def test_compute_self_collision_matrix(self, pr2_world: World):
     #     disabled_links = {pr2_world.search_for_link_name('br_caster_l_wheel_link'),
     #                       pr2_world.search_for_link_name('fr_caster_l_wheel_link')}
     #     reference_collision_scene = BetterPyBulletSyncer()
@@ -281,7 +267,7 @@ class TestWorld:
     #     assert actual_reasons == reference_reasons
     #     assert reference_disabled_links == disabled_links
 
-    def test_compute_chain_reduced_to_controlled_joints(self, simple_two_arm_world: WorldTree):
+    def test_compute_chain_reduced_to_controlled_joints(self, simple_two_arm_world: World):
         r_gripper_tool_frame = simple_two_arm_world.search_for_link_name('r_eef')
         l_gripper_tool_frame = simple_two_arm_world.search_for_link_name('l_eef')
         link_a, link_b = simple_two_arm_world.compute_chain_reduced_to_controlled_joints(r_gripper_tool_frame,
@@ -289,7 +275,7 @@ class TestWorld:
         assert link_a == simple_two_arm_world.search_for_link_name('r_eef')
         assert link_b == simple_two_arm_world.search_for_link_name('l_link_3')
 
-    def test_group_pr2_hand(self, pr2_world: WorldTree):
+    def test_group_pr2_hand(self, pr2_world: World):
         pr2_world.register_group('r_hand', pr2_world.search_for_link_name('r_wrist_roll_link'))
         assert set(pr2_world.groups['r_hand'].joint_names) == {
             pr2_world.search_for_joint_name('r_gripper_palm_joint'),
@@ -331,7 +317,7 @@ class TestWorld:
             pr2_world.search_for_link_name(
                 'r_gripper_l_finger_tip_frame')}
 
-    def test_get_chain(self, pr2_world: WorldTree):
+    def test_get_chain(self, pr2_world: World):
         with suppress_stderr():
             urdf = open('urdfs/pr2.urdf', 'r').read()
             parsed_urdf = up.URDF.from_xml_string(hacky_urdf_parser_fix(urdf))
@@ -347,7 +333,7 @@ class TestWorld:
         expected = parsed_urdf.get_chain(root_link, tip_link, True, True, True)
         assert {x.short_name for x in real} == set(expected)
 
-    def test_get_chain2(self, pr2_world: WorldTree):
+    def test_get_chain2(self, pr2_world: World):
         root_link = pr2_world.search_for_link_name('l_gripper_tool_frame')
         tip_link = pr2_world.search_for_link_name('r_gripper_tool_frame')
         try:
@@ -356,7 +342,7 @@ class TestWorld:
         except ValueError:
             pass
 
-    def test_get_chain_group(self, pr2_world: WorldTree):
+    def test_get_chain_group(self, pr2_world: World):
         root_link = pr2_world.search_for_link_name('r_wrist_roll_link')
         tip_link = pr2_world.search_for_link_name('r_gripper_r_finger_tip_link')
         pr2_world.register_group('r_hand', root_link)
@@ -369,7 +355,7 @@ class TestWorld:
                         'pr2/r_gripper_r_finger_tip_joint',
                         'pr2/r_gripper_r_finger_tip_link']
 
-    def test_get_chain_group2(self, pr2_world: WorldTree):
+    def test_get_chain_group2(self, pr2_world: World):
         root_link = pr2_world.search_for_link_name('r_gripper_l_finger_tip_link')
         tip_link = pr2_world.search_for_link_name('r_gripper_r_finger_tip_link')
         pr2_world.register_group('r_hand', pr2_world.search_for_link_name('r_wrist_roll_link'))
@@ -379,7 +365,7 @@ class TestWorld:
         except ValueError:
             pass
 
-    def test_get_split_chain(self, pr2_world: WorldTree):
+    def test_get_split_chain(self, pr2_world: World):
         root_link = pr2_world.search_for_link_name('l_gripper_r_finger_tip_link')
         tip_link = pr2_world.search_for_link_name('l_gripper_l_finger_tip_link')
         chain1, connection, chain2 = pr2_world.compute_split_chain(root_link, tip_link, True, True, True, True)
@@ -392,7 +378,7 @@ class TestWorld:
         assert chain2 == ['l_gripper_l_finger_joint', 'l_gripper_l_finger_link', 'l_gripper_l_finger_tip_joint',
                           'l_gripper_l_finger_tip_link']
 
-    def test_get_split_chain_group(self, pr2_world: WorldTree):
+    def test_get_split_chain_group(self, pr2_world: World):
         root_link = pr2_world.search_for_link_name('r_gripper_l_finger_tip_link')
         tip_link = pr2_world.search_for_link_name('r_gripper_r_finger_tip_link')
         pr2_world.register_group('r_hand', pr2_world.search_for_link_name('r_wrist_roll_link'))
@@ -408,13 +394,13 @@ class TestWorld:
                           'pr2/r_gripper_r_finger_tip_joint',
                           'pr2/r_gripper_r_finger_tip_link']
 
-    def test_get_joint_limits2(self, pr2_world: WorldTree):
+    def test_get_joint_limits2(self, pr2_world: World):
         lower_limit, upper_limit = pr2_world.get_joint_position_limits(
             pr2_world.search_for_joint_name('l_shoulder_pan_joint'))
         assert lower_limit == -0.564601836603
         assert upper_limit == 2.1353981634
 
-    def test_search_branch(self, pr2_world: WorldTree):
+    def test_search_branch(self, pr2_world: World):
         result = pr2_world._search_branch(pr2_world.search_for_link_name('odom'),
                                           stop_at_joint_when=lambda _: False,
                                           stop_at_link_when=lambda _: False)
@@ -480,7 +466,7 @@ class TestWorld:
         assert links == ['pr2/br_caster_l_wheel_link']
         assert joints == []
 
-    # def test_get_siblings_with_collisions(self, pr2_world: WorldTree):
+    # def test_get_siblings_with_collisions(self, pr2_world: World):
     #     # FIXME
     #     result = pr2_world.get_siblings_with_collisions(pr2_world.search_for_joint_name('brumbrum'))
     #     assert result == []
@@ -503,16 +489,16 @@ class TestWorld:
     #                            'pr2/br_caster_rotation_link',
     #                            'pr2/base_link'}
 
-    def test_get_controlled_parent_joint_of_link(self, pr2_world: WorldTree):
+    def test_get_controlled_parent_joint_of_link(self, pr2_world: World):
         with pytest.raises(KeyError) as e_info:
             pr2_world.get_controlled_parent_joint_of_link(pr2_world.search_for_link_name('odom_combined'))
         assert pr2_world.get_controlled_parent_joint_of_link(
             pr2_world.search_for_link_name('base_footprint')) == 'pr2/brumbrum'
 
-    def test_get_parent_joint_of_joint(self, pr2_world: WorldTree):
+    def test_get_parent_joint_of_joint(self, pr2_world: World):
         # TODO shouldn't this return a not found error?
         with pytest.raises(KeyError) as e_info:
-            pr2_world.get_controlled_parent_joint_of_joint(PrefixName('brumbrum', 'pr2'))
+            pr2_world.get_controlled_parent_joint_of_joint(PrefixedName('brumbrum', 'pr2'))
         with pytest.raises(KeyError) as e_info:
             pr2_world.search_for_parent_joint(pr2_world.search_for_joint_name('r_wrist_roll_joint'),
                                               stop_when=lambda x: False)
@@ -521,21 +507,21 @@ class TestWorld:
         assert pr2_world.get_controlled_parent_joint_of_joint(
             pr2_world.search_for_joint_name('torso_lift_joint')) == 'pr2/brumbrum'
 
-    def test_possible_collision_combinations(self, pr2_world: WorldTree):
+    def test_possible_collision_combinations(self, pr2_world: World):
         result = pr2_world.groups[pr2_world.robot_names[0]].possible_collision_combinations()
         reference = {pr2_world.sort_links(link_a, link_b) for link_a, link_b in
                      combinations(pr2_world.groups[pr2_world.robot_names[0]].link_names_with_collisions, 2) if
                      not pr2_world.are_linked(link_a, link_b)}
         assert result == reference
 
-    def test_compute_chain_reduced_to_controlled_joints2(self, pr2_world: WorldTree):
+    def test_compute_chain_reduced_to_controlled_joints2(self, pr2_world: World):
         link_a, link_b = pr2_world.compute_chain_reduced_to_controlled_joints(
             pr2_world.search_for_link_name('l_upper_arm_link'),
             pr2_world.search_for_link_name('r_upper_arm_link'))
         assert link_a == 'pr2/l_upper_arm_roll_link'
         assert link_b == 'pr2/r_upper_arm_roll_link'
 
-    def test_compute_chain_reduced_to_controlled_joints3(self, pr2_world: WorldTree):
+    def test_compute_chain_reduced_to_controlled_joints3(self, pr2_world: World):
         with pytest.raises(KeyError):
             pr2_world.compute_chain_reduced_to_controlled_joints(
                 pr2_world.search_for_link_name('l_wrist_roll_link'),
@@ -561,13 +547,13 @@ class TestController:
         init = 'init'
         g1 = 'g1'
         g2 = 'g2'
-        init_goal1 = cas.TransformationMatrix(reference_frame=PrefixName('map'))
+        init_goal1 = cas.TransformationMatrix(reference_frame=PrefixedName('map'))
         init_goal1.x = -0.5
 
-        base_goal1 = cas.TransformationMatrix(reference_frame=PrefixName('map'))
+        base_goal1 = cas.TransformationMatrix(reference_frame=PrefixedName('map'))
         base_goal1.x = 1.0
 
-        base_goal2 = cas.TransformationMatrix(reference_frame=PrefixName('map'))
+        base_goal2 = cas.TransformationMatrix(reference_frame=PrefixedName('map'))
         base_goal2.x = -1.0
 
         giskard_pr2.monitors.add_set_seed_odometry(base_pose=init_goal1, name=init)

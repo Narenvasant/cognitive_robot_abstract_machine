@@ -12,6 +12,8 @@ from giskardpy.model.links import Link, LinkGeometry, BoxGeometry, SphereGeometr
 from giskardpy.data_types.data_types import PrefixName
 from giskardpy.middleware import get_middleware
 from giskardpy.utils.utils import suppress_stdout
+from semantic_world.geometry import Shape, Box, Sphere, Cylinder, Mesh
+from semantic_world.world_entity import Body
 
 CollisionObject = pb.CollisionObject
 
@@ -59,26 +61,26 @@ def create_sphere_shape(diameter: float) -> pb.SphereShape:
     return out
 
 
-def create_shape_from_geometry(geometry: LinkGeometry) -> pb.CollisionShape:
-    if isinstance(geometry, BoxGeometry):
-        shape = create_cube_shape((geometry.depth, geometry.width, geometry.height))
-    elif isinstance(geometry, SphereGeometry):
+def create_shape_from_geometry(geometry: Shape) -> pb.CollisionShape:
+    if isinstance(geometry, Box):
+        shape = create_cube_shape((geometry.scale.x, geometry.scale.y, geometry.scale.z))
+    elif isinstance(geometry, Sphere):
         shape = create_sphere_shape(geometry.radius * 2)
-    elif isinstance(geometry, CylinderGeometry):
+    elif isinstance(geometry, Cylinder):
         shape = create_cylinder_shape(geometry.radius * 2, geometry.height)
-    elif isinstance(geometry, MeshGeometry):
-        shape = load_convex_mesh_shape(geometry.file_name_absolute, scale=geometry.scale)
-        geometry.set_collision_file_name(shape.file_path)
+    elif isinstance(geometry, Mesh):
+        shape = load_convex_mesh_shape(geometry.filename, scale=geometry.scale)
+        # todo geometry.set_collision_file_name(shape.file_path)
     else:
         raise NotImplementedError()
     return shape
 
 
-def create_shape_from_link(link: Link, collision_id: int = 0) -> pb.CollisionObject:
+def create_shape_from_link(link: Body, collision_id: int = 0) -> pb.CollisionObject:
     # if len(link.collisions) > 1:
     shapes = []
     map_T_o = None
-    for collision_id, geometry in enumerate(link.collisions):
+    for collision_id, geometry in enumerate(link.collision):
         if map_T_o is None:
             shape = create_shape_from_geometry(geometry)
         else:

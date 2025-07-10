@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING, List, Dict, Tuple
 
 from giskardpy.middleware import get_middleware
 from giskardpy.utils.utils import create_path
+from semantic_world.prefixed_name import PrefixedName
 
 if TYPE_CHECKING:
-    from giskardpy.model.world import WorldTree
+    from semantic_world.world import World
     from giskardpy.qp.free_variable import FreeVariable
     from giskardpy.qp.next_command import NextCommands
     from giskardpy.model.trajectory import Trajectory
     from giskardpy.qp.qp_controller import QPController
-    from giskardpy.data_types.data_types import PrefixName
     from giskardpy.motion_statechart.motion_statechart_manager import MotionStatechartManager
     from giskardpy.debug_expression_manager import DebugExpressionManager
     from giskardpy.model.collision_world_syncer import CollisionWorldSynchronizer, Collisions
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 class GodMap:
     # %% important objects
-    world: WorldTree
+    world: World
     collision_scene: CollisionWorldSynchronizer
     qp_controller: QPController
     qp_controller2: QPController
@@ -34,7 +34,7 @@ class GodMap:
     control_cycle_counter: int
     trajectory: Trajectory
     qp_solver_solution: NextCommands
-    added_collision_checks: Dict[Tuple[PrefixName, PrefixName], float]
+    added_collision_checks: Dict[Tuple[PrefixedName, PrefixedName], float]
     closest_point: Collisions
     motion_start_time: float
     hack: float
@@ -46,8 +46,8 @@ class GodMap:
     def __getattr__(self, item):
         # automatically initialize certain attributes
         if item == 'world':
-            from giskardpy.model.world import WorldTree
-            self.world = WorldTree()
+            from semantic_world.world import World
+            self.world = World()
         elif item == 'motion_statechart_manager':
             from giskardpy.motion_statechart.motion_statechart_manager import MotionStatechartManager
             self.motion_statechart_manager = MotionStatechartManager()

@@ -12,7 +12,7 @@ import numpy as np
 
 from giskardpy.data_types.exceptions import QPSolverException, InfeasibleException
 from giskardpy.qp.qp_solver import QPSolver
-import qpSWIFT
+import qpSWIFT_sparse_bindings as qpSWIFT
 
 from giskardpy.qp.qp_solver_ids import SupportedQPSolver
 

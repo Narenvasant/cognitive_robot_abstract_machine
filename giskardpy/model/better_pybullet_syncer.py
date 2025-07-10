@@ -12,6 +12,8 @@ from giskardpy.model.collision_world_syncer import CollisionCheckerLib
 from giskardpy.model.links import Link
 from line_profiler import profile
 
+from semantic_world.world_entity import Body
+
 
 class BetterPyBulletSyncer(CollisionWorldSynchronizer):
     collision_checker_id = CollisionCheckerLib.bpb
@@ -23,8 +25,8 @@ class BetterPyBulletSyncer(CollisionWorldSynchronizer):
         super().__init__()
 
     @profile
-    def add_object(self, link: Link):
-        if not link.has_collisions():
+    def add_object(self, link: Body):
+        if not link.has_collision():
             return
         o = create_shape_from_link(link)
         self.kw.add_collision_object(o)
@@ -96,10 +98,9 @@ class BetterPyBulletSyncer(CollisionWorldSynchronizer):
             self.object_name_to_id = {}
             self.objects_in_order = []
 
-            for link_name in sorted(god_map.world.link_names_with_collisions):
-                link = god_map.world.links[link_name]
+            for link in sorted(god_map.world.bodies_with_collisions):
                 self.add_object(link)
-                self.objects_in_order.append(self.object_name_to_id[link_name])
+                self.objects_in_order.append(self.object_name_to_id[link.name])
             self.sync_world_model_update()
             bpb.batch_set_transforms(self.objects_in_order, god_map.world.compute_all_collision_fks())
         else:
