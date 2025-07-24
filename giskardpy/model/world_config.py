@@ -290,7 +290,7 @@ class WorldWithDiffDriveRobot(WorldConfig):
                  odom_link_name: str = 'odom',
                  drive_joint_name: str = 'brumbrum'):
         super().__init__()
-        self.urdf = urdf
+        self.robot_description = urdf
         self.map_name = map_name
         self.localization_joint_name = localization_joint_name
         self.odom_link_name = odom_link_name
@@ -304,7 +304,7 @@ class WorldWithDiffDriveRobot(WorldConfig):
         self.add_empty_link(PrefixName(self.odom_link_name))
         self.add_6dof_joint(parent_link=self.map_name, child_link=self.odom_link_name,
                             joint_name=self.localization_joint_name)
-        self.add_robot_urdf(urdf=self.urdf)
+        self.add_robot_urdf(urdf=self.robot_description)
         root_link_name = self.get_root_link_of_group(self.robot_group_name)
         self.add_diff_drive_joint(name=self.drive_joint_name,
                                   parent_link_name=self.odom_link_name,
