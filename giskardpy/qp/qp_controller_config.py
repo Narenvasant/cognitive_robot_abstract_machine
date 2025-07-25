@@ -39,6 +39,11 @@ detect_solvers()
 
 @dataclass
 class QPControllerConfig:
+    control_dt: Optional[float]
+    """
+    if control_dt is None, then the controller will run as fast as possible, only recommended for testing.
+    """
+
     dof_weights: Dict[PrefixedName, DerivativeMap[float]] = field(
         default_factory=lambda: defaultdict(lambda: DerivativeMap([None, 0.01, np.inf, None])))
     dof_lower_limits_overwrite: Dict[PrefixedName, DerivativeMap[float]] = field(
@@ -50,7 +55,6 @@ class QPControllerConfig:
     qp_solver_class: Type[QPSolver] = field(init=False)
     prediction_horizon: int = field(default=7)
     mpc_dt: float = field(default=0.0125)
-    control_dt: Optional[float] = field(default=None)
     max_trajectory_length: Optional[float] = field(default=30)
     horizon_weight_gain_scalar: float = 0.1
     qp_formulation: Optional[QPFormulation] = field(default_factory=QPFormulation)
@@ -60,18 +64,6 @@ class QPControllerConfig:
     verbose: bool = field(default=True)
 
     def __post_init__(self):
-        """
-        :param qp_solver: if not set, Giskard will search for the fasted installed solver.
-        :param prediction_horizon: Giskard uses MPC and this is the length of the horizon. You usually don't need to change this.
-        :param mpc_dt: time (s) difference between commands in the MPC horizon.
-        :param max_trajectory_length: Giskard will stop planning/controlling the robot until this amount of s has passed.
-                                      This is disabled if set to None.
-        :param retries_with_relaxed_constraints: don't change, only for the pros.
-        :param added_slack: don't change, only for the pros.
-        :param weight_factor: don't change, only for the pros.
-        """
-        if self.control_dt is None:
-            self.control_dt = self.mpc_dt
         if not self.qp_formulation.is_mpc:
             self.prediction_horizon = 1
             self.max_derivative = Derivatives.velocity
