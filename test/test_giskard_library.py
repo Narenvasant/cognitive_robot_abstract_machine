@@ -15,7 +15,7 @@ from giskardpy.model.world_config import EmptyWorld, WorldWithOmniDriveRobot
 from giskardpy.qp.qp_controller_config import QPControllerConfig
 from giskardpy.user_interface import GiskardWrapper
 from giskardpy.utils.utils import suppress_stderr
-from semantic_world.connections import FixedConnection, PrismaticConnection, UnitVector, OmniDrive, ActiveConnection, \
+from semantic_world.connections import FixedConnection, PrismaticConnection, OmniDrive, ActiveConnection, \
     RevoluteConnection
 from semantic_world.geometry import Box, Scale, Color
 from semantic_world.prefixed_name import PrefixedName
@@ -132,7 +132,7 @@ def box_world_prismatic() -> World:
             with self.world.modify_world():
                 box_geometry = Box(scale=Scale(1, 1, 1), color=Color(1, 0, 0, 1))
                 box = Body(name=self.box_name, visual=[box_geometry], collision=[box_geometry])
-                joint = PrismaticConnection(parent=self.world.root, child=box, axis=UnitVector(1, 0, 0),
+                joint = PrismaticConnection(parent=self.world.root, child=box, axis=cas.UnitVector3.X(),
                                             _world=self.world)
                 joint.dof.lower_limits.position = -1
                 joint.dof.lower_limits.velocity = -1

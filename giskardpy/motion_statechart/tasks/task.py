@@ -1,19 +1,19 @@
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Optional, List, Union, Dict, Callable, Iterable, overload, DefaultDict, TypeVar
+from typing import Optional, List, Union, Dict, DefaultDict, TypeVar
 
 import numpy as np
 
 import semantic_world.spatial_types.spatial_types as cas
+from giskardpy.data_types.data_types import Derivatives, LifeCycleState
 from giskardpy.data_types.exceptions import GoalInitalizationException, DuplicateNameException
 from giskardpy.god_map import god_map
-from giskardpy.data_types.data_types import Derivatives, LifeCycleState
-from giskardpy.qp.constraint import EqualityConstraint, InequalityConstraint, DerivativeInequalityConstraint
-from semantic_world.spatial_types.symbol_manager import symbol_manager
 from giskardpy.motion_statechart.graph_node import MotionStatechartNode
-from giskardpy.qp.weight_gain import QuadraticWeightGain, LinearWeightGain
-from giskardpy.qp.free_variable import FreeVariable
 from giskardpy.qp.constraint import DerivativeEqualityConstraint
+from giskardpy.qp.constraint import EqualityConstraint, InequalityConstraint, DerivativeInequalityConstraint
+from giskardpy.qp.free_variable import FreeVariable
+from giskardpy.qp.weight_gain import QuadraticWeightGain, LinearWeightGain
+from semantic_world.spatial_types.symbol_manager import symbol_manager
 
 WEIGHT_MAX = 10000
 WEIGHT_ABOVE_CA = 2500
@@ -349,7 +349,7 @@ class Task(MotionStatechartNode):
         # avoid singularity
         # the sign determines in which direction the robot moves when in singularity.
         # -0.0001 preserves the old behavior from before this goal was refactored
-        hack = cas.RotationMatrix.from_axis_angle(cas.Vector3((0, 0, 1)), -0.0001)
+        hack = cas.RotationMatrix.from_axis_angle(cas.UnitVector3.Z(), -0.0001)
         frame_R_current = frame_R_current.dot(hack)
         q_actual = frame_R_current.to_quaternion()
         q_goal = frame_R_goal.to_quaternion()
@@ -412,8 +412,7 @@ class Task(MotionStatechartNode):
         """
         Add a velocity constraint. Internally, this will be converted into multiple constraints, to ensure that the
         velocity stays within the given bounds.
-        :param lower_velocity_limit:
-        :param upper_velocity_limit:
+        :param velocity_goal:
         :param weight:
         :param task_expression:
         :param velocity_limit: Used for normalizing the expression, like reference_velocity, must be positive

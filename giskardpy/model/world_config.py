@@ -13,7 +13,7 @@ from semantic_world.adapters.urdf import URDFParser
 from semantic_world.connections import Has1DOFState, Connection6DoF, OmniDrive
 from semantic_world.geometry import Color
 from semantic_world.prefixed_name import PrefixedName
-from semantic_world.robots import AbstractRobot, Manipulator
+from semantic_world.robots import PR2
 from semantic_world.spatial_types.derivatives import Derivatives
 from semantic_world.world import World
 from semantic_world.world_entity import Body
@@ -227,6 +227,7 @@ class WorldWithOmniDriveRobot(WorldConfig):
         map = Body(name=self.map_name)
         odom = Body(name=self.odom_link_name)
         localization = Connection6DoF(parent=map, child=odom, _world=self.world)
+        self.world.add_connection(localization)
 
         urdf_parser = URDFParser(urdf=self.urdf)
         world_with_robot = urdf_parser.parse()
@@ -236,12 +237,9 @@ class WorldWithOmniDriveRobot(WorldConfig):
                          rotation_velocity_limits=0.2,
                          _world=self.world)
 
-        self.world.merge_world(world_with_robot)
-        self.world.add_connection(localization)
-        self.world.add_connection(odom)
+        self.world.merge_world(world_with_robot, odom)
 
-        robot = AbstractRobot(name=PrefixedName('robot'), _world=self.world)
-        self.world.add_view(robot)
+        PR2.from_world(world=self.world)
 
 
 class WorldWithDiffDriveRobot(WorldConfig):
