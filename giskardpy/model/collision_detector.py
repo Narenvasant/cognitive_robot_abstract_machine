@@ -224,7 +224,7 @@ class Collisions:
         link_a = collision.original_link_a
         link_b = collision.original_link_b
         new_link_a, new_link_b = god_map.world.compute_chain_reduced_to_controlled_joints(link_a, link_b)
-        if new_link_a.name < new_link_b.name:
+        if new_link_a.name > new_link_b.name:
             collision = collision.reverse()
             new_link_a, new_link_b = new_link_b, new_link_a
         collision.link_a = new_link_a

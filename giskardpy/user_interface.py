@@ -326,7 +326,7 @@ class GiskardWrapper:
         god_map.hack = 0
 
         with god_map.world.modify_world():
-            self.world_config.setup()
+            self.world_config.setup_world()
         # god_map.world._notify_model_change()
         self.collision_avoidance_config.setup()
         self.collision_avoidance_config._sanity_check()

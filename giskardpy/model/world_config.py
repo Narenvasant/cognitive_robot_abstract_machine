@@ -23,14 +23,21 @@ class WorldConfig(ABC):
     default_color: Color = field(default_factory=lambda: Color(0.5, 0.5, 0.5, 1))
 
     @abc.abstractmethod
-    def setup(self, *args, **kwargs):
+    def setup_world(self, *args, **kwargs):
         """
         Implement this method to configure the initial world using it's self. methods.
         """
 
+    @abc.abstractmethod
+    def setup_collision_config(self):
+        """
+        This method is called after the robot is connected to the controller and connections have
+        the controlled flag.
+        """
+
 
 class EmptyWorld(WorldConfig):
-    def setup(self):
+    def setup_world(self):
         # self._default_limits = {
         #     Derivatives.velocity: 1,
         #     Derivatives.acceleration: np.inf,
@@ -48,7 +55,7 @@ class WorldWithFixedRobot(WorldConfig):
         self.urdf = urdf
         self.map_name = PrefixedName(map_name)
 
-    def setup(self, robot_name: Optional[str] = None) -> None:
+    def setup_world(self, robot_name: Optional[str] = None) -> None:
         self.set_default_limits({Derivatives.velocity: 1,
                                  Derivatives.acceleration: np.inf,
                                  Derivatives.jerk: None})
@@ -65,7 +72,7 @@ class WorldWithOmniDriveRobot(WorldConfig):
     robot_name: PrefixedName = field(default=PrefixedName('robot'))
     odom_body_name: PrefixedName = field(default=PrefixedName('odom'))
 
-    def setup(self):
+    def setup_world(self):
         map = Body(name=self.root_name)
         odom = Body(name=self.odom_body_name)
         localization = Connection6DoF(parent=map, child=odom, _world=self.world)
@@ -100,7 +107,7 @@ class WorldWithDiffDriveRobot(WorldConfig):
         self.odom_link_name = odom_link_name
         self.drive_joint_name = drive_joint_name
 
-    def setup(self):
+    def setup_world(self):
         self.set_default_limits({Derivatives.velocity: 1,
                                  Derivatives.acceleration: np.inf,
                                  Derivatives.jerk: None})

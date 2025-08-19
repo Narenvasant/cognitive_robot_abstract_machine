@@ -67,18 +67,21 @@ class ExternalCA(Goal):
 
         buffer_zone = max(b.collision_config.buffer_zone_distance for b in direct_children)
         violated_distance = max(b.collision_config.violated_distance for b in direct_children)
-        b_result_cases = {}
+        b_result_cases = []
         for body in self.world.bodies_with_enabled_collision:
             if body.collision_config.buffer_zone_distance is None:
                 continue
             if body.collision_config.disabled:
                 continue
             if body.collision_config.buffer_zone_distance > buffer_zone:
-                b_result_cases[body.__hash__()] = body.collision_config.buffer_zone_distance
+                b_result_cases.append((body.__hash__(), body.collision_config.buffer_zone_distance))
 
-        buffer_zone_expr = cas.if_eq_cases(a=actual_link_b_hash,
-                                           b_result_cases=b_result_cases,
-                                           else_result=buffer_zone)
+        if len(b_result_cases) > 0:
+            buffer_zone_expr = cas.if_eq_cases(a=actual_link_b_hash,
+                                               b_result_cases=b_result_cases,
+                                               else_result=buffer_zone)
+        else:
+            buffer_zone_expr = buffer_zone
 
         hard_threshold = cas.min(violated_distance, buffer_zone_expr / 2)
         lower_limit = buffer_zone_expr - actual_distance

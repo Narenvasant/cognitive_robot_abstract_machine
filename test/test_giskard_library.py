@@ -50,7 +50,7 @@ def visualize():
 @pytest.fixture()
 def empty_world() -> World:
     config = EmptyWorld()
-    config.setup()
+    config.setup_world()
     god_map.tmp_folder = 'tmp'
     return config.world
 
@@ -61,8 +61,8 @@ def fixed_box_world() -> World:
         box_name = PrefixedName('box')
         joint_name = PrefixedName('box_joint')
 
-        def setup(self) -> None:
-            super().setup()
+        def setup_world(self) -> None:
+            super().setup_world()
             with self.world.modify_world():
                 box_geometry = Box(scale=Scale(1, 1, 1), color=Color(1, 0, 0, 1))
                 box = Body(name=self.box_name, visual=[box_geometry], collision=[box_geometry])
@@ -72,7 +72,7 @@ def fixed_box_world() -> World:
 
     config = WorldWithFixedBox()
     # collision_avoidance = DefaultCollisionAvoidanceConfig()
-    config.setup()
+    config.setup_world()
     # collision_avoidance.setup()
     return config.world
 
@@ -82,8 +82,8 @@ def box_world_prismatic() -> World:
     class WorldWithPrismaticBox(EmptyWorld):
         box_name = PrefixedName('box')
 
-        def setup(self) -> None:
-            super().setup()
+        def setup_world(self) -> None:
+            super().setup_world()
             with self.world.modify_world():
                 box_geometry = Box(scale=Scale(1, 1, 1), color=Color(1, 0, 0, 1))
                 box = Body(name=self.box_name, visual=[box_geometry], collision=[box_geometry])
@@ -97,7 +97,7 @@ def box_world_prismatic() -> World:
 
     config = WorldWithPrismaticBox()
     # collision_avoidance = DefaultCollisionAvoidanceConfig()
-    config.setup()
+    config.setup_world()
     # collision_avoidance.setup()
     return config.world
 
@@ -108,8 +108,8 @@ def box_world():
         box_name = PrefixedName('box')
         joint_name = PrefixedName('box_joint')
 
-        def setup(self) -> None:
-            super().setup()
+        def setup_world(self) -> None:
+            super().setup_world()
             with self.world.modify_world():
                 box = Body(self.box_name)
                 box_geometry = Box(scale=Scale(1, 1, 1), color=Color(1, 0, 0, 1))
@@ -123,7 +123,7 @@ def box_world():
 
     config = WorldWithOmniBox()
     collision_avoidance = DefaultCollisionAvoidanceConfig()
-    config.setup()
+    config.setup_world()
     collision_avoidance.setup()
     assert config.box_name in config.world.bodies
     return config.world
@@ -134,7 +134,7 @@ def simple_two_arm_world() -> World:
     urdf = open('urdfs/simple_two_arm_robot.urdf', 'r').read()
     config = WorldWithOmniDriveRobot(urdf)
     with config.world.modify_world():
-        config.setup()
+        config.setup_world()
     # todo move to controller
     # controlled_joints = ControlledConnections(config.world.search_for_connections_of_type(ActiveConnection))
     # config.world.add_view(controlled_joints)
@@ -149,7 +149,7 @@ def pr2_world() -> World:
     urdf = open('urdfs/pr2.urdf', 'r').read()
     config = WorldWithOmniDriveRobot(urdf=urdf)
     with config.world.modify_world():
-        config.setup()
+        config.setup_world()
     pr2: AbstractRobot = config.world.get_view_by_name('robot')
     pr2.controlled_connections.connections = config.world.search_for_connections_of_type(ActiveConnection)
     return config.world
