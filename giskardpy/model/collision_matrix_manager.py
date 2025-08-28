@@ -13,6 +13,7 @@ from line_profiler import profile
 from giskardpy.data_types.key_default_dict import KeyDefaultDict
 from giskardpy.god_map import god_map
 from giskardpy.qp.free_variable import FreeVariable
+from semantic_world.collision_checking.collision_detector import CollisionCheck
 from semantic_world.connections import ActiveConnection
 from semantic_world.degree_of_freedom import DegreeOfFreedom
 from semantic_world.robots import AbstractRobot
@@ -165,7 +166,8 @@ class CollisionMatrixManager:
             disabled_pairs = self.world.disabled_collision_pairs
             for body1 in view_1_bodies:
                 for body2 in view2_bodies:
-                    (robot_body, env_body) = sort_bodies(body1, body2)
+                    collision_check = CollisionCheck(body_a=body1, body_b=body2, distance=0, _world=self.world)
+                    (robot_body, env_body) = collision_check.bodies()
                     if (robot_body, env_body) in disabled_pairs:
                         continue
                     if collision_request.distance is None:
@@ -173,15 +175,9 @@ class CollisionMatrixManager:
                                        env_body.get_collision_config().buffer_zone_distance or 0.0)
                     else:
                         distance = collision_request.distance
-                    if collision_request.is_allow_collision():
-                        collision_check = CollisionCheck(body_a=robot_body,
-                                                         body_b=env_body,
-                                                         distance=0)
-                    else:
-                        collision_check = CollisionCheck.create_and_validate(body_a=robot_body,
-                                                                             body_b=env_body,
-                                                                             distance=distance,
-                                                                             world=god_map.world)
+                    if not collision_request.is_allow_collision():
+                        collision_check.distance = distance
+                        collision_check._validate()
                     if collision_request.is_allow_collision():
                         if collision_check in collision_matrix:
                             collision_matrix.remove(collision_check)
