@@ -258,7 +258,7 @@ class JustinTorsoLimit(Task):
 
 @dataclass
 class JointVelocityLimit(Task):
-    joint_names: List[str]
+    joints: List[ActiveConnection1DOF]
     weight: float = WEIGHT_BELOW_CA
     max_velocity: float = 1
     hard: bool = False
@@ -272,9 +272,8 @@ class JointVelocityLimit(Task):
         :param max_velocity: rad/s
         :param hard: turn this into a hard constraint.
         """
-        for joint_name in self.joint_names:
-            joint: Has1DOFState = god_map.world.get_connection_by_name(joint_name)
-            current_joint = joint.position
+        for joint in self.joints:
+            current_joint = joint.dof.symbols.position
             try:
                 limit_expr = joint.dof.upper_limits.velocity
                 max_velocity = cas.min(self.max_velocity, limit_expr)
@@ -297,7 +296,7 @@ class JointVelocityLimit(Task):
                     weight=self.weight,
                     task_expression=current_joint,
                     velocity_limit=max_velocity,
-                    name=joint_name,
+                    name=joint.name.name,
                 )
 
 

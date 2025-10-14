@@ -609,8 +609,8 @@ class FreeVariableBounds(ProblemDataPart):
         for t in range(self.config.prediction_horizon):
             for c in self.get_derivative_constraints(derivative):
                 if t < self.control_horizon:
-                    lower_slack[f"t{t:03}/{c.name}"] = c.lower_slack_limit[t]
-                    upper_slack[f"t{t:03}/{c.name}"] = c.upper_slack_limit[t]
+                    lower_slack[f"t{t:03}/{c.name}"] = c.lower_slack_limit
+                    upper_slack[f"t{t:03}/{c.name}"] = c.upper_slack_limit
         return lower_slack, upper_slack
 
     def eq_derivative_slack_limits(
@@ -847,8 +847,8 @@ class InequalityBounds(ProblemDataPart):
         for t in range(self.config.prediction_horizon):
             for c in self.get_derivative_constraints(derivative):
                 if t < self.control_horizon:
-                    lower[f"t{t:03}/{c.name}"] = c.lower_limit[t] * self.config.mpc_dt
-                    upper[f"t{t:03}/{c.name}"] = c.upper_limit[t] * self.config.mpc_dt
+                    lower[f"t{t:03}/{c.name}"] = c.lower_limit * self.config.mpc_dt
+                    upper[f"t{t:03}/{c.name}"] = c.upper_limit * self.config.mpc_dt
         return lower, upper
 
     def lower_inequality_constraint_bound(self):
