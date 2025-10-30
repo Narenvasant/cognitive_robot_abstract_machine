@@ -19,7 +19,7 @@ from semantic_digital_twin.world_description.connections import (
 
 @validated_dataclass
 class JointPositionList(Task):
-    goal_state: Dict[ActiveConnection1DOF, Union[int, float]]
+    goal_state: Dict[ActiveConnection1DOF, Union[int, float]] = field(kw_only=True)
     threshold: float = 0.01
     weight: float = WEIGHT_BELOW_CA
     max_velocity: float = 1.0
@@ -140,7 +140,9 @@ class MirrorJointPosition(Task):
 
 @validated_dataclass
 class JointPositionLimitList(Task):
-    lower_upper_limits: Dict[Union[PrefixedName, str], Tuple[float, float]]
+    lower_upper_limits: Dict[Union[PrefixedName, str], Tuple[float, float]] = field(
+        kw_only=True
+    )
     weight: float = WEIGHT_BELOW_CA
     max_velocity: float = 1
 
@@ -214,7 +216,7 @@ class JointPositionLimitList(Task):
 
 @validated_dataclass
 class JustinTorsoLimit(Task):
-    connection: ActiveConnection
+    connection: ActiveConnection = field(kw_only=True)
     lower_limit: Optional[float] = None
     upper_limit: Optional[float] = None
     weight: float = WEIGHT_BELOW_CA
@@ -260,7 +262,7 @@ class JustinTorsoLimit(Task):
 
 @validated_dataclass
 class JointVelocityLimit(Task):
-    joints: List[ActiveConnection1DOF]
+    joints: List[ActiveConnection1DOF] = field(kw_only=True)
     weight: float = WEIGHT_BELOW_CA
     max_velocity: float = 1
     hard: bool = False
@@ -304,8 +306,8 @@ class JointVelocityLimit(Task):
 
 @validated_dataclass
 class JointVelocity(Task):
-    connections: List[ActiveConnection1DOF]
-    vel_goal: float
+    connections: List[ActiveConnection1DOF] = field(kw_only=True)
+    vel_goal: float = field(kw_only=True)
     weight: float = WEIGHT_BELOW_CA
     max_velocity: float = 1
     hard: bool = False
@@ -337,8 +339,8 @@ class JointVelocity(Task):
 
 @validated_dataclass
 class UnlimitedJointGoal(Task):
-    connection: ActiveConnection1DOF
-    goal_position: float
+    connection: ActiveConnection1DOF = field(kw_only=True)
+    goal_position: float = field(kw_only=True)
 
     def __post_init__(self):
         connection_symbol = self.connection.dof.symbols.position

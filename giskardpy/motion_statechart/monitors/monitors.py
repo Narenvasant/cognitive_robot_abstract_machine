@@ -114,7 +114,7 @@ class LocalMinimumReached(Monitor):
 
 @validated_dataclass
 class TimeAbove(Monitor):
-    threshold: float
+    threshold: float = field(kw_only=True)
 
     def __post_init__(self):
         traj_length_in_sec = god_map.time_symbol

@@ -15,9 +15,9 @@ from semantic_digital_twin.world_description.world_entity import Body
 @validated_dataclass
 class CartesianPosition(Task):
     default_reference_velocity = 0.2
-    root_link: Body
-    tip_link: Body
-    goal_point: cas.Point3
+    root_link: Body = field(kw_only=True)
+    tip_link: Body = field(kw_only=True)
+    goal_point: cas.Point3 = field(kw_only=True)
     threshold: float = 0.01
     reference_velocity: Optional[float] = None
     weight: float = WEIGHT_ABOVE_CA
@@ -92,9 +92,9 @@ class CartesianPosition(Task):
 
 @validated_dataclass
 class CartesianPositionStraight(Task):
-    root_link: Body
-    tip_link: Body
-    goal_point: cas.Point3
+    root_link: Body = field(kw_only=True)
+    tip_link: Body = field(kw_only=True)
+    goal_point: cas.Point3 = field(kw_only=True)
     threshold: float = 0.01
     reference_velocity: Optional[float] = CartesianPosition.default_reference_velocity
     absolute: bool = False
@@ -169,9 +169,9 @@ class CartesianPositionStraight(Task):
 @validated_dataclass
 class CartesianOrientation(Task):
     default_reference_velocity = 0.2
-    root_link: Body
-    tip_link: Body
-    goal_orientation: cas.RotationMatrix
+    root_link: Body = field(kw_only=True)
+    tip_link: Body = field(kw_only=True)
+    goal_orientation: cas.RotationMatrix = field(kw_only=True)
     threshold: float = 0.01
     reference_velocity: Optional[float] = None
     weight: float = WEIGHT_ABOVE_CA
@@ -236,9 +236,9 @@ class CartesianOrientation(Task):
 
 @validated_dataclass
 class CartesianPose(Task):
-    root_link: Body
-    tip_link: Body
-    goal_pose: cas.TransformationMatrix
+    root_link: Body = field(kw_only=True)
+    tip_link: Body = field(kw_only=True)
+    goal_pose: cas.TransformationMatrix = field(kw_only=True)
     reference_linear_velocity: float = field(
         default=CartesianPosition.default_reference_velocity
     )
@@ -323,8 +323,8 @@ class CartesianPose(Task):
 
 @validated_dataclass
 class CartesianPositionVelocityLimit(Task):
-    root_link: Body
-    tip_link: Body
+    root_link: Body = field(kw_only=True)
+    tip_link: Body = field(kw_only=True)
     max_linear_velocity: float = 0.2
     weight: float = WEIGHT_ABOVE_CA
 
@@ -351,8 +351,8 @@ class CartesianPositionVelocityLimit(Task):
 
 @validated_dataclass
 class CartesianRotationVelocityLimit(Task):
-    root_link: Body
-    tip_link: Body
+    root_link: Body = field(kw_only=True)
+    tip_link: Body = field(kw_only=True)
     weight: float = WEIGHT_ABOVE_CA
     max_velocity: Optional[float] = None
 
@@ -375,8 +375,8 @@ class CartesianRotationVelocityLimit(Task):
 
 @validated_dataclass
 class CartesianVelocityLimit(Task):
-    root_link: Body
-    tip_link: Body
+    root_link: Body = field(kw_only=True)
+    tip_link: Body = field(kw_only=True)
     max_linear_velocity: float = 0.1
     max_angular_velocity: float = 0.5
     weight: float = WEIGHT_ABOVE_CA
@@ -410,11 +410,11 @@ class CartesianVelocityLimit(Task):
 
 @validated_dataclass
 class CartesianPositionVelocityTarget(Task):
-    root_link: Body
-    tip_link: Body
-    x_vel: float
-    y_vel: float
-    z_vel: float
+    root_link: Body = field(kw_only=True)
+    tip_link: Body = field(kw_only=True)
+    x_vel: float = field(kw_only=True)
+    y_vel: float = field(kw_only=True)
+    z_vel: float = field(kw_only=True)
     weight: float = WEIGHT_ABOVE_CA
 
     def __post_init__(self):
@@ -469,10 +469,10 @@ class CartesianPositionVelocityTarget(Task):
 
 @validated_dataclass
 class JustinTorsoLimitCart(Task):
-    root_link: Body
-    tip_link: Body
-    forward_distance: float
-    backward_distance: float
+    root_link: Body = field(kw_only=True)
+    tip_link: Body = field(kw_only=True)
+    forward_distance: float = field(kw_only=True)
+    backward_distance: float = field(kw_only=True)
     weight: float = WEIGHT_ABOVE_CA
 
     def __post_init__(self):

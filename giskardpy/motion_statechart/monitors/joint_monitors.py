@@ -1,3 +1,4 @@
+from dataclasses import field
 from typing import Dict
 
 import semantic_digital_twin.spatial_types.spatial_types as cas
@@ -13,7 +14,7 @@ from semantic_digital_twin.world_description.connections import (
 
 @validated_dataclass
 class JointGoalReached(Monitor):
-    goal_state: Dict[ActiveConnection1DOF, float]
+    goal_state: Dict[ActiveConnection1DOF, float] = field(kw_only=True)
     threshold: float = 0.01
 
     def __post_init__(self):
@@ -34,8 +35,8 @@ class JointGoalReached(Monitor):
 
 @validated_dataclass
 class JointPositionAbove(Monitor):
-    connection: ActiveConnection
-    threshold: float
+    connection: ActiveConnection = field(kw_only=True)
+    threshold: float = field(kw_only=True)
 
     def __post_init__(self):
         if not isinstance(self.connection, ActiveConnection1DOF):

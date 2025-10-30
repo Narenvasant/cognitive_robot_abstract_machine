@@ -10,7 +10,10 @@ from giskardpy.motion_statechart.data_types import ObservationState
 from giskardpy.motion_statechart.monitors.monitors import PayloadMonitor
 from giskardpy.utils.decorators import validated_dataclass
 from giskardpy.utils.math import axis_angle_from_quaternion
-from semantic_digital_twin.world_description.connections import OmniDrive, ActiveConnection1DOF
+from semantic_digital_twin.world_description.connections import (
+    OmniDrive,
+    ActiveConnection1DOF,
+)
 from semantic_digital_twin.world_description.world_entity import Connection
 
 
@@ -23,7 +26,9 @@ class SetSeedConfiguration(PayloadMonitor):
     :param group_name: if joint names are not unique, it will search in this group for matches.
     """
 
-    seed_configuration: Dict[ActiveConnection1DOF, Union[int, float]]
+    seed_configuration: Dict[ActiveConnection1DOF, Union[int, float]] = field(
+        kw_only=True
+    )
 
     def __post_init__(self):
         self.seed_configuration = {
@@ -43,7 +48,7 @@ class SetSeedConfiguration(PayloadMonitor):
 
 @validated_dataclass
 class SetOdometry(PayloadMonitor):
-    base_pose: cas.TransformationMatrix
+    base_pose: cas.TransformationMatrix = field(kw_only=True)
     _odom_joints: Tuple[Type[Connection], ...] = field(default=(OmniDrive,), init=False)
     odom_connection: Optional[OmniDrive] = None
 

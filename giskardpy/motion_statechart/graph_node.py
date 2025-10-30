@@ -1,84 +1,136 @@
 from __future__ import annotations
 
 from dataclasses import field, dataclass
-from functools import cached_property
-from typing import Optional, Union
 
 from random_events.utils import SubclassJSONSerializer
-from typing_extensions import Dict, Any, Self
+from typing_extensions import Dict, Any, Self, Optional, TYPE_CHECKING, List
 
 import semantic_digital_twin.spatial_types.spatial_types as cas
 from giskardpy.god_map import god_map
-from giskardpy.utils.decorators import validated_dataclass
-from giskardpy.utils.utils import string_shortener, quote_node_names
+from giskardpy.utils.utils import string_shortener
+from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+
+if TYPE_CHECKING:
+    from giskardpy.motion_statechart.motion_statechart_graph import (
+        MotionStatechartGraph,
+    )
 
 
 @dataclass
 class StateTransitionCondition:
     """Encapsulates both string and expression representations of a condition."""
 
-    expression: Optional[cas.Expression] = None
-    _raw_string: Optional[str] = None
-    _parsed_expression: Optional[cas.Expression] = None
-    _default_value: str = "False"
+    motion_statechart: MotionStatechartGraph
+    expression: cas.Expression = cas.TrinaryUnknown
+    _parents: List[MotionStatechartNode] = field(default_factory=list, init=False)
+    _child: MotionStatechartNode = field(default=None, init=False)
 
     @classmethod
-    def create_true(cls) -> Self:
-        return cls(expression=cas.TrinaryTrue)
+    def create_true(cls, motion_statechart: MotionStatechartGraph) -> Self:
+        return cls(expression=cas.TrinaryTrue, motion_statechart=motion_statechart)
 
     @classmethod
-    def create_false(cls) -> Self:
-        return cls(expression=cas.TrinaryFalse)
+    def create_false(cls, motion_statechart: MotionStatechartGraph) -> Self:
+        return cls(expression=cas.TrinaryFalse, motion_statechart=motion_statechart)
 
     @classmethod
-    def from_str(cls, value: str) -> Self:
-        return cls(value)
+    def create_unknown(cls, motion_statechart: MotionStatechartGraph) -> Self:
+        return cls(expression=cas.TrinaryUnknown, motion_statechart=motion_statechart)
 
-    @property
-    def string_representation(self) -> str:
-        if self._raw_string is None:
-            return self._default_value
-        return quote_node_names(self._raw_string)
+    def update_expression(
+        self, new_expression: cas.Expression, child: MotionStatechartNode
+    ) -> None:
+        self.expression = new_expression
+        self._parents = [
+            x
+            for x in new_expression.free_symbols()
+            if isinstance(x, MotionStatechartNode)
+        ]
+        self._child = child
+        self.apply_to_motion_state_chart()
 
-    @property
-    def expression(self) -> Optional[cas.Expression]:
-        return self._parsed_expression
-
-    def set_string(self, value: Union[str, "MotionStatechartNode"]) -> None:
-        if hasattr(value, "name"):  # MotionStatechartNode
-            value = value.name
-        if value == "":
-            value = self._default_value
-        self._raw_string = value
-
-    def set_expression(self, expression: cas.Expression) -> None:
-        self._parsed_expression = expression
+    def apply_to_motion_state_chart(self):
+        self.motion_statechart.add_transition(self)
 
 
-@validated_dataclass
-class MotionStatechartNode(SubclassJSONSerializer):
-    name: str
+@dataclass(repr=False, eq=False)
+class MotionStatechartNode(cas.Symbol, SubclassJSONSerializer):
+    motion_statechart: MotionStatechartGraph = field(kw_only=True)
+    """
+    Back reference to the motion statechart that owns this node.
+    """
+    index: Optional[int] = field(default=None, init=False)
+    """
+    The index of the entity in `_world.kinematic_structure`.
+    """
+
+    life_cycle_symbol: cas.Symbol = field(init=False)
+    observation_expression: cas.Expression = field(
+        default_factory=lambda: cas.TrinaryUnknown, init=False
+    )
 
     _plot: bool = field(default=True, kw_only=True)
     _observation_expression: cas.Expression = field(
         default_factory=lambda: cas.TrinaryUnknown, init=False
     )
 
-    start_condition: StateTransitionCondition = field(
-        default_factory=StateTransitionCondition.create_true, init=False
-    )
-    pause_condition: StateTransitionCondition = field(
-        default_factory=StateTransitionCondition.create_false, init=False
-    )
-    end_condition: StateTransitionCondition = field(
-        default_factory=StateTransitionCondition.create_false, init=False
-    )
-    reset_condition: StateTransitionCondition = field(
-        default_factory=StateTransitionCondition.create_false, init=False
-    )
+    _start_condition: StateTransitionCondition = field(init=False)
+    _pause_condition: StateTransitionCondition = field(init=False)
+    _end_condition: StateTransitionCondition = field(init=False)
+    _reset_condition: StateTransitionCondition = field(init=False)
 
-    def __str__(self):
-        return self.name
+    def __post_init__(self):
+        self.life_cycle_symbol = cas.Symbol(
+            name=PrefixedName("life_cycle", str(self.name))
+        )
+        self._start_condition = StateTransitionCondition.create_true(
+            motion_statechart=self.motion_statechart
+        )
+        self._pause_condition = StateTransitionCondition.create_false(
+            motion_statechart=self.motion_statechart
+        )
+        self._end_condition = StateTransitionCondition.create_false(
+            motion_statechart=self.motion_statechart
+        )
+        self._reset_condition = StateTransitionCondition.create_false(
+            motion_statechart=self.motion_statechart
+        )
+        self.motion_statechart.add_node(self)
+
+    def __hash__(self):
+        return hash(self.name)
+
+    @property
+    def start_condition(self) -> cas.Expression:
+        return self._start_condition.expression
+
+    @start_condition.setter
+    def start_condition(self, expression: cas.Expression) -> None:
+        self._start_condition.update_expression(expression, self)
+
+    @property
+    def pause_condition(self) -> cas.Expression:
+        return self._pause_condition.expression
+
+    @pause_condition.setter
+    def pause_condition(self, expression: cas.Expression) -> None:
+        self._pause_condition.update_expression(expression, self)
+
+    @property
+    def end_condition(self) -> cas.Expression:
+        return self._end_condition.expression
+
+    @end_condition.setter
+    def end_condition(self, expression: cas.Expression) -> None:
+        self._end_condition.update_expression(expression, self)
+
+    @property
+    def reset_condition(self) -> cas.Expression:
+        return self._reset_condition.expression
+
+    @reset_condition.setter
+    def reset_condition(self, expression: cas.Expression) -> None:
+        self._reset_condition.update_expression(expression, self)
 
     def to_json(self) -> Dict[str, Any]:
         return {**super().to_json(), "name": self.name, "_plot": self._plot}
@@ -87,37 +139,6 @@ class MotionStatechartNode(SubclassJSONSerializer):
     def _from_json(cls, data: Dict[str, Any]) -> Self:
         return cls(name=data["name"], prefix=data["prefix"])
 
-    def set_unparsed_conditions(
-        self,
-        start_condition: Optional[str] = None,
-        pause_condition: Optional[str] = None,
-        end_condition: Optional[str] = None,
-        reset_condition: Optional[str] = None,
-    ):
-        if start_condition is not None:
-            self._unparsed_start_condition = start_condition
-        if pause_condition is not None:
-            self._unparsed_pause_condition = pause_condition
-        if end_condition is not None:
-            self._unparsed_end_condition = end_condition
-        if reset_condition is not None:
-            self._unparsed_reset_condition = reset_condition
-
-    def set_conditions(
-        self,
-        start_condition: cas.Expression,
-        pause_condition: cas.Expression,
-        end_condition: cas.Expression,
-        reset_condition: cas.Expression,
-    ):
-        self.logic3_start_condition = start_condition
-        self.logic3_pause_condition = pause_condition
-        self.logic3_end_condition = end_condition
-        self.logic3_reset_condition = reset_condition
-
-    def __eq__(self, other: MotionStatechartNode) -> bool:
-        return self.name == other.name
-
     def formatted_name(self, quoted: bool = False) -> str:
         formatted_name = string_shortener(
             original_str=str(self.name), max_lines=4, max_line_length=25
@@ -125,11 +146,13 @@ class MotionStatechartNode(SubclassJSONSerializer):
         result = (
             f"{formatted_name}\n"
             f"----start_condition----\n"
-            f"{god_map.motion_statechart_manager.format_condition(self.start_condition)}\n"
+            f"{str(self._start_condition)}\n"
             f"----pause_condition----\n"
-            f"{god_map.motion_statechart_manager.format_condition(self.pause_condition)}\n"
+            f"{str(self._pause_condition)}\n"
             f"----end_condition----\n"
-            f"{god_map.motion_statechart_manager.format_condition(self.end_condition)}"
+            f"{str(self._end_condition)}\n"
+            f"----reset_condition----\n"
+            f"{str(self._end_condition)}"
         )
         if quoted:
             return '"' + result + '"'
@@ -144,74 +167,11 @@ class MotionStatechartNode(SubclassJSONSerializer):
             expression, self
         )
 
-    @property
-    def observation_expression(self) -> cas.Expression:
-        return self._observation_expression
 
-    @observation_expression.setter
-    def observation_expression(self, expression: cas.Expression) -> None:
-        self._observation_expression = expression
+@dataclass
+class EndMotion(MotionStatechartNode): ...
 
-    @cached_property
-    def observation_state_symbol(self) -> cas.Symbol:
-        raise NotImplementedError("observation_state property is not implemented")
 
-    @cached_property
-    def life_cycle_state_symbol(self) -> cas.Symbol:
-        raise NotImplementedError("life_cycle_state property is not implemented")
-
-    @property
-    def start_condition(self) -> str:
-        if self._unparsed_start_condition is None:
-            return "True"
-        return quote_node_names(self._unparsed_start_condition)
-
-    @start_condition.setter
-    def start_condition(self, value: Union[str, MotionStatechartNode]) -> None:
-        if isinstance(value, MotionStatechartNode):
-            value = value.name
-        if value == "":
-            value = "True"
-        self._unparsed_start_condition = value
-
-    @property
-    def pause_condition(self) -> str:
-        if self._unparsed_pause_condition is None:
-            return "False"
-        return quote_node_names(self._unparsed_pause_condition)
-
-    @pause_condition.setter
-    def pause_condition(self, value: Union[str, MotionStatechartNode]) -> None:
-        if isinstance(value, MotionStatechartNode):
-            value = value.name
-        if value == "":
-            value = "False"
-        self._unparsed_pause_condition = value
-
-    @property
-    def end_condition(self) -> str:
-        if self._unparsed_end_condition is None:
-            return "False"
-        return quote_node_names(self._unparsed_end_condition)
-
-    @end_condition.setter
-    def end_condition(self, value: Union[str, MotionStatechartNode]) -> None:
-        if isinstance(value, MotionStatechartNode):
-            value = value.name
-        if value == "":
-            value = "False"
-        self._unparsed_end_condition = value
-
-    @property
-    def reset_condition(self) -> str:
-        if self._unparsed_reset_condition is None:
-            return "False"
-        return quote_node_names(self._unparsed_reset_condition)
-
-    @reset_condition.setter
-    def reset_condition(self, value: Union[str, MotionStatechartNode]) -> None:
-        if isinstance(value, MotionStatechartNode):
-            value = value.name
-        if value == "":
-            value = "False"
-        self._unparsed_reset_condition = value
+@dataclass
+class CancelMotion(MotionStatechartNode):
+    exception: Exception = field(kw_only=True)
