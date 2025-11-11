@@ -255,7 +255,9 @@ class Collisions:
         link_a = collision.original_body_a
         link_b = collision.original_body_b
         new_link_a, new_link_b = (
-            god_map.world.compute_chain_reduced_to_controlled_joints(link_a, link_b)
+            god_map.world.compute_chain_reduced_to_controlled_connections(
+                link_a, link_b
+            )
         )
         if new_link_a.name > new_link_b.name:
             collision = collision.reverse()
