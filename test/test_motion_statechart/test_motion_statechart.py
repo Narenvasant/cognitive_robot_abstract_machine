@@ -377,6 +377,29 @@ def test_cancel_motion():
     msc.draw("muh.pdf")
 
 
+def test_draw_with_invisible_node():
+    msc = MotionStatechart()
+    msc.add_nodes(
+        [
+            sequence := Sequence(
+                nodes=[s1n1 := ConstTrueNode(), s1n2 := ConstTrueNode()]
+            ),
+            sequence2 := Sequence(
+                nodes=[s2n1 := ConstTrueNode(), s2n2 := ConstTrueNode()]
+            ),
+        ]
+    )
+    msc.add_node(EndMotion.when_all_true(msc.nodes))
+
+    sequence.plot_specs.visible = False
+    s1n2.plot_specs.visible = False
+    s2n2.plot_specs.visible = False
+
+    kin_sim = Executor(world=World())
+    kin_sim.compile(motion_statechart=msc)
+    msc.draw("muh.pdf")
+
+
 def test_joint_goal():
     world = World()
     with world.modify_world():

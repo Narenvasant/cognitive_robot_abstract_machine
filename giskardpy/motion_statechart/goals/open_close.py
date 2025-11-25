@@ -12,7 +12,6 @@ from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList, Joi
 from semantic_digital_twin.spatial_types.spatial_types import trinary_logic_and
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from semantic_digital_twin.world_description.world_entity import (
-    Body,
     KinematicStructureEntity,
 )
 
