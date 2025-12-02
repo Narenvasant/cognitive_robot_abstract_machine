@@ -786,9 +786,10 @@ class QueryObjectDescriptor(SymbolicExpression[T], ABC):
                     res if not on else {k: v for k, v in res.items() if k in on_ids}
                 )
                 bindings = {k: v.value for k, v in bindings.items()}
-                if not self._seen_results.check(bindings):
-                    yield res
-                    self._seen_results.add(bindings)
+                if self._seen_results.check(bindings):
+                    continue
+                yield res
+                self._seen_results.add(bindings)
 
         self._results_mapping.append(get_distinct_results)
         return self
