@@ -739,8 +739,6 @@ class QueryObjectDescriptor(SymbolicExpression[T], ABC):
         :param descending: Whether to order the results in descending order.
         :param key: A function to extract the key from the variable value.
         """
-        if not key:
-            key = lambda x: x
         self._order_by = OrderByParams(variable, descending, key)
         return self
 
@@ -756,7 +754,10 @@ class QueryObjectDescriptor(SymbolicExpression[T], ABC):
 
         def key(result: Dict[int, HashedValue]) -> Any:
             variable_value = result[self._order_by.variable._id_].value
-            return self._order_by.key(variable_value)
+            if self._order_by.key:
+                return self._order_by.key(variable_value)
+            else:
+                return variable_value
 
         results = sorted(
             results,
