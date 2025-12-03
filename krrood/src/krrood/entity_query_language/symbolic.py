@@ -619,7 +619,7 @@ class EntityAggregator(Aggregator[T], ABC):
 @dataclass(eq=False, repr=False)
 class Sum(EntityAggregator[T]):
     """
-    Calculate the sum of the child results. If given, make use of the key function to extract the value to be compared.
+    Calculate the sum of the child results. If given, make use of the key function to extract the value to be summed.
     """
 
     def _apply_aggregation_function_(self, child_results: Iterable[OperationResult]) -> Dict[int, HashedValue]:
