@@ -56,5 +56,5 @@ def _quantify_entity(
     :return: The quantified entity.
     """
     if isinstance(entity_, Match):
-        return entity_._quantify(quantifier, **quantifier_kwargs)
+        return entity_._quantify_(quantifier, **quantifier_kwargs)._resolve_()
     return quantifier(entity_, **quantifier_kwargs)

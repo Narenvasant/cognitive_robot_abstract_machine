@@ -384,10 +384,6 @@ class Selectable(SymbolicExpression[T], ABC):
     For example, this is the case for the ResultQuantifiers & QueryDescriptors that operate on a single selected
     variable.
     """
-    _type_: Type[T] = field(init=False, default=None)
-    """
-    The type of the variable.
-    """
 
     def _process_result_(
             self, result: OperationResult
@@ -411,10 +407,6 @@ class Selectable(SymbolicExpression[T], ABC):
             return self._var_._is_iterable_
         return False
 
-    @cached_property
-    def _type__(self):
-        return self._var_._type_ if self._var_ else None
-
 
 
 @dataclass(eq=False, repr=False)
@@ -428,6 +420,14 @@ class CanBehaveLikeAVariable(Selectable[T], ABC):
     """
     The path of the variable in the symbol graph as a sequence of relation instances.
     """
+    _type_: Type[T] = field(init=False, default=None)
+    """
+    The type of the variable.
+    """
+
+    @cached_property
+    def _type__(self):
+        return self._var_._type_ if self._var_ else None
 
     def __getattr__(self, name: str) -> CanBehaveLikeAVariable[T]:
         # Prevent debugger/private attribute lookups from being interpreted as symbolic attributes

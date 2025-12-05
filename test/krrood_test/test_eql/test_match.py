@@ -63,7 +63,7 @@ def test_select(handles_and_containers_world):
             child=handle,
         ).domain_from(world.connections))
     container_and_handle = select(container:=fixed_connection.parent,
-                                  handle:=fixed_connection.child)
+                                  handle:=fixed_connection.child)._expression_
 
     assert isinstance(container_and_handle._child_, SetOf)
 
