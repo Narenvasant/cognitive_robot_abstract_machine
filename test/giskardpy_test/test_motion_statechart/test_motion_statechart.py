@@ -61,7 +61,6 @@ from giskardpy.motion_statechart.test_nodes.test_nodes import (
     ConstFalseNode,
 )
 from giskardpy.qp.exceptions import HardConstraintsViolatedException
-from giskardpy.qp.qp_controller_config import QPControllerConfig
 from giskardpy.utils.math import angle_between_vector
 from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
     KinematicStructureEntityKwargsTracker,
@@ -91,8 +90,6 @@ from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFr
 from semantic_digital_twin.world_description.geometry import Cylinder
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
-
-
 
 
 def test_condition_to_str():
@@ -1397,7 +1394,7 @@ def _run_and_get_cycles(world: World, goal_node, limit_node):
     end.start_condition = goal_node.observation_variable
 
     kin_sim = Executor(
-        world=world, controller_config=QPControllerConfig.create_default_with_50hz()
+        world=world,
     )
     kin_sim.compile(motion_statechart=msc)
     kin_sim.tick_until_end()
