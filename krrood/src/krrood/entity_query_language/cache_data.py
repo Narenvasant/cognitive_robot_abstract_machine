@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Generic, Iterable, List
-
 from .utils import T
 
 """
@@ -10,7 +8,7 @@ Cache utilities.
 This module provides caching datastructures and utilities.
 """
 from dataclasses import dataclass, field
-from typing_extensions import Dict
+from typing_extensions import Dict, Generic, Iterable, List
 
 
 @dataclass
