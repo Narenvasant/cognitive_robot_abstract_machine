@@ -1,7 +1,7 @@
 import os
-from typing import Optional
+from typing import Optional, Dict
 import numpy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import mujoco
 from scipy.spatial.transform import Rotation
@@ -36,7 +36,12 @@ from ..world_description.inertial_properties import (
     PrincipalAxes,
 )
 from ..world_description.shape_collection import ShapeCollection
-from .multi_sim import MujocoActuator, GeomVisibilityAndCollisionType, MujocoCamera
+from .multi_sim import (
+    MujocoActuator,
+    GeomVisibilityAndCollisionType,
+    MujocoCamera,
+    MujocoEquality,
+)
 
 
 @dataclass
@@ -48,6 +53,11 @@ class MJCFParser:
     file_path: str
     """
     The file path of the scene.
+    """
+
+    mimic_joints: Dict[str, str] = field(default_factory=dict)
+    """
+    A dictionary mapping joint names to the names of the joints they mimic.
     """
 
     prefix: Optional[str] = None
@@ -70,6 +80,8 @@ class MJCFParser:
 
         worldbody: mujoco.MjsBody = self.spec.worldbody
         with self.world.modify_world():
+            self.parse_equalities()
+
             root = Body(name=PrefixedName(worldbody.name))
             self.world.add_body(root)
 
@@ -407,6 +419,8 @@ class MJCFParser:
         try:
             return self.world.get_degree_of_freedom_by_name(dof_name)
         except WorldEntityNotFoundError:
+            if dof_name in self.mimic_joints:
+                dof_name = self.mimic_joints[dof_name]
             if (
                 mujoco_joint.range is None
                 or mujoco_joint.range[0] == 0
@@ -527,3 +541,28 @@ class MJCFParser:
             quat=quat,
         )
         self.world.add_semantic_annotation(camera)
+
+    def parse_equalities(self):
+        self.mimic_joints = {}
+        equality: mujoco.MjsEquality
+        for equality in self.spec.equalities:
+            match equality.type:
+                case mujoco.mjtEq.mjEQ_JOINT:
+                    self.mimic_joints[equality.name2] = equality.name1
+                case mujoco.mjtEq.mjEQ_WELD:
+                    equality_data = equality.data
+                    # if numpy.isclose(equality_data[-3:], 0.0).all():
+                    #     equality_data[-3:] = numpy.array([0.0, 0.0, 0.0, 0.0])
+                    self.world.add_semantic_annotation(
+                        MujocoEquality(
+                            type=mujoco.mjtEq.mjEQ_WELD,
+                            objtype=mujoco.mjtObj.mjOBJ_BODY,
+                            name1=equality.name1,
+                            name2=equality.name2,
+                            data=equality_data,
+                        )
+                    )
+                case _:
+                    print(
+                        f"Warning: Equality of type {equality.type} not supported yet. Skipping."
+                    )

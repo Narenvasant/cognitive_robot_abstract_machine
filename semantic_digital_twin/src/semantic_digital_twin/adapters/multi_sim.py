@@ -544,6 +544,11 @@ class Connection1DOFConverter(ConnectionConverter, ABC):
                 self.damping_str: entity.dynamics.damping,
             }
         )
+        if dof.name.name != joint_props["name"]:
+            joint_props["equality_joint"] = {
+                "joint": dof.name.name,
+                "data": [entity.offset, entity.multiplier, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            }
         return joint_props
 
 
@@ -788,6 +793,19 @@ class MujocoCamera(MultiSimCamera):
     ipd: float = 0.068
     pos: list = field(default_factory=lambda: [0, 0, 0])
     quat: list = field(default_factory=lambda: [1, 0, 0, 0])
+
+
+@dataclass(eq=False)
+class MujocoEquality(SemanticAnnotation):
+    """
+    Semantic annotation declaring that two MuJoCo entities are constrained.
+    """
+
+    type: mujoco.mjtEq
+    objtype: mujoco.mjtObj
+    name1: str
+    name2: str
+    data: List[float]
 
 
 class MujocoConverter(EntityConverter, ABC): ...
@@ -1061,7 +1079,7 @@ class MultiSimBuilder(ABC):
         for actuator in world.actuators:
             self._build_actuator(actuator=actuator)
 
-        self._end_build(file_path=file_path)
+        self._end_build(file_path=file_path, world=world)
 
     def build_body(self, body: Body):
         """
@@ -1104,11 +1122,12 @@ class MultiSimBuilder(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _end_build(self, file_path: str):
+    def _end_build(self, file_path: str, world: World):
         """
         Ends the building process for the simulator and saves the world to a file.
 
         :param file_path: The file path to save the world to.
+        :param world: The world that was built.
         """
         raise NotImplementedError
 
@@ -1196,7 +1215,8 @@ class MujocoBuilder(MultiSimBuilder):
         self.spec.modelname = "scene"
         self.spec.compiler.degree = 0
 
-    def _end_build(self, file_path: str):
+    def _end_build(self, file_path: str, world: World):
+        self._build_equalities(world=world)
         self.spec.compile()
         self.spec.to_file(file_path)
         import xml.etree.ElementTree as ET
@@ -1331,6 +1351,15 @@ class MujocoBuilder(MultiSimBuilder):
         if isinstance(connection, FixedConnection):
             return
         joint_props = MujocoJointConverter.convert(connection)
+        if "equality_joint" in joint_props:
+            equality_joint = joint_props.pop("equality_joint")
+            equality = self.spec.add_equality()
+            equality.type = mujoco.mjtEq.mjEQ_JOINT
+            equality.objtype = mujoco.mjtObj.mjOBJ_JOINT
+            equality.name1 = joint_props["name"]
+            equality.name2 = equality_joint["joint"]
+            equality.data = equality_joint["data"]
+
         child_body_name = connection.child.name.name
         child_body_spec = self._find_entity(
             entity_type=mujoco.mjtObj.mjOBJ_BODY, entity_name=child_body_name
@@ -1430,6 +1459,20 @@ class MujocoBuilder(MultiSimBuilder):
                 entity_type=mujoco.mjtObj.mjOBJ_BODY,
                 action="add",
             )
+
+    def _build_equalities(self, world: World):
+        """
+        Builds all equalities in the Mujoco spec.
+        """
+        for equality_semantic_annotation in world.get_semantic_annotations_by_type(
+            MujocoEquality
+        ):
+            equality = self.spec.add_equality()
+            equality.type = equality_semantic_annotation.type
+            equality.objtype = equality_semantic_annotation.objtype
+            equality.name1 = equality_semantic_annotation.name1
+            equality.name2 = equality_semantic_annotation.name2
+            equality.data = equality_semantic_annotation.data
 
     def _find_entity(
         self,
