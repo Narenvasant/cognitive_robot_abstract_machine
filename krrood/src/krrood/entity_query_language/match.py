@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from functools import cached_property
 
 import typing_extensions
-from markdown_it.common.html_re import attr_name
 from typing_extensions import Optional, Type, Dict, Any, List, Union, Self, Iterable, Set, Generic
 
 from krrood.entity_query_language.symbolic import Exists, ResultQuantifier, An, DomainType, Variable, Flatten
