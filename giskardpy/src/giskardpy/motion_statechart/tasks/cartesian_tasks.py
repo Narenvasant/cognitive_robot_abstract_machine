@@ -12,9 +12,11 @@ from giskardpy.motion_statechart.binding_policy import (
 )
 from giskardpy.motion_statechart.context import BuildContext, ExecutionContext
 from giskardpy.motion_statechart.data_types import DefaultWeights
+from giskardpy.motion_statechart.goals.templates import Parallel
 from giskardpy.motion_statechart.graph_node import (
     NodeArtifacts,
     DebugExpression,
+    MotionStatechartNode,
 )
 from giskardpy.motion_statechart.graph_node import Task
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -417,59 +419,59 @@ class CartesianRotationVelocityLimit(Task):
 
 
 @dataclass(eq=False, repr=False)
-class CartesianVelocityLimit(Task):
+class CartesianVelocityLimit(Parallel):
     """
-    This goal will use put a strict limit on the Cartesian velocity. This will require a lot of constraints, thus
-    slowing down the system noticeably.
+    Combines both linear and angular velocity limits for a kinematic chain.
+
+    This task enforces strict caps on both the linear and angular velocities of
+    a tip link relative to a root link by combining CartesianPositionVelocityLimit
+    and CartesianRotationVelocityLimit tasks in parallel.
+
+    .. warning::
+       Strict Cartesian velocity limits typically require many constraints to be
+       added to the optimization problem and can substantially slow down the
+       system. If runtime or responsiveness is important,
+       prefer larger limits or softer (lower-weight) constraints
     """
 
     root_link: KinematicStructureEntity = field(kw_only=True)
-    """root link of the kinematic chain."""
+    """Root link of the kinematic chain. Defines the reference frame from which the tip's motion is measured."""
     tip_link: KinematicStructureEntity = field(kw_only=True)
-    """tip link of the kinematic chain."""
+    """Tip link of the kinematic chain. Both translational and rotational velocities of this link (expressed in the root link frame) are constrained."""
     max_linear_velocity: float = field(default=0.1, kw_only=True)
-    """in m/s"""
+    """Maximum allowed linear speed of the tip in meters per second (m/s).
+    Default: 0.1 m/s. The enforcement ensures the Euclidean norm of the
+    tip-frame translational velocity does not exceed this value."""
     max_angular_velocity: float = field(default=0.5, kw_only=True)
-    """in rad/s"""
+    """Maximum allowed angular speed. Interpreted in radians per second (rad/s).
+    Default: 0.5 rad/s. The enforcement ensures the magnitude of the instantaneous
+    rotation rate does not exceed this threshold."""
     weight: float = field(default=DefaultWeights.WEIGHT_ABOVE_CA, kw_only=True)
+    """Optimization weight determining how strongly both velocity
+    limits are enforced. Larger values increase enforcement priority at the
+    cost of potentially making the optimization problem harder to solve."""
+    nodes: List[MotionStatechartNode] = field(default_factory=list, init=False)
+    """List of motion nodes that run in parallel and enforce the velocity limits.
+    Contains a CartesianPositionVelocityLimit and CartesianRotationVelocityLimit node 
+    by default. Populated in __post_init__()."""
 
-    def build(self, context: BuildContext) -> NodeArtifacts:
-        artifacts = NodeArtifacts()
-        root_T_tip = context.world.compose_forward_kinematics_expression(
-            self.root_link, self.tip_link
-        )
-        root_P_tip = root_T_tip.to_position()
-        root_R_tip = root_T_tip.to_rotation_matrix()
-        artifacts.constraints.add_translational_velocity_limit(
-            frame_P_current=root_P_tip,
-            max_velocity=self.max_linear_velocity,
+    def __post_init__(self):
+        super().__post_init__()
+
+        translational = CartesianPositionVelocityLimit(
+            root_link=self.root_link,
+            tip_link=self.tip_link,
+            max_linear_velocity=self.max_linear_velocity,
             weight=self.weight,
         )
-        artifacts.constraints.add_rotational_velocity_limit(
-            frame_R_current=root_R_tip,
-            max_velocity=self.max_angular_velocity,
+        rotational = CartesianRotationVelocityLimit(
+            root_link=self.root_link,
+            tip_link=self.tip_link,
+            max_angular_velocity=self.max_angular_velocity,
             weight=self.weight,
         )
-
-        position_variables: List[PositionVariable] = root_P_tip.free_variables()
-        velocity_variables = [p.dof.variables.velocity for p in position_variables]
-        root_P_tip_dot = cas.Expression(root_P_tip).total_derivative(
-            position_variables, velocity_variables
-        )
-
-        _, angle = root_R_tip.to_axis_angle()
-        angle_variables: List[PositionVariable] = angle.free_variables()
-        angle_velocities = [v.dof.variables.velocity for v in angle_variables]
-        angle_dot = cas.Expression(angle).total_derivative(
-            angle_variables, angle_velocities
-        )
-
-        artifacts.observation = cas.logic_and(
-            root_P_tip_dot.norm() <= self.max_linear_velocity,
-            cas.abs(angle_dot) <= self.max_angular_velocity,
-        )
-
-        return artifacts
+        self.nodes.append(translational)
+        self.nodes.append(rotational)
 
 
 @dataclass
