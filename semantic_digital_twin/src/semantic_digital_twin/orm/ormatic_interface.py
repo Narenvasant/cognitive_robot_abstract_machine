@@ -502,35 +502,6 @@ class HasHandleDAO(
     }
 
 
-class HasHingeDAO(
-    HasActiveConnectionDAO,
-    DataAccessObject[semantic_digital_twin.semantic_annotations.mixins.HasHinge],
-):
-
-    __tablename__ = "HasHingeDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(HasActiveConnectionDAO.database_id),
-        primary_key=True,
-        use_existing_column=True,
-    )
-
-    hinge_id: Mapped[int] = mapped_column(
-        ForeignKey("HingeDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-
-    hinge: Mapped[HingeDAO] = relationship(
-        "HingeDAO", uselist=False, foreign_keys=[hinge_id], post_update=True
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "HasHingeDAO",
-        "inherit_condition": database_id == HasActiveConnectionDAO.database_id,
-    }
-
-
 class HasLeftRightDoorDAO(
     HasDoorsDAO,
     DataAccessObject[
@@ -547,6 +518,56 @@ class HasLeftRightDoorDAO(
     __mapper_args__ = {
         "polymorphic_identity": "HasLeftRightDoorDAO",
         "inherit_condition": database_id == HasDoorsDAO.database_id,
+    }
+
+
+class HasRevoluteConnectionDAO(
+    HasActiveConnectionDAO,
+    DataAccessObject[
+        semantic_digital_twin.semantic_annotations.mixins.HasRevoluteConnection
+    ],
+):
+
+    __tablename__ = "HasRevoluteConnectionDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        ForeignKey(HasActiveConnectionDAO.database_id),
+        primary_key=True,
+        use_existing_column=True,
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "HasRevoluteConnectionDAO",
+        "inherit_condition": database_id == HasActiveConnectionDAO.database_id,
+    }
+
+
+class HasHingeDAO(
+    HasRevoluteConnectionDAO,
+    DataAccessObject[semantic_digital_twin.semantic_annotations.mixins.HasHinge],
+):
+
+    __tablename__ = "HasHingeDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        ForeignKey(HasRevoluteConnectionDAO.database_id),
+        primary_key=True,
+        use_existing_column=True,
+    )
+
+    hinge_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
+        ForeignKey("HingeDAO.database_id", use_alter=True),
+        nullable=True,
+        use_existing_column=True,
+    )
+
+    hinge: Mapped[HingeDAO] = relationship(
+        "HingeDAO", uselist=False, foreign_keys=[hinge_id], post_update=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "HasHingeDAO",
+        "inherit_condition": database_id == HasRevoluteConnectionDAO.database_id,
     }
 
 
@@ -2336,7 +2357,7 @@ class DoorDAO(
         ForeignKey(HasBodyDAO.database_id), primary_key=True, use_existing_column=True
     )
 
-    hinge_id: Mapped[int] = mapped_column(
+    hinge_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
         ForeignKey("HingeDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,

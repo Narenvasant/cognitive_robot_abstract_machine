@@ -210,7 +210,7 @@ class HasBody(SemanticAnnotation, ABC):
         cls,
         name: PrefixedName,
         world: World,
-        parent: Optional[KinematicStructureEntity] = None,
+        parent: KinematicStructureEntity,
         parent_T_self: Optional[TransformationMatrix] = None,
         **kwargs,
     ) -> Self: ...
@@ -218,7 +218,6 @@ class HasBody(SemanticAnnotation, ABC):
     @classmethod
     def _create_with_fixed_connection_in_world(cls, world, body, parent, parent_T_self):
         self_instance = cls(body=body)
-        parent = parent if parent is not None else world.root
         parent_T_self = (
             parent_T_self if parent_T_self is not None else TransformationMatrix()
         )
@@ -226,13 +225,12 @@ class HasBody(SemanticAnnotation, ABC):
         with world.modify_world():
             world.add_semantic_annotation(self_instance)
             world.add_body(body)
-            if parent is not None:
-                parent_C_self = FixedConnection(
-                    parent=parent,
-                    child=body,
-                    parent_T_connection_expression=parent_T_self,
-                )
-                world.add_connection(parent_C_self)
+            parent_C_self = FixedConnection(
+                parent=parent,
+                child=body,
+                parent_T_connection_expression=parent_T_self,
+            )
+            world.add_connection(parent_C_self)
 
         return self_instance
 
@@ -283,6 +281,40 @@ class HasActiveConnection(ABC):
 class HasRevoluteConnection(HasActiveConnection):
 
     @classmethod
+    def _create_with_revolute_connection_in_world(
+        cls, world: World, body: Body, parent, parent_T_self
+    ):
+        parent = parent if parent is not None else world.root
+        parent_world = parent._world if parent is not None else world
+
+        if connection_limits is not None:
+            if connection_limits[0].position <= connection_limits[1].position:
+                raise ValueError("Upper limit must be greater than lower limit.")
+        else:
+            connection_limits = cls.create_default_upper_lower_limits(
+                parent_T_self, opening_axis
+            )
+
+        dof = DegreeOfFreedom(
+            name=PrefixedName(f"{body.name.name}_hinge_dof", body.name.prefix),
+            upper_limits=connection_limits[0],
+            lower_limits=connection_limits[1],
+        )
+
+        world.add_degree_of_freedom(dof)
+        parent_C_hinge = RevoluteConnection(
+            parent=world.root,
+            child=hinge_body,
+            parent_T_connection_expression=parent_T_self,
+            multiplier=connection_multiplier,
+            offset=connection_offset,
+            axis=opening_axis,
+            dof_id=dof.id,
+        )
+
+        parent_world.add_connection(parent_C_hinge)
+
+    @classmethod
     def create_default_upper_lower_limits(
         cls, parent_T_child: TransformationMatrix, axis: Vector3
     ) -> Tuple[DerivativeMap[float], DerivativeMap[float]]:
@@ -319,7 +351,7 @@ class HasRevoluteConnection(HasActiveConnection):
 
 
 @dataclass(eq=False)
-class HasHinge(HasActiveConnection, ABC):
+class HasHinge(HasRevoluteConnection, ABC):
     """
     A mixin class for semantic annotations that have hinge joints.
     """
@@ -328,15 +360,13 @@ class HasHinge(HasActiveConnection, ABC):
 
     def add_hinge(
         self: HasBody | Self,
-        parent_world: World,
-        hinge_T_self: TransformationMatrix,
-        opening_axis: Vector3,
+        hinge: Hinge,
+        opening_axis: Vector3 = Vector3.Z(),
         connection_limits: Optional[
             Tuple[DerivativeMap[float], DerivativeMap[float]]
         ] = None,
         connection_multiplier: float = 1.0,
         connection_offset: float = 0.0,
-        parent: Optional[KinematicStructureEntity] = None,
     ):
         """
         Adds a door to the parent world using a new door hinge body with a revolute connection.
@@ -346,73 +376,64 @@ class HasHinge(HasActiveConnection, ABC):
         to the parent world.
         :param parent_world: The world to which the door will be added.
         """
-        parent = parent_world.root if parent is None else parent
+        if hinge._world != self._world:
+            raise ValueError("Hinge must be part of the same world as the door.")
 
-        if parent._world != parent_world:
-            raise ValueError(
-                "Parent world does not match the world of the parent kinematic structure entity."
-            )
+        world = self._world
 
+        world_T_hinge = hinge.body.global_pose
+        world_T_self = self.body.global_pose
+        hinge_T_self = world_T_hinge.inverse() @ world_T_self
+
+        hinge_body = hinge.body
+        hinge_parent = hinge_body.parent_connection.parent
+        new_hinge_parent = (
+            hinge_parent
+            if hinge_parent != self.body
+            else self.body.parent_kinematic_structure_entity
+        )
         if connection_limits is not None:
             if connection_limits[0].position <= connection_limits[1].position:
                 raise ValueError("Upper limit must be greater than lower limit.")
         else:
-            connection_limits = self._create_door_upper_lower_limits(
-                parent_T_hinge, opening_axis
+            connection_limits = self.create_default_upper_lower_limits(
+                hinge_T_self, opening_axis
             )
 
-        with parent_world.modify_world():
-            hinge_body = self._add_hinge_to_world(
-                parent,
-                parent_T_hinge,
-                opening_axis,
-                connection_limits,
-                connection_multiplier,
-                connection_offset,
+        with world.modify_world():
+            parent_C_self = self.body.parent_connection
+            world.remove_connection(parent_C_self)
+
+            hinge_C_self = FixedConnection(
+                parent=hinge_body,
+                child=self.body,
+                parent_T_connection_expression=hinge_T_self,
             )
-            hinge_C_child = FixedConnection(hinge_body, self.body, hinge_T_child)
-            parent_world.add_connection(hinge_C_child)
+            world.add_connection(hinge_C_self)
 
-    def _add_hinge_to_world(
-        self: HasBody | Self,
-        parent: KinematicStructureEntity,
-        parent_T_hinge: TransformationMatrix,
-        opening_axis: Vector3,
-        connection_limits,
-        multiplier: float = 1.0,
-        offset: float = 0.0,
-    ):
-        """
-        Adds a hinge to the door. The hinge's pivot point is on the opposite side of the handle.
-        :param door_factory: The factory used to create the door.
-        :param parent_T_door: The transformation matrix defining the door's position and orientation relative
-        :param opening_axis: The axis around which the door opens.
-        """
-        parent_world = parent._world
-        hinge_body = Body(
-            name=PrefixedName(f"{self.name.name}_hinge", self.name.prefix)
-        )
+            parent_C_hinge = hinge_body.parent_connection
+            new_parent_T_hinge = world._forward_kinematic_manager.compute(
+                new_hinge_parent, hinge_body
+            )
+            world.remove_connection(parent_C_hinge)
 
-        dof = DegreeOfFreedom(
-            name=PrefixedName(f"{self.name.name}_hinge_dof", self.name.prefix),
-            upper_limits=connection_limits[0],
-            lower_limits=connection_limits[1],
-        )
+            dof = DegreeOfFreedom(
+                name=PrefixedName(f"{self.name.name}_hinge_dof", self.name.prefix),
+                upper_limits=connection_limits[0],
+                lower_limits=connection_limits[1],
+            )
+            world.add_degree_of_freedom(dof)
 
-        parent_world.add_degree_of_freedom(dof)
-        parent_C_hinge = RevoluteConnection(
-            parent=parent_world.root,
-            child=hinge_body,
-            parent_T_connection_expression=parent_T_hinge,
-            multiplier=multiplier,
-            offset=offset,
-            axis=opening_axis,
-            dof_id=dof.id,
-        )
-
-        parent_world.add_connection(parent_C_hinge)
-
-        return hinge_body
+            hinge_C_hinge = RevoluteConnection(
+                parent=new_hinge_parent,
+                child=hinge.body,
+                parent_T_connection_expression=new_parent_T_hinge,
+                multiplier=connection_multiplier,
+                offset=connection_offset,
+                axis=opening_axis,
+                dof_id=dof.id,
+            )
+            world.add_connection(hinge_C_hinge)
 
 
 @dataclass(eq=False)
@@ -623,35 +644,6 @@ class HasHandle(ABC):
                 handle_position
             ),
         )
-
-    def _resolve_parent_T_handle(
-        self: HasBody, handle_position: HandlePosition
-    ) -> Optional[TransformationMatrix]:
-        """
-        Return a transformation matrix that defines the position and orientation of the handle relative to its parent.
-        :raises: NotImplementedError if the handle direction is Z or NEGATIVE_Z.
-        """
-
-        match handle_position:
-            case SemanticPositionDescription():
-                min_bounds, max_bounds = self.body.combined_mesh.bounding_box.bounds
-                min_point = Point3.from_iterable(min_bounds)
-                max_point = Point3.from_iterable(max_bounds)
-                body_bounding_box = BoundingBox.from_min_max(min_point, max_point)
-                body_as_event = body_bounding_box.simple_event.as_composite_set()
-                sampled_2d_point = handle_position.sample_point_from_event(
-                    body_as_event.marginal(SpatialVariables.yz)
-                )
-
-                return TransformationMatrix.from_xyz_rpy(
-                    x=body_bounding_box.depth / 2,
-                    y=sampled_2d_point[0],
-                    z=sampled_2d_point[1],
-                )
-            case TransformationMatrix():
-                return handle_position
-            case _:
-                assert_never(handle_position)
 
 
 @dataclass(eq=False)

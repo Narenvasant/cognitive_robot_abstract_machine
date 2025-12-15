@@ -63,7 +63,7 @@ class Handle(HasBody):
         cls,
         name: PrefixedName,
         world: World,
-        parent: Optional[KinematicStructureEntity] = None,
+        parent: KinematicStructureEntity,
         parent_T_self: Optional[TransformationMatrix] = None,
         *,
         scale: Scale = Scale(0.1, 0.02, 0.02),
@@ -138,7 +138,7 @@ class Aperture(HasRegion):
 
 
 @dataclass(eq=False)
-class Hinge(HasBody, HasRevoluteConnection):
+class Hinge(HasBody):
     """
     A hinge is a physical entity that connects two bodies and allows one to rotate around a fixed axis.
     """
@@ -148,47 +148,15 @@ class Hinge(HasBody, HasRevoluteConnection):
         cls,
         name: PrefixedName,
         world: World,
-        parent: Optional[KinematicStructureEntity] = None,
+        parent: KinematicStructureEntity,
         parent_T_self: Optional[TransformationMatrix] = None,
-        *,
-        opening_axis: Vector3 = Vector3.Z(),
-        connection_limits: Optional[
-            Tuple[DerivativeMap[float], DerivativeMap[float]]
-        ] = None,
-        connection_multiplier: float = 1.0,
-        connection_offset: float = 0.0,
+        **kwargs,
     ) -> Self:
         hinge_body = Body(name=name)
-        parent_world = parent._world
 
-        if connection_limits is not None:
-            if connection_limits[0].position <= connection_limits[1].position:
-                raise ValueError("Upper limit must be greater than lower limit.")
-        else:
-            connection_limits = cls.create_default_upper_lower_limits(
-                parent_T_self, opening_axis
-            )
-
-        dof = DegreeOfFreedom(
-            name=PrefixedName(f"{name.name}_hinge_dof", name.prefix),
-            upper_limits=connection_limits[0],
-            lower_limits=connection_limits[1],
+        return cls._create_with_fixed_connection_in_world(
+            world, hinge_body, parent, parent_T_self
         )
-
-        parent_world.add_degree_of_freedom(dof)
-        parent_C_hinge = RevoluteConnection(
-            parent=parent_world.root,
-            child=hinge_body,
-            parent_T_connection_expression=parent_T_self,
-            multiplier=connection_multiplier,
-            offset=connection_offset,
-            axis=opening_axis,
-            dof_id=dof.id,
-        )
-
-        parent_world.add_connection(parent_C_hinge)
-
-        return hinge_body
 
 
 @dataclass(eq=False)
@@ -202,7 +170,7 @@ class Door(HasBody, HasHandle, HasHinge):
         cls,
         name: PrefixedName,
         world: World,
-        parent: Optional[KinematicStructureEntity] = None,
+        parent: KinematicStructureEntity,
         parent_T_self: Optional[TransformationMatrix] = None,
         *,
         scale: Scale = Scale(0.03, 1, 2),
