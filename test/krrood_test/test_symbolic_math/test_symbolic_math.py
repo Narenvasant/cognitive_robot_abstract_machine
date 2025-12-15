@@ -950,6 +950,21 @@ class TestVector:
             # noinspection PyTypeChecker
             assert float(cas.Vector([1, 2]))
 
+    def test_iterable(self):
+        data = np.array([3, 1, 4, 1, 5])
+        v = cas.Vector(data)
+        iter_values = [float(x) for x in v]
+        assert np.allclose(iter_values, list(data))
+        assert all(isinstance(x, cas.Scalar) for x in v)
+
+    def test_iterable_slice(self):
+        data = np.array([10, 20, 30, 40])
+        v = cas.Vector(data)
+        s = v[1:3]
+        iter_values = [float(x) for x in s]
+        assert np.allclose(iter_values, list(data[1:3]))
+        assert all(isinstance(x, cas.Scalar) for x in s)
+
     def test_arithmetic_operations(self):
         operators = [
             operator.add,
@@ -1079,6 +1094,29 @@ class TestVector:
 
 
 class TestMatrix:
+    def test_iterable_rows(self):
+        m_np = np.array([[1, 2, 3], [4, 5, 6]])
+        m = cas.Matrix(m_np)
+        rows = list(m)
+        assert len(rows) == len(m_np)
+        assert all(isinstance(r, cas.Vector) for r in rows)
+        for i, r in enumerate(rows):
+            assert np.allclose(r, m_np[i, :])
+
+    def test_iterable_shapes(self):
+        # 1xN should iterate once, yielding a Vector of length N
+        m1 = cas.Matrix(np.array([[7, 8, 9]]))
+        rows1 = list(m1)
+        assert len(rows1) == 1
+        assert isinstance(rows1[0], cas.Vector)
+        assert np.allclose(rows1[0], [7, 8, 9])
+        # Nx1 should iterate N times, each a Vector with one element
+        m2 = cas.Matrix(np.array([[1], [2], [3]]))
+        rows2 = list(m2)
+        assert len(rows2) == 3
+        assert all(isinstance(r, cas.Vector) for r in rows2)
+        assert np.allclose(np.array([float(r[0]) for r in rows2]), [1, 2, 3])
+
     def test_arithmetic_operations(self):
         operators = [
             operator.add,

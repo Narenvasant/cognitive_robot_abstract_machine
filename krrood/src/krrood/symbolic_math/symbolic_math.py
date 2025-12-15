@@ -1103,6 +1103,16 @@ class Vector(Expression):
             data = []
         self.casadi_sx = _casadi_sx_from_iterable(data)
 
+    def __iter__(self):
+        """
+        Iterate over the elements of the vector, yielding Scalar objects.
+
+        This mirrors NumPy's behavior for 1D arrays where iteration returns
+        individual scalar elements in order of the first axis.
+        """
+        for i in range(self.shape[0]):
+            yield self[i]
+
     def __add__(self, other: Scalar | Vector) -> _te.Self:
         return Vector.from_casadi_sx(to_sx(self) + to_sx(other))
 
@@ -1194,6 +1204,16 @@ class Matrix(Expression):
         if data is None:
             data = []
         self.casadi_sx = _casadi_sx_from_iterable(data)
+
+    def __iter__(self):
+        """
+        Iterate over the first axis of the matrix, yielding Vector rows.
+
+        This mirrors NumPy's behavior for 2D arrays where iteration returns
+        1D row views along axis 0.
+        """
+        for i in range(self.shape[0]):
+            yield Vector.from_casadi_sx(self.casadi_sx[i, :])
 
     def __add__(self, other: Scalar | Vector | Matrix) -> _te.Self:
         other_sx = self._broadcast_like_self(other)
