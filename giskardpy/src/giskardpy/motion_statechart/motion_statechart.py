@@ -188,6 +188,13 @@ class LifeCycleState(State):
     _compiled_updater: sm.CompiledFunction = field(init=False)
 
     def compile(self):
+        """
+        Compiles updater for life cycle states.
+        1. Define state transitions based on current life cycle state and conditions.
+        2. Combine all node state transitions into a single expression and compile it.
+        3. Bind compiled function arguments to memory views of observation and life cycle state data.
+        4. Store the compiled updater for later use in updating life cycle states.
+        """
         state_updater = []
         for node in self.motion_statechart.nodes:
             state_symbol = node.life_cycle_variable
