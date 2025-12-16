@@ -32,6 +32,39 @@ from krrood.symbolic_math.exceptions import (
 EPS: float = _sys.float_info.epsilon * 4.0
 
 
+@_dataclasses.dataclass(frozen=True)
+class VariableGroup:
+    """
+    A homogeneous, ordered group of variables that forms one input block.
+    """
+
+    variables: _te.Tuple[FloatVariable, ...]
+
+    def __len__(self) -> int:
+        return len(self.variables)
+
+
+@_dataclasses.dataclass(frozen=True)
+class VariableParameters:
+    """
+    A collection of variable groups that define the input blocks of a compiled function.
+    """
+
+    groups: _te.Tuple[VariableGroup, ...]
+
+    def __len__(self) -> int:
+        return len(self.groups)
+
+    def flatten(self) -> _te.Tuple[FloatVariable, ...]:
+        return tuple(v for g in self.groups for v in g.variables)
+
+    @classmethod
+    def from_lists(
+        cls, groups: _te.List[_te.List[FloatVariable]]
+    ) -> VariableParameters:
+        return cls(groups=tuple(VariableGroup(tuple(g)) for g in groups))
+
+
 @_dataclasses.dataclass
 class CompiledFunction:
     """
@@ -46,7 +79,9 @@ class CompiledFunction:
     """
     The symbolic expression to compile.
     """
-    variable_parameters: _te.Optional[_te.List[_te.List[FloatVariable]]] = None
+    variable_parameters: _te.Optional[
+        VariableParameters | _te.List[_te.List[FloatVariable]]
+    ] = None
     """
     The input parameters for the compiled symbolic expression.
     """
@@ -74,13 +109,27 @@ class CompiledFunction:
     """
 
     def __post_init__(self):
+        # Normalize variable_parameters to VariableParameters
         if self.variable_parameters is None:
-            self.variable_parameters = [self.expression.free_variables()]
+            free_vars = self.expression.free_variables()
+            if len(free_vars) == 0:
+                vp = VariableParameters(groups=tuple())
+            else:
+                vp = VariableParameters(groups=(VariableGroup(tuple(free_vars)),))
+            self.variable_parameters = vp
+        elif isinstance(self.variable_parameters, VariableParameters):
+            # already normalized
+            pass
         else:
-            self._validate_variables()
+            # Provided as list of lists; convert to immutable representation
+            vp = VariableParameters.from_lists(self.variable_parameters)
+            # Treat single empty group as no-parameter case (backward compatibility for [[]])
+            if len(vp.groups) == 1 and len(vp.groups[0].variables) == 0:
+                vp = VariableParameters(groups=tuple())
+            self.variable_parameters = vp
 
-        if len(self.variable_parameters) == 1 and len(self.variable_parameters[0]) == 0:
-            self.variable_parameters = []
+        # Validate variables
+        self._validate_variables()
 
         if len(self.expression) == 0:
             self._setup_empty_result()
@@ -93,10 +142,7 @@ class CompiledFunction:
 
     def _validate_variables(self):
         """Validates variables for both missing and duplicate issues."""
-        variables = []
-        for variable_parameter in self.variable_parameters:
-            variables.extend(variable_parameter)
-
+        variables = list(self.variable_parameters.flatten())
         variables_set = set(variables)
 
         # Check for missing variables
@@ -133,9 +179,10 @@ class CompiledFunction:
         """
         casadi_parameters = []
         if len(self.variable_parameters) > 0:
-            # create an array for each _te.List[FloatVariable]
+            # create an array for each VariableGroup
             casadi_parameters = [
-                Expression(data=p).casadi_sx for p in self.variable_parameters
+                Expression(data=list(group.variables)).casadi_sx
+                for group in self.variable_parameters.groups
             ]
 
         if self.sparse:
@@ -239,11 +286,9 @@ class CompiledFunction:
         """
         Efficiently evaluate the compiled function with positional arguments by directly writing the memory of the
         numpy arrays to the memoryview of the compiled function.
-        Similarly, the result will be written to the output buffer and doesn't allocate new memory on each eval.
+        Similarly, the result will be written to the output buffer and does not allocate new memory on each eval.
 
-        (Yes, this makes a significant speed different.)
-
-        :param args: A numpy array for each _te.List[FloatVariable] in self.variable_parameters.
+        :param args: A numpy array for each VariableGroup in self.variable_parameters.
             .. warning:: Make sure the numpy array is of type float! (check is too expensive)
         :return: The evaluated result as numpy array or sparse matrix
         """
@@ -273,8 +318,8 @@ class CompiledFunction:
             with the filtered arguments.
         """
         args = []
-        for params in self.variable_parameters:
-            for param in params:
+        for group in self.variable_parameters.groups:
+            for param in group.variables:
                 args.append(kwargs[str(param)])
         filtered_args = _np.array(args, dtype=float)
         return self(filtered_args)
@@ -481,7 +526,9 @@ class SymbolicType(Symbol):
 
     def compile(
         self,
-        parameters: _te.Optional[_te.List[_te.List[FloatVariable]]] = None,
+        parameters: _te.Optional[
+            _te.Union[VariableParameters, _te.List[_te.List[FloatVariable]]]
+        ] = None,
         sparse: bool = False,
     ) -> CompiledFunction:
         """
