@@ -198,6 +198,12 @@ dresserdao_drawers_association = Table(
     Column("dresserdao_id", ForeignKey("DresserDAO.database_id")),
     Column("drawerdao_id", ForeignKey("DrawerDAO.database_id")),
 )
+fridgedao_drawers_association = Table(
+    "fridgedao_drawers_association",
+    Base.metadata,
+    Column("fridgedao_id", ForeignKey("FridgeDAO.database_id")),
+    Column("drawerdao_id", ForeignKey("DrawerDAO.database_id")),
+)
 fridgedao_doors_association = Table(
     "fridgedao_doors_association",
     Base.metadata,
@@ -945,31 +951,6 @@ class HasActiveConnectionDAO(
     }
 
 
-class HasDrawersDAO(
-    HasActiveConnectionDAO,
-    DataAccessObject[semantic_digital_twin.semantic_annotations.mixins.HasDrawers],
-):
-
-    __tablename__ = "HasDrawersDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(HasActiveConnectionDAO.database_id),
-        primary_key=True,
-        use_existing_column=True,
-    )
-
-    drawers: Mapped[typing.List[DrawerDAO]] = relationship(
-        "DrawerDAO",
-        secondary="hasdrawersdao_drawers_association",
-        cascade="save-update, merge",
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "HasDrawersDAO",
-        "inherit_condition": database_id == HasActiveConnectionDAO.database_id,
-    }
-
-
 class HasPrismaticConnectionDAO(
     HasActiveConnectionDAO,
     DataAccessObject[
@@ -988,6 +969,31 @@ class HasPrismaticConnectionDAO(
     __mapper_args__ = {
         "polymorphic_identity": "HasPrismaticConnectionDAO",
         "inherit_condition": database_id == HasActiveConnectionDAO.database_id,
+    }
+
+
+class HasDrawersDAO(
+    HasPrismaticConnectionDAO,
+    DataAccessObject[semantic_digital_twin.semantic_annotations.mixins.HasDrawers],
+):
+
+    __tablename__ = "HasDrawersDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        ForeignKey(HasPrismaticConnectionDAO.database_id),
+        primary_key=True,
+        use_existing_column=True,
+    )
+
+    drawers: Mapped[typing.List[DrawerDAO]] = relationship(
+        "DrawerDAO",
+        secondary="hasdrawersdao_drawers_association",
+        cascade="save-update, merge",
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "HasDrawersDAO",
+        "inherit_condition": database_id == HasPrismaticConnectionDAO.database_id,
     }
 
 
@@ -2117,21 +2123,21 @@ class PoseDAO(Base, DataAccessObject[pycram.datastructures.pose.Pose]):
     )
 
     position_id: Mapped[int] = mapped_column(
-        ForeignKey("Vector3MappingDAO.database_id", use_alter=True),
+        ForeignKey("PyCramVector3DAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
     orientation_id: Mapped[int] = mapped_column(
-        ForeignKey("QuaternionMappingDAO.database_id", use_alter=True),
+        ForeignKey("PyCRAMQuaternionMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
 
-    position: Mapped[Vector3MappingDAO] = relationship(
-        "Vector3MappingDAO", uselist=False, foreign_keys=[position_id], post_update=True
+    position: Mapped[PyCramVector3DAO] = relationship(
+        "PyCramVector3DAO", uselist=False, foreign_keys=[position_id], post_update=True
     )
-    orientation: Mapped[QuaternionMappingDAO] = relationship(
-        "QuaternionMappingDAO",
+    orientation: Mapped[PyCRAMQuaternionMappingDAO] = relationship(
+        "PyCRAMQuaternionMappingDAO",
         uselist=False,
         foreign_keys=[orientation_id],
         post_update=True,
@@ -2331,6 +2337,46 @@ class PrefixedNameDAO(
     )
 
 
+class PyCRAMQuaternionMappingDAO(
+    Base, DataAccessObject[pycram.orm.model.PyCRAMQuaternionMapping]
+):
+
+    __tablename__ = "PyCRAMQuaternionMappingDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        Integer, primary_key=True, use_existing_column=True
+    )
+
+    x: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+    y: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+    z: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+    w: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+
+
+class PyCramVector3DAO(
+    Base, DataAccessObject[pycram.datastructures.pose.PyCramVector3]
+):
+
+    __tablename__ = "PyCramVector3DAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        Integer, primary_key=True, use_existing_column=True
+    )
+
+    x: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+    y: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+    z: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+
+    polymorphic_type: Mapped[str] = mapped_column(
+        String(255), nullable=False, use_existing_column=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_on": "polymorphic_type",
+        "polymorphic_identity": "PyCramVector3DAO",
+    }
+
+
 class QuaternionMappingDAO(
     Base, DataAccessObject[semantic_digital_twin.orm.model.QuaternionMapping]
 ):
@@ -2358,22 +2404,6 @@ class QuaternionMappingDAO(
         foreign_keys=[reference_frame_id],
         post_update=True,
     )
-
-
-class PyCRAMQuaternionMappingDAO(
-    Base, DataAccessObject[pycram.orm.model.PyCRAMQuaternionMapping]
-):
-
-    __tablename__ = "PyCRAMQuaternionMappingDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        Integer, primary_key=True, use_existing_column=True
-    )
-
-    x: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    y: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    z: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    w: Mapped[builtins.float] = mapped_column(use_existing_column=True)
 
 
 class ReachActionDAO(
@@ -3501,36 +3531,16 @@ class Vector3MappingDAO(
     )
 
 
-class Vector3DAO(Base, DataAccessObject[pycram.datastructures.pose.Vector3]):
-
-    __tablename__ = "Vector3DAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        Integer, primary_key=True, use_existing_column=True
-    )
-
-    x: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    y: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    z: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-
-    polymorphic_type: Mapped[str] = mapped_column(
-        String(255), nullable=False, use_existing_column=True
-    )
-
-    __mapper_args__ = {
-        "polymorphic_on": "polymorphic_type",
-        "polymorphic_identity": "Vector3DAO",
-    }
-
-
 class Vector3StampedDAO(
-    Vector3DAO, DataAccessObject[pycram.datastructures.pose.Vector3Stamped]
+    PyCramVector3DAO, DataAccessObject[pycram.datastructures.pose.Vector3Stamped]
 ):
 
     __tablename__ = "Vector3StampedDAO"
 
     database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(Vector3DAO.database_id), primary_key=True, use_existing_column=True
+        ForeignKey(PyCramVector3DAO.database_id),
+        primary_key=True,
+        use_existing_column=True,
     )
 
     header_id: Mapped[int] = mapped_column(
@@ -3545,7 +3555,7 @@ class Vector3StampedDAO(
 
     __mapper_args__ = {
         "polymorphic_identity": "Vector3StampedDAO",
-        "inherit_condition": database_id == Vector3DAO.database_id,
+        "inherit_condition": database_id == PyCramVector3DAO.database_id,
     }
 
 
@@ -5461,6 +5471,11 @@ class FridgeDAO(
         use_existing_column=True,
     )
 
+    drawers: Mapped[typing.List[DrawerDAO]] = relationship(
+        "DrawerDAO",
+        secondary="fridgedao_drawers_association",
+        cascade="save-update, merge",
+    )
     doors: Mapped[typing.List[DoorDAO]] = relationship(
         "DoorDAO", secondary="fridgedao_doors_association", cascade="save-update, merge"
     )
