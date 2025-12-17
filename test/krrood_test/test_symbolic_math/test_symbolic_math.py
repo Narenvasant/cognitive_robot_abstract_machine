@@ -138,7 +138,7 @@ class TestIfElse:
     def test_if_one_arg(self):
         inputs = [
             (cas.FloatVariable(name="muh"), cas.FloatVariable(name="muh2")),
-            (cas.Expression(1), cas.Expression(12)),
+            (cas.Scalar(1), cas.Scalar(12)),
         ]
         if_functions = [
             cas.if_else,
@@ -161,7 +161,7 @@ class TestIfElse:
     def test_if_two_arg(self):
         inputs = [
             (cas.FloatVariable(name="muh"), cas.FloatVariable(name="muh2")),
-            (cas.Expression(1), cas.Expression(12)),
+            (cas.Scalar(1), cas.Scalar(12)),
         ]
         if_functions = [
             cas.if_eq,
@@ -263,12 +263,12 @@ class TestIfElse:
     @pytest.mark.parametrize("a", [1, 3, 4, -1, 0.5, -0.5, 0])
     def test_if_eq_cases(self, a):
         b_result_cases = [
-            (1, cas.Expression(data=1)),
-            (3, cas.Expression(data=3)),
-            (4, cas.Expression(data=4)),
-            (-1, cas.Expression(data=-1)),
-            (0.5, cas.Expression(data=0.5)),
-            (-0.5, cas.Expression(data=-0.5)),
+            (1, cas.Scalar(1)),
+            (3, cas.Scalar(3)),
+            (4, cas.Scalar(4)),
+            (-1, cas.Scalar(-1)),
+            (0.5, cas.Scalar(0.5)),
+            (-0.5, cas.Scalar(-0.5)),
         ]
 
         def reference(a_, b_result_cases_, else_result):
@@ -277,20 +277,20 @@ class TestIfElse:
                     return if_result.to_np()[0]
             return else_result
 
-        actual = cas.if_eq_cases(a, b_result_cases, cas.Expression(data=0))
+        actual = cas.if_eq_cases(a, b_result_cases, cas.Scalar(0))
         expected = float(reference(a, b_result_cases, 0))
         assert np.allclose(actual, expected)
 
     @pytest.mark.parametrize("a", numbers)
     def test_if_eq_cases_set(self, a):
-        b_result_cases = {
-            (1, cas.Expression(data=1)),
-            (3, cas.Expression(data=3)),
-            (4, cas.Expression(data=4)),
-            (-1, cas.Expression(data=-1)),
-            (0.5, cas.Expression(data=0.5)),
-            (-0.5, cas.Expression(data=-0.5)),
-        }
+        b_result_cases = [
+            (1, cas.Scalar(1)),
+            (3, cas.Scalar(3)),
+            (4, cas.Scalar(4)),
+            (-1, cas.Scalar(-1)),
+            (0.5, cas.Scalar(0.5)),
+            (-0.5, cas.Scalar(-0.5)),
+        ]
 
         def reference(a_, b_result_cases_, else_result):
             for b, if_result in b_result_cases_:
@@ -298,19 +298,19 @@ class TestIfElse:
                     return if_result.to_np()[0]
             return else_result
 
-        actual = cas.if_eq_cases(a, b_result_cases, cas.Expression(data=0))
+        actual = cas.if_eq_cases(a, b_result_cases, cas.Scalar(0))
         expected = float(reference(a, b_result_cases, 0))
         assert np.allclose(actual, expected)
 
     @pytest.mark.parametrize("a", numbers)
     def test_if_less_eq_cases(self, a):
         b_result_cases = [
-            (-1, cas.Expression(data=-1)),
-            (-0.5, cas.Expression(data=-0.5)),
-            (0.5, cas.Expression(data=0.5)),
-            (1, cas.Expression(data=1)),
-            (3, cas.Expression(data=3)),
-            (4, cas.Expression(data=4)),
+            (-1, cas.Scalar(-1)),
+            (-0.5, cas.Scalar(-0.5)),
+            (0.5, cas.Scalar(0.5)),
+            (1, cas.Scalar(1)),
+            (3, cas.Scalar(3)),
+            (4, cas.Scalar(4)),
         ]
 
         def reference(a_, b_result_cases_, else_result):
@@ -320,7 +320,7 @@ class TestIfElse:
             return else_result
 
         assert np.allclose(
-            cas.if_less_eq_cases(a, b_result_cases, cas.Expression(data=0)),
+            cas.if_less_eq_cases(a, b_result_cases, cas.Scalar(0)),
             float(reference(a, b_result_cases, 0)),
         )
 
@@ -381,7 +381,7 @@ class TestFloatVariable:
         assert id(v2) == id(v)
         assert id(v2.casadi_sx) == id(v.casadi_sx)
 
-        v3 = cas.Expression(v).free_variables()[0]
+        v3 = cas.Scalar(v).free_variables()[0]
         assert id(v3) == id(v)
 
     def test_float_variable_unique(self):
@@ -409,7 +409,7 @@ class TestFloatVariable:
 class TestExpression:
 
     def test_free_variables(self):
-        m = cas.Expression(data=cas.create_float_variables(["a", "b", "c", "d"]))
+        m = cas.Vector(cas.create_float_variables(["a", "b", "c", "d"]))
         assert len(m.free_variables()) == 4
         a = cas.FloatVariable(name="a")
         assert a.equivalent(a.free_variables()[0])
@@ -418,34 +418,12 @@ class TestExpression:
         e = cas.Matrix.eye(4)
         e.pretty_str()
 
-    def test_create(self):
-        cas.Expression(data=cas.FloatVariable(name="muh"))
-        cas.Expression(data=[ca.SX(1), ca.SX.sym("muh")])
-        m = cas.Expression(data=np.eye(4))
-        m = cas.Expression(data=m)
-        assert np.allclose(m, np.eye(4))
-        m = cas.Expression(ca.SX(np.eye(4)))
-        assert np.allclose(m, np.eye(4))
-        m = cas.Expression(data=[1, 1])
-        assert np.allclose(m, np.array([1, 1]))
-        m = cas.Expression(data=[np.array([1, 1])])
-        assert np.allclose(m, np.array([1, 1]))
-        m = cas.Expression(data=1)
-        assert m.to_np() == 1
-        m = cas.Expression(data=[[1, 1], [2, 2]])
-        assert np.allclose(m, np.array([[1, 1], [2, 2]]))
-        m = cas.Expression(data=[])
-        assert m.shape[0] == m.shape[1] == 0
-
-        m = cas.Expression()
-        assert m.shape[0] == m.shape[1] == 0
-
     def test_to_np(self):
-        e = cas.Expression(data=1)
+        e = cas.Scalar(1)
         assert np.allclose(e.to_np(), np.array([1]))
-        e = cas.Expression(data=[1, 2])
+        e = cas.Vector([1, 2])
         assert np.allclose(e.to_np(), np.array([1, 2]))
-        e = cas.Expression(data=[[1, 2], [3, 4]])
+        e = cas.Matrix([[1, 2], [3, 4]])
         assert np.allclose(e.to_np(), np.array([[1, 2], [3, 4]]))
 
     def test_to_np_fail(self):
@@ -459,7 +437,7 @@ class TestExpression:
         b = cas.FloatVariable(name="b")
         m = cas.Vector(data=[a + b, a**2, b**2])
         jac = m.jacobian([a, b])
-        expected = cas.Expression(data=[[1, 1], [2 * a, 0], [0, 2 * b]])
+        expected = cas.Matrix([[1, 1], [2 * a, 0], [0, 2 * b]])
         for i in range(expected.shape[0]):
             for j in range(expected.shape[1]):
                 assert jac[i, j].equivalent(expected[i, j])
@@ -512,8 +490,8 @@ class TestExpression:
         b_s = cas.FloatVariable(name="b")
         bd_s = cas.FloatVariable(name="bd")
         bdd_s = cas.FloatVariable(name="bdd")
-        m = cas.Expression(
-            data=[
+        m = cas.Vector(
+            [
                 a_s**3 * b_s**3,
                 b_s**2,
                 -a_s * cas.cos(b_s),
@@ -599,20 +577,6 @@ class TestSymbolicType:
         expr_substituted = expr.substitute([a, b], [c, d])
         assert expr_substituted == c * d
 
-    def test_empty_compiled_function(self):
-        expected = np.array([1, 2, 3])
-        e = cas.Expression(data=expected)
-        f = e.compile(sparse=False)
-        assert np.allclose(f(), expected)
-        assert np.allclose(f(np.array([], dtype=float)), expected)
-
-    def test_empty_compiled_function_sparse(self):
-        expected = np.array([1, 2, 3], ndmin=2)
-        e = cas.Expression(data=expected)
-        f = e.compile(sparse=True)
-        assert np.allclose(f().toarray(), expected)
-        assert np.allclose(f(np.array([], dtype=float)).toarray(), expected)
-
     def test_create_variables(self):
         result = cas.create_float_variables(["a", "b", "c"])
         assert str(result[0]) == "a"
@@ -631,6 +595,21 @@ class TestSymbolicType:
 
 
 class TestCompiledFunction:
+
+    def test_empty_compiled_function(self):
+        expected = np.array([1, 2, 3])
+        e = cas.Vector(expected)
+        f = e.compile(sparse=False)
+        assert np.allclose(f(), expected)
+        assert np.allclose(f(np.array([], dtype=float)), expected)
+
+    def test_empty_compiled_function_sparse(self):
+        expected = np.array([1, 2, 3], ndmin=2)
+        e = cas.Matrix(expected)
+        f = e.compile(sparse=True)
+        assert np.allclose(f().toarray(), expected)
+        assert np.allclose(f(np.array([], dtype=float)).toarray(), expected)
+
     def test_dense(self):
         s1_value = 420.0
         s2_value = 69.0
@@ -965,8 +944,8 @@ class TestVector:
             operator.floordiv,
             operator.mod,
         ]
-        v1_np = np.array([1, 2, 3], ndmin=2)
-        v2_np = np.array([3, 2, 1], ndmin=2)
+        v1_np = np.array([1, 2, 3])
+        v2_np = np.array([3, 2, 1])
         s1_float = 1
         v1 = cas.Vector(v1_np)
         v2 = cas.Vector(v2_np)
@@ -978,7 +957,7 @@ class TestVector:
             assert isinstance(result, cas.Vector), f"{op.__name__} result is not Vector"
             assert np.allclose(result, expected), f"{op.__name__} result is wrong"
             assert (
-                result.shape == expected.shape
+                result.shape[0] == expected.shape[0]
             ), f"{op.__name__} result shape is wrong"
 
             result = op(v1, v2)
@@ -986,7 +965,7 @@ class TestVector:
             assert isinstance(result, cas.Vector), f"{op.__name__} result is not Vector"
             assert np.allclose(result, expected), f"{op.__name__} result is wrong"
             assert (
-                result.shape == expected.shape
+                result.shape[0] == expected.shape[0]
             ), f"{op.__name__} result shape is wrong"
 
     def test_abs(self):
@@ -1054,6 +1033,21 @@ class TestVector:
         assert np.allclose(actual, expected)
         assert isinstance(actual, cas.Vector)
 
+    def test_matmul_vector_vector_dot(self):
+        # (1,n) @ (n,1) -> (1,1) Scalar, numpy-compatible
+        v1_np = np.ones((1, 5))
+        v2_np = np.ones((5, 1))
+        v1 = cas.Vector(v1_np)
+        v2 = cas.Vector(v2_np)
+        # all vectors are column 1
+        assert v1.shape == (5, 1)
+        assert v2.shape == (5, 1)
+        actual = v1 @ v2
+        expected = np.matmul(v1_np, v2_np)
+        assert isinstance(actual, cas.Scalar)
+        assert np.allclose(actual, expected)
+        assert actual.shape == expected.shape
+
     def test_scale(self):
         v, a = np.array([1, 2, 3]), 2
         if np.linalg.norm(v) == 0:
@@ -1073,10 +1067,21 @@ class TestVector:
         expected = e_np[filter_]
         assert np.all(actual == expected)
 
+    def test_concatenate(self):
+        v1 = cas.Vector([1, 2, 3])
+        v2 = cas.Vector([4, 5, 6, 7])
+        assert np.allclose(v1.concatenate(v2), np.concatenate([v1, v2]))
+
+    def test_concatenate2(self):
+        v1 = cas.Vector([1, 2, 3])
+        assert np.allclose(cas.concatenate(v1, v1, v1), np.concatenate([v1, v1, v1]))
+
+
+class TestMatrix:
     def test_filter2(self):
         e_np = np.arange(16) * 2
         e_np = e_np.reshape((4, 4))
-        e = cas.Vector(data=e_np)
+        e = cas.Matrix(data=e_np)
         filter_ = np.zeros(4, dtype=bool)
         filter_[1] = True
         filter_[2] = True
@@ -1084,8 +1089,6 @@ class TestVector:
         expected = e_np[filter_]
         assert np.allclose(actual, expected)
 
-
-class TestMatrix:
     def test_trace(self):
         m = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
         actual = cas.Matrix(m).trace()
@@ -1208,9 +1211,9 @@ class TestMatrix:
             operator.floordiv,
             operator.mod,
         ]
-        v1_np = np.array([1, 2, 3], ndmin=2)
-        m1_np = np.array([[3, 2, 1], [23, 23, 23], [4, 5, 6]], ndmin=2)
-        m2_np = np.array([[6, 5, 4], [1, 2, 3], [0, 0, 0]], ndmin=2)
+        v1_np = np.array([1, 2, 3])
+        m1_np = np.array([[3, 2, 1], [23, 23, 23], [4, 5, 6]])
+        m2_np = np.array([[6, 5, 4], [1, 2, 3], [0, 0, 0]])
         s1_float = 1
         s1 = cas.Scalar(s1_float)
         v1 = cas.Vector(v1_np)
@@ -1280,6 +1283,20 @@ class TestMatrix:
         expected = np.matmul(m, m)
         assert np.allclose(actual, expected)
         assert isinstance(actual, cas.Matrix)
+
+    def test_matmul_vector_right(self):
+        # Matrix @ Vector -> Vector
+        m_np = np.random.rand(3, 4)
+        v_np = np.random.rand(4, 1)
+        m = cas.Matrix(m_np)
+        v = cas.Vector(v_np)
+        actual = m @ v
+        expected = np.matmul(m_np, v_np)
+        assert isinstance(actual, cas.Vector)
+        # Compare flattened values because Vector.to_np() flattens 2D vectors like numpy 1-D
+        assert np.allclose(np.array(actual), expected.ravel())
+        # And verify the 2-D vector shape matches numpy's (n,1)
+        assert actual.shape == expected.shape
 
     def test_len(self):
         m_np = np.eye(4)

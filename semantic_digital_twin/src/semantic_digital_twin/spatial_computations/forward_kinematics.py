@@ -8,12 +8,11 @@ from uuid import UUID
 import numpy as np
 import rustworkx.visit
 
-from krrood.symbolic_math.symbolic_math import Expression, CompiledFunction, Matrix
+from krrood.symbolic_math.symbolic_math import CompiledFunction, Matrix
 from ..datastructures.types import NpMatrix4x4
 from ..spatial_types import spatial_types as cas
 from ..spatial_types.math import inverse_frame
 from ..utils import copy_lru_cache
-
 from ..world_description.world_entity import Connection, KinematicStructureEntity
 
 if TYPE_CHECKING:
@@ -50,13 +49,13 @@ class ForwardKinematicsManager(rustworkx.visit.DFSVisitor):
         self.child_body_to_fk_expr: Dict[UUID, cas.HomogeneousTransformationMatrix] = {
             self.world.root.id: cas.HomogeneousTransformationMatrix()
         }
-        self.tf: Dict[Tuple[UUID, UUID], Expression] = OrderedDict()
+        self.tf: Dict[Tuple[UUID, UUID], Matrix] = OrderedDict()
 
     def recompile(self):
         self.child_body_to_fk_expr: Dict[UUID, cas.HomogeneousTransformationMatrix] = {
             self.world.root.id: cas.HomogeneousTransformationMatrix()
         }
-        self.tf: Dict[Tuple[UUID, UUID], Expression] = OrderedDict()
+        self.tf: Dict[Tuple[UUID, UUID], Matrix] = OrderedDict()
         self.world._travel_branch(self.world.root, self)
         self.compile()
 

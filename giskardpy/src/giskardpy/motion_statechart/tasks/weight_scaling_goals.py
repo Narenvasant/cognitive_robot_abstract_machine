@@ -2,8 +2,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import List
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.motion_statechart.graph_node import Task
+from semantic_digital_twin.spatial_types import Point3
 from semantic_digital_twin.spatial_types.derivatives import Derivatives
 from semantic_digital_twin.world_description.world_entity import Body
 
@@ -19,7 +20,7 @@ class BaseArmWeightScaling(Task):
 
     root_link: Body
     tip_link: Body
-    tip_goal: cas.Point3
+    tip_goal: Point3
     arm_joints: List[str]
     base_joints: List[str]
     gain: float = 100000
@@ -52,7 +53,7 @@ class BaseArmWeightScaling(Task):
                     v_gain = (
                         self.gain
                         / 100
-                        * cas.Expression(1).safe_division(
+                        * cas.Scalar(1).safe_division(
                             (scaling_exp / v.upper_limits.velocity).norm()
                         )
                     )
@@ -65,7 +66,7 @@ class BaseArmWeightScaling(Task):
         context.add_debug_expression(
             "base_scaling",
             self.gain
-            * cas.Expression(1).safe_division(
+            * cas.Scalar(1).safe_division(
                 (scaling_exp / base_v.upper_limits.velocity).norm()
             ),
         )

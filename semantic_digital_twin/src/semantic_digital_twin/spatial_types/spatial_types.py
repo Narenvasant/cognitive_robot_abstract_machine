@@ -159,11 +159,9 @@ class HomogeneousTransformationMatrix(
         self.reference_frame = reference_frame
         self.child_frame = child_frame
         self.casadi_sx = sm.to_sx(data)
-        if sanity_check:
-            self._validate()
 
-    def _validate(self):
-        if self.shape[0] != 4 or self.shape[1] != 4:
+    def _verify_type(self):
+        if self.shape != (4, 4):
             raise WrongDimensionsError(
                 expected_dimensions=(4, 4), actual_dimensions=self.shape
             )
@@ -351,7 +349,7 @@ class HomogeneousTransformationMatrix(
         )
 
     @property
-    def x(self) -> sm.Expression:
+    def x(self) -> sm.Scalar:
         return self[0, 3]
 
     @x.setter
@@ -359,7 +357,7 @@ class HomogeneousTransformationMatrix(
         self[0, 3] = value
 
     @property
-    def y(self) -> sm.Expression:
+    def y(self) -> sm.Scalar:
         return self[1, 3]
 
     @y.setter
@@ -367,7 +365,7 @@ class HomogeneousTransformationMatrix(
         self[1, 3] = value
 
     @property
-    def z(self) -> sm.Expression:
+    def z(self) -> sm.Scalar:
         return self[2, 3]
 
     @z.setter
@@ -473,11 +471,9 @@ class RotationMatrix(sm.Expression, SpatialType, SubclassJSONSerializer):
         empty_data[:3, :3] = sm.to_sx(data)[:3, :3]
         self._casadi_sx = empty_data
         self.reference_frame = reference_frame
-        if sanity_check:
-            self._validate()
 
-    def _validate(self):
-        if self.shape[0] != 4 or self.shape[1] != 4:
+    def _verify_type(self):
+        if self.shape != (4, 4):
             raise WrongDimensionsError(
                 expected_dimensions=(4, 4), actual_dimensions=self.shape
             )
@@ -620,10 +616,10 @@ class RotationMatrix(sm.Expression, SpatialType, SubclassJSONSerializer):
     ) -> GenericRotatableSpatialType:
         return self.dot(other)
 
-    def to_axis_angle(self) -> Tuple[Vector3, sm.Expression]:
+    def to_axis_angle(self) -> Tuple[Vector3, sm.Scalar]:
         return self.to_quaternion().to_axis_angle()
 
-    def to_angle(self, hint: Optional[Callable] = None) -> sm.Expression:
+    def to_angle(self, hint: Optional[Callable] = None) -> sm.Scalar:
         """
         :param hint: A function whose sign of the result will be used to determine if angle should be positive or
                         negative
@@ -726,7 +722,7 @@ class RotationMatrix(sm.Expression, SpatialType, SubclassJSONSerializer):
     def inverse(self) -> RotationMatrix:
         return self.T
 
-    def to_rpy(self) -> Tuple[sm.Expression, sm.Expression, sm.Expression]:
+    def to_rpy(self) -> Tuple[sm.Scalar, sm.Scalar, sm.Scalar]:
         """
         :return: roll, pitch, yaw
         """
@@ -742,9 +738,7 @@ class RotationMatrix(sm.Expression, SpatialType, SubclassJSONSerializer):
         ay = sm.if_greater_zero(
             if0, sm.atan2(-self[k, i], cy), sm.atan2(-self[k, i], cy)
         )
-        az = sm.if_greater_zero(
-            if0, sm.atan2(self[j, i], self[i, i]), sm.Expression(data=0)
-        )
+        az = sm.if_greater_zero(if0, sm.atan2(self[j, i], self[i, i]), sm.Scalar(0))
         return ax, ay, az
 
     def to_quaternion(self) -> Quaternion:
@@ -761,7 +755,7 @@ class RotationMatrix(sm.Expression, SpatialType, SubclassJSONSerializer):
     def T(self) -> RotationMatrix:
         return RotationMatrix(self.casadi_sx.T, reference_frame=self.reference_frame)
 
-    def rotational_error(self, other: RotationMatrix) -> sm.Expression:
+    def rotational_error(self, other: RotationMatrix) -> sm.Scalar:
         """
         Calculate the rotational error between two rotation matrices.
 
@@ -803,13 +797,24 @@ class Point3(sm.Expression, SpatialType, SubclassJSONSerializer):
         :param z: Z-coordinate of the point. Defaults to 0.
         :param reference_frame:
         """
-        self._casadi_sx = sm.to_sx([x, y, z, 1])
+        self.casadi_sx = sm.to_sx([x, y, z, 1])
         self.reference_frame = reference_frame
+
+    def _verify_type(self):
+        if self.shape == (3, 1):
+            casadi_sx = ca.SX.zeros(4)
+            casadi_sx[:3, 0] = self._casadi_sx
+            self._casadi_sx = casadi_sx
+        elif self.shape != (4, 1):
+            raise WrongDimensionsError(
+                expected_dimensions=(4, 1), actual_dimensions=self.shape
+            )
+        self._casadi_sx[3, 0] = 1
 
     @classmethod
     def from_iterable(
         cls,
-        data: Union[sm.NumericalVector, sm.Expression],
+        data: sm.VectorData,
         reference_frame: Optional[KinematicStructureEntity] = None,
     ) -> Point3:
         """
@@ -830,20 +835,11 @@ class Point3(sm.Expression, SpatialType, SubclassJSONSerializer):
         :return: Returns an instance of Point3 initialized with the processed data
             and an optional reference frame.
         """
-        expression = sm.Expression(data=data)
-        if expression.shape[0] not in (3, 4) or expression.shape[1] != 1:
-            raise WrongDimensionsError(
-                expected_dimensions="(3, 1) or (4, 1)",
-                actual_dimensions=expression.shape,
-            )
-        if hasattr(data, "reference_frame") and reference_frame is None:
+        if isinstance(data, SpatialType) and reference_frame is None:
             reference_frame = data.reference_frame
-        return cls(
-            x=data[0],
-            y=data[1],
-            z=data[2],
-            reference_frame=reference_frame,
-        )
+        result = cls(reference_frame=reference_frame)
+        result.casadi_sx = sm.to_sx(data)
+        return result
 
     @classmethod
     def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
@@ -941,7 +937,7 @@ class Point3(sm.Expression, SpatialType, SubclassJSONSerializer):
 
     def project_to_line(
         self, line_point: Point3, line_direction: Vector3
-    ) -> Tuple[Point3, sm.Expression]:
+    ) -> Tuple[Point3, sm.Scalar]:
         """
         :param line_point: a point that the line intersects, must have the same reference frame as self
         :param line_direction: the direction of the line, must have the same reference frame as self
@@ -959,7 +955,7 @@ class Point3(sm.Expression, SpatialType, SubclassJSONSerializer):
 
     def distance_to_line_segment(
         self, line_start: Point3, line_end: Point3
-    ) -> Tuple[sm.Expression, Point3]:
+    ) -> Tuple[sm.Scalar, Point3]:
         """
         All parameters must have the same reference frame as self.
         :param line_start: start of the approached line
@@ -985,6 +981,12 @@ class Point3(sm.Expression, SpatialType, SubclassJSONSerializer):
         result = Vector3.from_casadi_sx(copy(self.casadi_sx))
         result.reference_frame = self.reference_frame
         return result
+
+    def to_generic_vector(self) -> sm.Vector:
+        return sm.Vector.from_casadi_sx(self.casadi_sx[:3])
+
+    def euclidean_distance(self, other: Self) -> sm.Scalar:
+        return self.to_generic_vector().euclidean_distance(other.to_generic_vector())
 
 
 @dataclass(eq=False, init=False)
@@ -1021,8 +1023,20 @@ class Vector3(sm.Expression, SpatialType, SubclassJSONSerializer):
         :param visualisation_frame: The reference frame associated with the vector, used for visualization purposes only. Optional.
         It will be visualized at the origin of the vis_frame
         """
-        self._casadi_sx = sm.to_sx([x, y, z, 0])
+        self.casadi_sx = sm.to_sx([x, y, z, 0])
         self.reference_frame = reference_frame
+        self.visualisation_frame = visualisation_frame
+
+    def _verify_type(self):
+        if self.shape == (3, 1):
+            casadi_sx = ca.SX.zeros(4)
+            casadi_sx[:3, 0] = self._casadi_sx
+            self._casadi_sx = casadi_sx
+        elif self.shape != (4, 1):
+            raise WrongDimensionsError(
+                expected_dimensions=(4, 1), actual_dimensions=self.shape
+            )
+        self._casadi_sx[3] = 0
 
     @classmethod
     def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
@@ -1046,7 +1060,7 @@ class Vector3(sm.Expression, SpatialType, SubclassJSONSerializer):
     @classmethod
     def from_iterable(
         cls,
-        data: Union[sm.NumericalVector, sm.Expression, Point3, Vector3, Quaternion],
+        data: sm.VectorData,
         reference_frame: Optional[KinematicStructureEntity] = None,
     ) -> Vector3:
         """
@@ -1067,20 +1081,16 @@ class Vector3(sm.Expression, SpatialType, SubclassJSONSerializer):
         :return: Returns an instance of Vector3 initialized with the processed data
             and an optional reference frame.
         """
-        expression = sm.Expression(data=data)
-        if expression.shape[0] not in (3, 4) or expression.shape[1] != 1:
-            raise WrongDimensionsError(
-                expected_dimensions="(3, 1) or (4, 1)",
-                actual_dimensions=expression.shape,
-            )
+        if isinstance(data, SpatialType) and reference_frame is None:
+            reference_frame = data.reference_frame
+        if isinstance(data, Vector3) and reference_frame is None:
+            visualisation_frame = data.visualisation_frame
+        else:
+            visualisation_frame = None
         result = cls(
-            x=data[0],
-            y=data[1],
-            z=data[2],
-            reference_frame=reference_frame,
+            reference_frame=reference_frame, visualisation_frame=visualisation_frame
         )
-        if hasattr(data, "vis_frame"):
-            result.vis_frame = data.vis_frame
+        result.casadi_sx = sm.to_sx(data)
         return result
 
     @classmethod
@@ -1185,7 +1195,7 @@ class Vector3(sm.Expression, SpatialType, SubclassJSONSerializer):
         if if_nan is None:
             if_nan = Vector3()
         save_denominator = sm.if_eq_zero(
-            condition=other, if_result=sm.Expression(data=1), else_result=other
+            condition=other, if_result=sm.Scalar(1), else_result=other
         )
         return sm.if_eq_zero(
             other, if_result=if_nan, else_result=self / save_denominator
@@ -1267,7 +1277,7 @@ class Vector3(sm.Expression, SpatialType, SubclassJSONSerializer):
             else_result=project_on_cone_boundary,
         )
 
-    def angle_between(self, other: Vector3) -> sm.Expression:
+    def angle_between(self, other: Vector3) -> sm.Scalar:
         return sm.acos(
             sm.limit(
                 self @ other / (self.norm() * other.norm()),
@@ -1329,8 +1339,14 @@ class Quaternion(sm.Expression, SpatialType, SubclassJSONSerializer):
         :param reference_frame:
         It will be visualized at the origin of the vis_frame
         """
-        self._casadi_sx = sm.to_sx([x, y, z, w])
+        self.casadi_sx = sm.to_sx([x, y, z, w])
         self.reference_frame = reference_frame
+
+    def _verify_type(self):
+        if self.shape != (4, 1):
+            raise WrongDimensionsError(
+                expected_dimensions=(4, 1), actual_dimensions=self.shape
+            )
 
     def __neg__(self) -> Quaternion:
         return Quaternion.from_iterable(self.casadi_sx.__neg__())
@@ -1357,7 +1373,7 @@ class Quaternion(sm.Expression, SpatialType, SubclassJSONSerializer):
     @classmethod
     def from_iterable(
         cls,
-        data: Union[sm.NumericalVector, sm.Expression],
+        data: sm.VectorData,
         reference_frame: Optional[KinematicStructureEntity] = None,
     ) -> Quaternion:
         """
@@ -1608,7 +1624,7 @@ class Quaternion(sm.Expression, SpatialType, SubclassJSONSerializer):
         self.z /= norm_
         self.w /= norm_
 
-    def to_axis_angle(self) -> Tuple[Vector3, sm.Expression]:
+    def to_axis_angle(self) -> Tuple[Vector3, sm.Scalar]:
         self.normalize()
         w2 = sm.sqrt(1 - self.w**2)
         m = sm.if_eq_zero(w2, sm.Scalar(1), w2)  # avoid /0
@@ -1629,7 +1645,7 @@ class Quaternion(sm.Expression, SpatialType, SubclassJSONSerializer):
     def to_rotation_matrix(self) -> RotationMatrix:
         return RotationMatrix.from_quaternion(self)
 
-    def to_rpy(self) -> Tuple[sm.Expression, sm.Expression, sm.Expression]:
+    def to_rpy(self) -> Tuple[sm.Scalar, sm.Scalar, sm.Scalar]:
         return self.to_rotation_matrix().to_rpy()
 
     def dot(self, other: Quaternion) -> sm.Scalar:
@@ -1706,8 +1722,18 @@ class Pose(sm.Expression, SpatialType, SubclassJSONSerializer):
                 point=position, rotation_matrix=orientation.to_rotation_matrix()
             )
         )
-        self._casadi_sx = sm.to_sx(transformation_matrix)
+        self.casadi_sx = sm.to_sx(transformation_matrix)
         self.reference_frame = reference_frame
+
+    def _verify_type(self):
+        if self.shape != (4, 4):
+            raise WrongDimensionsError(
+                expected_dimensions=(4, 4), actual_dimensions=self.shape
+            )
+        self[3, 0] = 0.0
+        self[3, 1] = 0.0
+        self[3, 2] = 0.0
+        self[3, 3] = 1.0
 
     @classmethod
     def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
@@ -1828,7 +1854,7 @@ class Pose(sm.Expression, SpatialType, SubclassJSONSerializer):
         )
 
     @property
-    def x(self) -> sm.Expression:
+    def x(self) -> sm.Scalar:
         return self[0, 3]
 
     @x.setter
@@ -1836,7 +1862,7 @@ class Pose(sm.Expression, SpatialType, SubclassJSONSerializer):
         self[0, 3] = value
 
     @property
-    def y(self) -> sm.Expression:
+    def y(self) -> sm.Scalar:
         return self[1, 3]
 
     @y.setter
@@ -1844,7 +1870,7 @@ class Pose(sm.Expression, SpatialType, SubclassJSONSerializer):
         self[1, 3] = value
 
     @property
-    def z(self) -> sm.Expression:
+    def z(self) -> sm.Scalar:
         return self[2, 3]
 
     @z.setter

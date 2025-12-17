@@ -4,7 +4,7 @@ from typing import Optional, ClassVar
 import numpy as np
 from typing_extensions import List
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.motion_statechart import auxilary_variable_manager
 from giskardpy.motion_statechart.binding_policy import (
     GoalBindingPolicy,
@@ -20,6 +20,12 @@ from giskardpy.motion_statechart.graph_node import (
 )
 from giskardpy.motion_statechart.graph_node import Task
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.spatial_types import (
+    Vector3,
+    Point3,
+    RotationMatrix,
+    HomogeneousTransformationMatrix,
+)
 from semantic_digital_twin.spatial_types.derivatives import Derivatives
 from semantic_digital_twin.world_description.degree_of_freedom import PositionVariable
 from semantic_digital_twin.world_description.geometry import Color
@@ -39,7 +45,7 @@ class CartesianPosition(Task):
     default_reference_velocity: ClassVar[float] = 0.2
     root_link: KinematicStructureEntity = field(kw_only=True)
     tip_link: KinematicStructureEntity = field(kw_only=True)
-    goal_point: cas.Point3 = field(kw_only=True)
+    goal_point: Point3 = field(kw_only=True)
     threshold: float = field(default=0.01, kw_only=True)
     reference_velocity: Optional[float] = field(
         default_factory=lambda: CartesianPosition.default_reference_velocity,
@@ -74,7 +80,7 @@ class CartesianPosition(Task):
 class CartesianPositionStraight(Task):
     root_link: Body = field(kw_only=True)
     tip_link: Body = field(kw_only=True)
-    goal_point: cas.Point3 = field(kw_only=True)
+    goal_point: Point3 = field(kw_only=True)
     threshold: float = 0.01
     reference_velocity: Optional[float] = CartesianPosition.default_reference_velocity
     absolute: bool = False
@@ -107,16 +113,16 @@ class CartesianPositionStraight(Task):
         # such that its x-axis shows towards the goal position.
         # The goal frame is called 'a'.
         # Thus, the rotation matrix is called t_R_a.
-        tip_V_error = cas.Vector3.from_iterable(tip_P_goal)
+        tip_V_error = Vector3.from_iterable(tip_P_goal)
         trans_error = tip_V_error.norm()
         # x-axis
         tip_V_intermediate_error = tip_V_error.safe_division(trans_error)
         # y- and z-axis
-        tip_V_intermediate_y = cas.Vector3.from_iterable(np.random.random((3,)))
+        tip_V_intermediate_y = Vector3.from_iterable(np.random.random((3,)))
         tip_V_intermediate_y.scale(1)
         y = tip_V_intermediate_error.cross(tip_V_intermediate_y)
         z = tip_V_intermediate_error.cross(y)
-        t_R_a = cas.RotationMatrix.from_vectors(x=tip_V_intermediate_error, y=-z, z=y)
+        t_R_a = RotationMatrix.from_vectors(x=tip_V_intermediate_error, y=-z, z=y)
 
         # Apply rotation matrix on the fk of the tip link
         tip_T_root = context.world.compute_forward_kinematics(
@@ -154,7 +160,7 @@ class CartesianOrientation(Task):
     default_reference_velocity: ClassVar[float] = 0.2
     root_link: KinematicStructureEntity = field(kw_only=True)
     tip_link: KinematicStructureEntity = field(kw_only=True)
-    goal_orientation: cas.RotationMatrix = field(kw_only=True)
+    goal_orientation: RotationMatrix = field(kw_only=True)
     threshold: float = field(default=0.01, kw_only=True)
     reference_velocity: float = field(
         default_factory=lambda: CartesianOrientation.default_reference_velocity,
@@ -206,7 +212,7 @@ class CartesianPose(Task):
     tip_link: KinematicStructureEntity = field(kw_only=True)
     """Name of the tip link of the kin chain"""
 
-    goal_pose: cas.HomogeneousTransformationMatrix = field(kw_only=True)
+    goal_pose: HomogeneousTransformationMatrix = field(kw_only=True)
     """The goal pose"""
 
     reference_linear_velocity: float = field(
@@ -286,7 +292,7 @@ class CartesianPose(Task):
         artifacts.debug_expressions.append(
             DebugExpression(
                 "current_pose",
-                expression=cas.HomogeneousTransformationMatrix(
+                expression=HomogeneousTransformationMatrix(
                     reference_frame=self.tip_link
                 ),
             )
@@ -354,7 +360,7 @@ class CartesianPositionVelocityLimit(Task):
 
         position_variables: List[PositionVariable] = root_P_tip.free_variables()
         velocity_variables = [p.dof.variables.velocity for p in position_variables]
-        root_P_tip_dot = cas.Expression(root_P_tip).total_derivative(
+        root_P_tip_dot = root_P_tip.total_derivative(
             position_variables, velocity_variables
         )
 
@@ -411,9 +417,7 @@ class CartesianRotationVelocityLimit(Task):
         _, angle = root_R_tip.to_axis_angle()
         angle_variables: List[PositionVariable] = angle.free_variables()
         angle_velocities = [v.dof.variables.velocity for v in angle_variables]
-        angle_dot = cas.Expression(angle).total_derivative(
-            angle_variables, angle_velocities
-        )
+        angle_dot = angle.total_derivative(angle_variables, angle_velocities)
 
         artifacts.observation = cas.abs(angle_dot) <= self.max_angular_velocity
 
@@ -502,7 +506,7 @@ class CartesianPositionVelocityTarget(Task):
             self.root_link, self.tip_link
         ).to_position()
         self.add_velocity_eq_constraint_vector(
-            velocity_goals=cas.Expression([self.x_vel, self.y_vel, self.z_vel]),
+            velocity_goals=cas.Vector([self.x_vel, self.y_vel, self.z_vel]),
             task_expression=r_P_c,
             reference_velocities=[
                 CartesianPosition.default_reference_velocity,
@@ -530,11 +534,11 @@ class JustinTorsoLimitCart(Task):
         torso_root_T_torso_tip = context.world.compose_forward_kinematics_expression(
             self.root_link, self.tip_link
         )
-        torso_root_V_up = cas.Vector3(0, 0, 1)
+        torso_root_V_up = Vector3(0, 0, 1)
         torso_root_V_up.reference_frame = self.root_link
         torso_root_V_up.vis_frame = self.root_link
 
-        torso_root_V_left = cas.Vector3(0, 1, 0)
+        torso_root_V_left = Vector3(0, 1, 0)
         torso_root_V_left.reference_frame = self.root_link
         torso_root_V_left.vis_frame = self.root_link
 
@@ -544,7 +548,7 @@ class JustinTorsoLimitCart(Task):
             frame_V_plane_vector1=torso_root_V_left,
             frame_V_plane_vector2=torso_root_V_up,
         )
-        # distance = cas.distance_point_to_line(torso_root_P_torso_tip, cas.Point3((0, 0, 0)), torso_root_V_up)
+        # distance = cas.distance_point_to_line(torso_root_P_torso_tip, Point3((0, 0, 0)), torso_root_V_up)
 
         # god_map.context.add_debug_expression(f'{self.name}/torso_root_V_up',
         #                                                       expression=torso_root_V_up)

@@ -5,7 +5,7 @@ from typing import Tuple, TYPE_CHECKING
 import numpy as np
 from line_profiler import profile
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.qp.adapters.qp_adapter import GiskardToQPAdapter
 from giskardpy.qp.qp_data import QPData
 
@@ -30,17 +30,17 @@ class GiskardToTwoSidedNeqQPAdapter(GiskardToQPAdapter):
 
     def general_qp_to_specific_qp(
         self,
-        quadratic_weights: cas.Expression,
-        linear_weights: cas.Expression,
-        box_lower_constraints: cas.Expression,
-        box_upper_constraints: cas.Expression,
-        eq_matrix_dofs: cas.Expression,
-        eq_matrix_slack: cas.Expression,
-        eq_bounds: cas.Expression,
-        neq_matrix_dofs: cas.Expression,
-        neq_matrix_slack: cas.Expression,
-        neq_lower_bounds: cas.Expression,
-        neq_upper_bounds: cas.Expression,
+        quadratic_weights: cas.Vector,
+        linear_weights: cas.Vector,
+        box_lower_constraints: cas.Vector,
+        box_upper_constraints: cas.Vector,
+        eq_matrix_dofs: cas.Matrix,
+        eq_matrix_slack: cas.Matrix,
+        eq_bounds: cas.Vector,
+        neq_matrix_dofs: cas.Matrix,
+        neq_matrix_slack: cas.Matrix,
+        neq_lower_bounds: cas.Vector,
+        neq_upper_bounds: cas.Vector,
     ):
         if len(neq_matrix_dofs) == 0:
             constraint_matrix = cas.hstack([eq_matrix_dofs, eq_matrix_slack])
@@ -49,13 +49,17 @@ class GiskardToTwoSidedNeqQPAdapter(GiskardToQPAdapter):
                 [
                     eq_matrix_dofs,
                     eq_matrix_slack,
-                    cas.zeros(eq_matrix_dofs.shape[0], neq_matrix_slack.shape[1]),
+                    cas.Matrix.zeros(
+                        eq_matrix_dofs.shape[0], neq_matrix_slack.shape[1]
+                    ),
                 ]
             )
             neq_matrix = cas.hstack(
                 [
                     neq_matrix_dofs,
-                    cas.zeros(neq_matrix_dofs.shape[0], eq_matrix_slack.shape[1]),
+                    cas.Matrix.zeros(
+                        neq_matrix_dofs.shape[0], eq_matrix_slack.shape[1]
+                    ),
                     neq_matrix_slack,
                 ]
             )

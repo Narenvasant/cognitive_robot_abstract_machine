@@ -4,7 +4,7 @@ from typing import Dict, Optional, List, Union
 import numpy as np
 from line_profiler import profile
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.middleware import get_middleware
 from giskardpy.model.trajectory import Trajectory
 from semantic_digital_twin.world_description.geometry import Color
@@ -14,7 +14,7 @@ from semantic_digital_twin.world_description.world_state import WorldState
 
 
 class DebugExpressionManager:
-    debug_expressions: Dict[PrefixedName, cas.Expression]
+    debug_expressions: Dict[PrefixedName, cas.Scalar]
     compiled_debug_expressions: Dict[PrefixedName, cas.CompiledFunction]
     evaluated_debug_expressions: Dict[PrefixedName, np.ndarray]
     _raw_debug_trajectory: List[Dict[PrefixedName, np.ndarray]]
@@ -39,7 +39,7 @@ class DebugExpressionManager:
         if derivatives_to_plot is None:
             derivatives_to_plot = [derivative]
         if isinstance(expression, (int, float)):
-            expression = cas.Expression(expression)
+            expression = cas.Scalar(expression)
         if isinstance(expression, cas.SymbolicMathType):
             expression.color = color
         expression.debug_derivative = derivative
@@ -49,7 +49,7 @@ class DebugExpressionManager:
     def compile_debug_expressions(self):
         for name, expr in self.debug_expressions.items():
             if isinstance(expr, (int, float)):
-                self.debug_expressions[name] = cas.Expression(expr)
+                self.debug_expressions[name] = cas.Scalar(expr)
         self.compiled_debug_expressions = {}
         free_symbols = set()
         for name, expr in self.debug_expressions.items():

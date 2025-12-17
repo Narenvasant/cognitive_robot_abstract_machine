@@ -1,6 +1,6 @@
 from dataclasses import field, dataclass
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.motion_statechart.context import BuildContext
 from giskardpy.motion_statechart.graph_node import MotionStatechartNode, NodeArtifacts
 from semantic_digital_twin.world_description.connections import (

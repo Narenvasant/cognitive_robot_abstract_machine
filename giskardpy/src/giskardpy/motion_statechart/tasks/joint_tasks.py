@@ -4,7 +4,7 @@ from typing import Optional, Dict, List, Tuple, Union, Any
 from krrood.adapters.json_serializer import SubclassJSONSerializer
 from typing_extensions import Self
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.motion_statechart.exceptions import NodeInitializationError
 from giskardpy.motion_statechart.context import BuildContext
 from giskardpy.motion_statechart.data_types import DefaultWeights
@@ -104,12 +104,12 @@ class JointPositionList(Task):
                 task_expression=current,
             )
             errors.append(cas.abs(error) < self.threshold)
-        artifacts.observation = cas.logic_all(cas.Expression(errors))
+        artifacts.observation = cas.logic_all(cas.Vector(errors))
         return artifacts
 
     def apply_limits_to_target(
         self, target: float, connection: ActiveConnection1DOF
-    ) -> cas.Expression:
+    ) -> cas.Scalar:
         ul_pos = connection.dof.upper_limits.position
         ll_pos = connection.dof.lower_limits.position
         if ll_pos is not None:
@@ -118,7 +118,7 @@ class JointPositionList(Task):
 
     def apply_limits_to_velocity(
         self, velocity: float, connection: ActiveConnection1DOF
-    ) -> cas.Expression:
+    ) -> cas.Scalar:
         ul_vel = connection.dof.upper_limits.velocity
         ll_vel = connection.dof.lower_limits.velocity
         return cas.limit(velocity, ll_vel, ul_vel)

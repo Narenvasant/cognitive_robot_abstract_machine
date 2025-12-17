@@ -1,8 +1,14 @@
 from dataclasses import dataclass
 from typing import List
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.motion_statechart.graph_node import MotionStatechartNode
+from semantic_digital_twin.spatial_types import (
+    Point3,
+    Vector3,
+    RotationMatrix,
+    HomogeneousTransformationMatrix,
+)
 from semantic_digital_twin.world_description.connections import OmniDrive
 from semantic_digital_twin.world_description.world_entity import Body
 
@@ -41,7 +47,7 @@ class InWorldSpace(MotionStatechartNode):
 class PoseReached(MotionStatechartNode):
     root_link: Body
     tip_link: Body
-    goal_pose: cas.HomogeneousTransformationMatrix
+    goal_pose: HomogeneousTransformationMatrix
     position_threshold: float = 0.01
     orientation_threshold: float = 0.01
     absolute: bool = False
@@ -83,7 +89,7 @@ class PoseReached(MotionStatechartNode):
 class PositionReached(MotionStatechartNode):
     root_link: Body
     tip_link: Body
-    goal_point: cas.Point3
+    goal_point: Point3
     threshold: float = 0.01
     absolute: bool = False
 
@@ -110,7 +116,7 @@ class PositionReached(MotionStatechartNode):
 class OrientationReached(MotionStatechartNode):
     root_link: Body
     tip_link: Body
-    goal_orientation: cas.RotationMatrix
+    goal_orientation: RotationMatrix
     threshold: float = 0.01
     absolute: bool = False
 
@@ -136,9 +142,9 @@ class OrientationReached(MotionStatechartNode):
 @dataclass
 class PointingAt(MotionStatechartNode):
     tip_link: Body
-    goal_point: cas.Point3
+    goal_point: Point3
     root_link: Body
-    pointing_axis: cas.Vector3
+    pointing_axis: Vector3
     threshold: float = 0.01
 
     def __post_init__(self):
@@ -169,8 +175,8 @@ class PointingAt(MotionStatechartNode):
 class VectorsAligned(MotionStatechartNode):
     root_link: Body
     tip_link: Body
-    goal_normal: cas.Vector3
-    tip_normal: cas.Vector3
+    goal_normal: Vector3
+    tip_normal: Vector3
     threshold: float = 0.01
 
     def __post_init__(self):
@@ -197,8 +203,8 @@ class VectorsAligned(MotionStatechartNode):
 class DistanceToLine(MotionStatechartNode):
     root_link: Body
     tip_link: Body
-    center_point: cas.Point3
-    line_axis: cas.Vector3
+    center_point: Point3
+    line_axis: Vector3
     line_length: float
     threshold: float = 0.01
 
@@ -221,5 +227,5 @@ class DistanceToLine(MotionStatechartNode):
             frame_P_line_start=root_P_line_start,
             frame_P_line_end=root_P_line_end,
         )
-        expr = cas.less(distance, self.threshold)
+        expr = distance < self.threshold
         self.observation_expression = expr

@@ -4,7 +4,7 @@ import abc
 from abc import ABC
 from dataclasses import field
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.motion_statechart.context import BuildContext
 from giskardpy.motion_statechart.data_types import ObservationStateValues
 from giskardpy.motion_statechart.graph_node import (
@@ -52,8 +52,8 @@ class LocalMinimumReached(MotionStatechartNode):
             )
             ref.append(velocity_limit)
             symbols.append(dof.variables.velocity)
-        ref = cas.Expression(ref)
-        vel_symbols = cas.Expression(symbols)
+        ref = cas.Vector(ref)
+        vel_symbols = cas.Vector(symbols)
 
         dt = (
             context.qp_controller_config.control_dt

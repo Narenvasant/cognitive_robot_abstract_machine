@@ -35,6 +35,11 @@ from giskardpy.motion_statechart.test_nodes.test_nodes import (
     TestNestedGoal,
 )
 from giskardpy.qp.qp_controller_config import QPControllerConfig
+from krrood.symbolic_math.symbolic_math import (
+    trinary_logic_and,
+    trinary_logic_not,
+    trinary_logic_or,
+)
 from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
     KinematicStructureEntityKwargsTracker,
 )
@@ -42,10 +47,6 @@ from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.abstract_robot import AbstractRobot
 from semantic_digital_twin.spatial_types import Vector3, HomogeneousTransformationMatrix
 from semantic_digital_twin.spatial_types.derivatives import DerivativeMap
-from semantic_digital_twin.spatial_types.spatial_types import (
-    trinary_logic_and,
-    trinary_logic_not,
-)
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
     RevoluteConnection,
@@ -96,7 +97,7 @@ def test_trinary_transition():
 
     node1.start_condition = trinary_logic_and(
         node2.observation_variable,
-        trinary_logic_and(
+        trinary_logic_or(
             node3.observation_variable, trinary_logic_not(node4.observation_variable)
         ),
     )
@@ -274,7 +275,7 @@ def test_cart_goal_simple(pr2_world: World):
     kin_sim.tick_until_end()
 
     fk = pr2_world.compute_forward_kinematics_np(root, tip)
-    assert np.allclose(fk, tip_goal.to_np(), atol=cart_goal.threshold)
+    assert np.allclose(fk, tip_goal, atol=cart_goal.threshold)
 
 
 def test_compressed_copy_can_be_plotted(pr2_world: World):

@@ -10,7 +10,7 @@ import pandas
 import pandas as pd
 from line_profiler import profile
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.middleware import get_middleware
 from giskardpy.qp.adapters.qp_adapter import GiskardToQPAdapter
 from giskardpy.qp.constraint_collection import ConstraintCollection

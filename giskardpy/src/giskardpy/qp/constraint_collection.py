@@ -5,13 +5,12 @@ from dataclasses import dataclass, field
 import numpy as np
 from typing_extensions import List, Optional, Union, TYPE_CHECKING, Set
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.data_types.exceptions import (
     DuplicateNameException,
 )
 from giskardpy.motion_statechart.data_types import LifeCycleValues, DefaultWeights
 from giskardpy.motion_statechart.exceptions import (
-    NodeInitializationError,
     MotionStatechartError,
 )
 from giskardpy.qp.constraint import (
@@ -22,6 +21,7 @@ from giskardpy.qp.constraint import (
     BaseConstraint,
 )
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.spatial_types import Point3, Vector3, RotationMatrix
 from semantic_digital_twin.spatial_types.derivatives import Derivatives
 
 if TYPE_CHECKING:
@@ -90,8 +90,8 @@ class ConstraintCollection:
             is_running = cas.if_eq(
                 node.life_cycle_variable,
                 LifeCycleValues.RUNNING,
-                if_result=cas.Expression(1),
-                else_result=cas.Expression(0),
+                if_result=cas.Scalar(1),
+                else_result=cas.Scalar(0),
             )
             constraint.quadratic_weight *= is_running
 
@@ -192,8 +192,8 @@ class ConstraintCollection:
 
     def add_point_goal_constraints(
         self,
-        frame_P_current: cas.Point3,
-        frame_P_goal: cas.Point3,
+        frame_P_current: Point3,
+        frame_P_goal: Point3,
         reference_velocity: cas.ScalarData,
         weight: cas.ScalarData,
         name: Optional[str] = None,
@@ -265,8 +265,8 @@ class ConstraintCollection:
 
     def add_vector_goal_constraints(
         self,
-        frame_V_current: cas.Vector3,
-        frame_V_goal: cas.Vector3,
+        frame_V_current: Vector3,
+        frame_V_goal: Vector3,
         reference_velocity: cas.ScalarData,
         weight: cas.ScalarData = DefaultWeights.WEIGHT_BELOW_CA,
         name: Optional[str] = None,
@@ -301,8 +301,8 @@ class ConstraintCollection:
 
     def add_rotation_goal_constraints(
         self,
-        frame_R_current: cas.RotationMatrix,
-        frame_R_goal: cas.RotationMatrix,
+        frame_R_current: RotationMatrix,
+        frame_R_goal: RotationMatrix,
         reference_velocity: cas.ScalarData,
         weight: cas.ScalarData,
         name: Optional[str] = None,
@@ -320,7 +320,7 @@ class ConstraintCollection:
         # avoid singularity
         # the sign determines in which direction the robot moves when in singularity.
         # -0.0001 preserves the old behavior from before this goal was refactored
-        hack = cas.RotationMatrix.from_axis_angle(cas.Vector3.Z(), -0.0001)
+        hack = RotationMatrix.from_axis_angle(Vector3.Z(), -0.0001)
         frame_R_current = frame_R_current.dot(hack)
         q_actual = frame_R_current.to_quaternion()
         q_goal = frame_R_goal.to_quaternion()
@@ -412,16 +412,12 @@ class ConstraintCollection:
 
     def add_velocity_eq_constraint_vector(
         self,
-        velocity_goals: Union[
-            cas.Expression, cas.Vector3, cas.Point3, List[cas.ScalarData]
-        ],
+        velocity_goals: Union[cas.ScalarScalar, Vector3, Point3, List[cas.ScalarData]],
         reference_velocities: Union[
-            cas.Expression, cas.Vector3, cas.Point3, List[cas.ScalarData]
+            cas.ScalarScalar, Vector3, Point3, List[cas.ScalarData]
         ],
-        weights: Union[cas.Expression, cas.Vector3, cas.Point3, List[cas.ScalarData]],
-        task_expression: Union[
-            cas.Expression, cas.Vector3, cas.Point3, List[cas.SymbolicScalar]
-        ],
+        weights: Union[cas.ScalarScalar, Vector3, Point3, List[cas.ScalarData]],
+        task_expression: Union[cas.Scalar, Vector3, Point3, List[cas.SymbolicScalar]],
         names: List[str],
     ):
         for i in range(len(velocity_goals)):
@@ -438,7 +434,7 @@ class ConstraintCollection:
 
     def add_translational_velocity_limit(
         self,
-        frame_P_current: cas.Point3,
+        frame_P_current: Point3,
         max_velocity: cas.ScalarData,
         weight: cas.ScalarData,
         max_violation: cas.ScalarData = np.inf,
@@ -455,7 +451,7 @@ class ConstraintCollection:
         """
 
         trans_error = frame_P_current.norm()
-        trans_error = cas.if_eq_zero(trans_error, cas.Expression(0.01), trans_error)
+        trans_error = cas.if_eq_zero(trans_error, cas.Scalar(0.01), trans_error)
         self.add_velocity_constraint(
             upper_velocity_limit=max_velocity,
             lower_velocity_limit=-max_velocity,
@@ -469,7 +465,7 @@ class ConstraintCollection:
 
     def add_rotational_velocity_limit(
         self,
-        frame_R_current: cas.RotationMatrix,
+        frame_R_current: RotationMatrix,
         max_velocity: cas.ScalarData,
         weight: cas.ScalarData,
         max_violation: cas.ScalarData = Large_Number,

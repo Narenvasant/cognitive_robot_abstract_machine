@@ -104,7 +104,7 @@ class TestRotationMatrix:
         ]
         does_not_work = [
             cas.FloatVariable(name="s"),
-            cas.Expression(data=1),
+            cas.Scalar(1),
             Point3(x=1, y=1, z=1),
             Quaternion(),
         ]
@@ -534,7 +534,7 @@ class TestPoint3:
     def test_init(self):
         l = [1, 2, 3]
         s = cas.FloatVariable(name="s")
-        e = cas.Expression(data=1)
+        e = cas.Scalar(1)
         v = Vector3(x=1, y=1, z=1)
         p = Point3(x=l[0], y=l[1], z=l[2])
         r = RotationMatrix()
@@ -546,7 +546,7 @@ class TestPoint3:
         assert np.allclose(p[3], 1)
         assert np.allclose(p[:3], l)
 
-        Point3.from_iterable(cas.Expression(data=v))
+        Point3.from_iterable(v)
         Point3.from_iterable(l)
         with pytest.raises(WrongDimensionsError):
             Point3.from_iterable(r.to_np())
@@ -883,7 +883,7 @@ class TestVector3:
     def test_init(self):
         l = [1, 2, 3]
         s = cas.FloatVariable(name="s")
-        e = cas.Expression(data=1)
+        e = cas.Scalar(1)
         v = Vector3(x=1, y=1, z=1)
         p = Point3(x=1, y=1, z=1)
         r = RotationMatrix()
@@ -898,7 +898,7 @@ class TestVector3:
         assert v[2] == l[2]
         assert v[3] == 0  # Vector3 has 0 in homogeneous coordinate
 
-        Vector3.from_iterable(cas.Expression(data=v))
+        Vector3.from_iterable(v)
         Vector3.from_iterable(p)  # Can create Vector3 from Point3
         Vector3.from_iterable(v)
         Vector3.from_iterable(v.casadi_sx)
@@ -1254,7 +1254,7 @@ class TestTransformationMatrix:
         ]
         does_not_work = [
             cas.FloatVariable(name="s"),
-            cas.Expression(data=1),
+            cas.Scalar(1),
             Quaternion(),
         ]
 

@@ -2,7 +2,7 @@ import json
 import time
 from dataclasses import dataclass
 from math import radians
-from typing import Optional, Iterable, Type
+from typing import Type
 
 import numpy as np
 import pytest
@@ -20,8 +20,6 @@ from giskardpy.motion_statechart.data_types import (
 )
 from giskardpy.motion_statechart.exceptions import (
     NotInMotionStatechartError,
-    InvalidConditionError,
-    NodeInitializationError,
     EndMotionInGoalError,
     InputNotExpressionError,
     SelfInStartConditionError,
@@ -72,10 +70,16 @@ from giskardpy.motion_statechart.test_nodes.test_nodes import (
     TestNestedGoal,
     ConstFalseNode,
 )
-from giskardpy.qp.constraint import EqualityConstraint, BaseConstraint
+from giskardpy.qp.constraint import EqualityConstraint
 from giskardpy.qp.constraint_collection import ConstraintCollection
 from giskardpy.qp.exceptions import HardConstraintsViolatedException
 from giskardpy.utils.math import angle_between_vector
+from krrood.symbolic_math.symbolic_math import (
+    trinary_logic_and,
+    trinary_logic_not,
+    trinary_logic_or,
+    FloatVariable,
+)
 from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
     KinematicStructureEntityKwargsTracker,
 )
@@ -91,19 +95,13 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import Hand
 from semantic_digital_twin.spatial_types import (
     HomogeneousTransformationMatrix,
     Vector3,
-    FloatVariable,
 )
 from semantic_digital_twin.spatial_types.derivatives import DerivativeMap
-from semantic_digital_twin.spatial_types.spatial_types import (
-    trinary_logic_and,
-    trinary_logic_not,
-)
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
     RevoluteConnection,
     ActiveConnection1DOF,
     FixedConnection,
-    OmniDrive,
 )
 from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFreedom
 from semantic_digital_twin.world_description.geometry import Cylinder
@@ -122,11 +120,11 @@ def test_condition_to_str():
     end = EndMotion()
     msc.add_node(end)
 
-    end.start_condition = cas.trinary_logic_and(
+    end.start_condition = trinary_logic_and(
         node1.observation_variable,
-        cas.trinary_logic_or(
+        trinary_logic_or(
             node2.observation_variable,
-            cas.trinary_logic_not(node3.observation_variable),
+            trinary_logic_not(node3.observation_variable),
         ),
     )
     a = str(end._start_condition)
@@ -142,25 +140,10 @@ def test_motion_statechart_to_dot():
     end = EndMotion()
     msc.add_node(end)
     node1.end_condition = node2.observation_variable
-    end.start_condition = cas.trinary_logic_and(
+    end.start_condition = trinary_logic_and(
         node1.observation_variable, node2.observation_variable
     )
     msc.draw("muh.pdf")
-
-
-@pytest.mark.skip(reason="not implemented yet")
-def test_all_conditions_with_goals():
-    pass
-
-
-@pytest.mark.skip(reason="not implemented yet")
-def test_all_conditions_with_nodes():
-    pass
-
-
-@pytest.mark.skip(reason="not implemented yet")
-def test_transition_hooks():
-    pass
 
 
 def test_motion_statechart():
@@ -175,7 +158,7 @@ def test_motion_statechart():
     end = EndMotion()
     msc.add_node(end)
 
-    node1.start_condition = cas.trinary_logic_or(
+    node1.start_condition = trinary_logic_or(
         node3.observation_variable, node2.observation_variable
     )
     end.start_condition = node1.observation_variable
@@ -449,7 +432,7 @@ def test_joint_goal():
     msc.add_node(end)
 
     task1.start_condition = always_true.observation_variable
-    end.start_condition = cas.trinary_logic_and(
+    end.start_condition = trinary_logic_and(
         task1.observation_variable, always_true.observation_variable
     )
 
@@ -499,7 +482,7 @@ class TestConditions:
         msc = MotionStatechart()
         msc.add_node(node := ConstTrueNode())
         with pytest.raises(NonObservationVariableError):
-            node.start_condition = cas.FloatVariable(name="muh")
+            node.start_condition = FloatVariable(name="muh")
 
     def test_add_node_to_multiple_goals(self):
         msc = MotionStatechart()
@@ -578,7 +561,7 @@ def test_reset():
     node2.start_condition = node1.observation_variable
     node3.start_condition = node2.observation_variable
     node2.end_condition = node2.observation_variable
-    end.start_condition = cas.trinary_logic_and(
+    end.start_condition = trinary_logic_and(
         node1.observation_variable,
         node2.observation_variable,
         node3.observation_variable,
@@ -840,45 +823,6 @@ def test_thread_payload_monitor_non_blocking_and_caching():
     time.sleep(mon.delay * 2)
     val1 = mon.compute_observation()
     assert val1 == ObservationStateValues.TRUE
-
-
-@pytest.mark.skip(reason="Not working yet")
-def test_thread_payload_monitor_integration():
-    msc = MotionStatechart()
-    mon = _TestThreadMonitor(
-        delay=0.03,
-        return_value=ObservationStateValues.TRUE,
-    )
-    msc.add_node(mon)
-    end = EndMotion()
-    msc.add_node(end)
-    end.start_condition = mon.observation_variable
-
-    kin_sim = Executor(world=World())
-
-    kin_sim.compile(motion_statechart=msc)
-
-    # tick 1: monitor not started yet becomes RUNNING; end not started
-    kin_sim.tick()
-    assert mon.observation_state == ObservationStateValues.UNKNOWN
-    assert mon.life_cycle_state == LifeCycleValues.RUNNING
-    assert end.life_cycle_state == LifeCycleValues.NOT_STARTED
-
-    # tick 2: compute_observation is triggered asynchronously; still Unknown immediately
-    kin_sim.tick()
-    assert mon.observation_state == ObservationStateValues.UNKNOWN
-    assert mon.life_cycle_state == LifeCycleValues.RUNNING
-    assert end.life_cycle_state == LifeCycleValues.NOT_STARTED
-
-    # allow background to finish and propagate on next tick
-    time.sleep(mon.delay * 2)
-    kin_sim.tick()
-    assert mon.observation_state == ObservationStateValues.TRUE
-    assert end.life_cycle_state == LifeCycleValues.RUNNING
-
-    # next tick the EndMotion should turn true
-    kin_sim.tick()
-    assert end.observation_state == ObservationStateValues.TRUE
 
 
 def test_goal():
@@ -1217,7 +1161,7 @@ def test_cart_goal_sequence_at_build(pr2_world: World):
 
     end = EndMotion()
     msc.add_node(end)
-    end.start_condition = cas.trinary_logic_and(
+    end.start_condition = trinary_logic_and(
         cart_goal1.observation_variable, cart_goal2.observation_variable
     )
 
@@ -1263,7 +1207,7 @@ def test_cart_goal_sequence_on_start(pr2_world: World):
 
     end = EndMotion()
     msc.add_node(end)
-    end.start_condition = cas.trinary_logic_and(
+    end.start_condition = trinary_logic_and(
         cart_goal1.observation_variable, cart_goal2.observation_variable
     )
 
@@ -1548,7 +1492,7 @@ class TestVelocityTasks:
         )
         msc = self._build_msc(goal_node=goal, limit_node=low_weight_limit)
         cancel_motion = CancelMotion(exception=Exception("test"))
-        cancel_motion.start_condition = cas.trinary_logic_not(
+        cancel_motion.start_condition = trinary_logic_not(
             low_weight_limit.observation_variable
         )
         msc.add_node(cancel_motion)
@@ -1645,9 +1589,9 @@ def test_transition_triggers():
 
     node3 = Pulse()
     msc.add_node(node3)
-    node3.start_condition = cas.trinary_logic_and(
-        cas.trinary_logic_not(node1.observation_variable),
-        cas.trinary_logic_not(node2.observation_variable),
+    node3.start_condition = trinary_logic_and(
+        trinary_logic_not(node1.observation_variable),
+        trinary_logic_not(node2.observation_variable),
     )
 
     node4 = Pulse()

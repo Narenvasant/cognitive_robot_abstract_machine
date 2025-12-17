@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import itertools
 from typing import Tuple, List, TYPE_CHECKING
 
 import numpy as np
 from line_profiler import profile
 
-import semantic_digital_twin.spatial_types.spatial_types as cas
+import krrood.symbolic_math.symbolic_math as cas
 from giskardpy.qp.adapters.qp_adapter import GiskardToQPAdapter
 from giskardpy.qp.qp_data import QPData
 
@@ -32,23 +31,23 @@ class GiskardToExplicitQPAdapter(GiskardToQPAdapter):
 
     def general_qp_to_specific_qp(
         self,
-        quadratic_weights: cas.Expression,
-        linear_weights: cas.Expression,
-        box_lower_constraints: cas.Expression,
-        box_upper_constraints: cas.Expression,
-        eq_matrix_dofs: cas.Expression,
-        eq_matrix_slack: cas.Expression,
-        eq_bounds: cas.Expression,
-        neq_matrix_dofs: cas.Expression,
-        neq_matrix_slack: cas.Expression,
-        neq_lower_bounds: cas.Expression,
-        neq_upper_bounds: cas.Expression,
+        quadratic_weights: cas.Vector,
+        linear_weights: cas.Vector,
+        box_lower_constraints: cas.Vector,
+        box_upper_constraints: cas.Vector,
+        eq_matrix_dofs: cas.Matrix,
+        eq_matrix_slack: cas.Matrix,
+        eq_bounds: cas.Vector,
+        neq_matrix_dofs: cas.Matrix,
+        neq_matrix_slack: cas.Matrix,
+        neq_lower_bounds: cas.Vector,
+        neq_upper_bounds: cas.Vector,
     ):
         eq_matrix = cas.hstack(
             [
                 eq_matrix_dofs,
                 eq_matrix_slack,
-                cas.Expression.zeros(
+                cas.Matrix.zeros(
                     eq_matrix_slack.shape[0], self.num_neq_slack_variables
                 ),
             ]
@@ -56,7 +55,7 @@ class GiskardToExplicitQPAdapter(GiskardToQPAdapter):
         neq_matrix = cas.hstack(
             [
                 neq_matrix_dofs,
-                cas.Expression.zeros(
+                cas.Matrix.zeros(
                     neq_matrix_slack.shape[0], self.num_eq_slack_variables
                 ),
                 neq_matrix_slack,
