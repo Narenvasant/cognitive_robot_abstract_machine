@@ -51,12 +51,6 @@ class Base(DeclarativeBase):
 
 
 # Association tables for many-to-many relationships
-hasdrawersdao_drawers_association = Table(
-    "hasdrawersdao_drawers_association",
-    Base.metadata,
-    Column("source_hasdrawersdao_id", ForeignKey("HasDrawersDAO.database_id")),
-    Column("target_drawerdao_id", ForeignKey("DrawerDAO.database_id")),
-)
 hasaperturesdao_apertures_association = Table(
     "hasaperturesdao_apertures_association",
     Base.metadata,
@@ -68,6 +62,12 @@ hasdoorsdao_doors_association = Table(
     Base.metadata,
     Column("source_hasdoorsdao_id", ForeignKey("HasDoorsDAO.database_id")),
     Column("target_doordao_id", ForeignKey("DoorDAO.database_id")),
+)
+hasdrawersdao_drawers_association = Table(
+    "hasdrawersdao_drawers_association",
+    Base.metadata,
+    Column("source_hasdrawersdao_id", ForeignKey("HasDrawersDAO.database_id")),
+    Column("target_drawerdao_id", ForeignKey("DrawerDAO.database_id")),
 )
 shapecollectiondao_shapes_association = Table(
     "shapecollectiondao_shapes_association",
@@ -431,33 +431,6 @@ class HasPrismaticConnectionDAO(
     __mapper_args__ = {
         "polymorphic_identity": "HasPrismaticConnectionDAO",
         "inherit_condition": database_id == HasActiveConnectionDAO.database_id,
-    }
-
-
-class HasDrawersDAO(
-    HasPrismaticConnectionDAO,
-    DataAccessObject[semantic_digital_twin.semantic_annotations.mixins.HasDrawers],
-):
-
-    __tablename__ = "HasDrawersDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(HasPrismaticConnectionDAO.database_id),
-        primary_key=True,
-        use_existing_column=True,
-    )
-
-    drawers: Mapped[typing.List[DrawerDAO]] = relationship(
-        "DrawerDAO",
-        secondary="hasdrawersdao_drawers_association",
-        primaryjoin="HasDrawersDAO.database_id == hasdrawersdao_drawers_association.c.source_hasdrawersdao_id",
-        secondaryjoin="DrawerDAO.database_id == hasdrawersdao_drawers_association.c.target_drawerdao_id",
-        cascade="save-update, merge",
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "HasDrawersDAO",
-        "inherit_condition": database_id == HasPrismaticConnectionDAO.database_id,
     }
 
 
@@ -829,6 +802,33 @@ class HasLeftRightDoorDAO(
     __mapper_args__ = {
         "polymorphic_identity": "HasLeftRightDoorDAO",
         "inherit_condition": database_id == HasDoorsDAO.database_id,
+    }
+
+
+class HasDrawersDAO(
+    SemanticAssociationDAO,
+    DataAccessObject[semantic_digital_twin.semantic_annotations.mixins.HasDrawers],
+):
+
+    __tablename__ = "HasDrawersDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        ForeignKey(SemanticAssociationDAO.database_id),
+        primary_key=True,
+        use_existing_column=True,
+    )
+
+    drawers: Mapped[typing.List[DrawerDAO]] = relationship(
+        "DrawerDAO",
+        secondary="hasdrawersdao_drawers_association",
+        primaryjoin="HasDrawersDAO.database_id == hasdrawersdao_drawers_association.c.source_hasdrawersdao_id",
+        secondaryjoin="DrawerDAO.database_id == hasdrawersdao_drawers_association.c.target_drawerdao_id",
+        cascade="save-update, merge",
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "HasDrawersDAO",
+        "inherit_condition": database_id == SemanticAssociationDAO.database_id,
     }
 
 

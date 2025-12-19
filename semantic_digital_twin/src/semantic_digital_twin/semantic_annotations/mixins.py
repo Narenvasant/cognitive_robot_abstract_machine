@@ -5,11 +5,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import reduce
 from operator import or_
-from typing import Optional
 
 import numpy as np
 import trimesh
-from numpy._typing import NDArray
 from probabilistic_model.probabilistic_circuit.rx.helper import (
     uniform_measure_of_simple_event,
     uniform_measure_of_event,
@@ -19,13 +17,13 @@ from random_events.product_algebra import SimpleEvent, Event
 from random_events.variable import Continuous
 from typing_extensions import (
     TYPE_CHECKING,
-    assert_never,
     List,
     Optional,
     Self,
     Iterable,
     Tuple,
     Union,
+    Type,
 )
 
 from krrood.ormatic.utils import classproperty
@@ -40,6 +38,8 @@ from ..world_description.connections import (
     RevoluteConnection,
     FixedConnection,
     PrismaticConnection,
+    ActiveConnection,
+    ActiveConnection1DOF,
 )
 from ..world_description.degree_of_freedom import DegreeOfFreedom
 from ..world_description.geometry import Scale
@@ -415,6 +415,100 @@ class SemanticAssociation(ABC):
     ) -> TransformationMatrix:
         return self.body.global_pose.inverse() @ child.body.global_pose
 
+    def _add_parent_semantic_annotation(
+        self: HasRootBody | Self,
+        semantic_annotation: HasRootBody,
+        connection_type: Type[ActiveConnection1DOF],
+        connection_limits: Optional[
+            Tuple[DerivativeMap[float], DerivativeMap[float]]
+        ] = None,
+        active_axis: Vector3 = Vector3.Z(),
+        connection_multiplier: float = 1.0,
+        connection_offset: float = 0.0,
+    ):
+        if semantic_annotation._world != self._world:
+            raise ValueError(
+                "Semantic annotation must be part of the same world as the parent."
+            )
+
+        world = self._world
+        semantic_annotation_body = semantic_annotation.body
+        semantic_annotation_T_self = self.get_new_parent_T_self(semantic_annotation)
+        new_semantic_annotation_parent = self.resolve_grandparent(semantic_annotation)
+
+        if connection_limits is not None:
+            if connection_limits[0].position <= connection_limits[1].position:
+                raise ValueError("Upper limit must be greater than lower limit.")
+        else:
+            if connection_type == RevoluteConnection:
+                connection_limits = self.create_default_upper_lower_limits(
+                    semantic_annotation_T_self, active_axis
+                )
+            elif connection_type == PrismaticConnection:
+                bounding_box = self.body.collision.as_bounding_box_collection_in_frame(
+                    self.body
+                ).bounding_box()
+                connection_limits = self.create_default_upper_lower_limits(
+                    bounding_box.scale, active_axis
+                )
+
+        with world.modify_world():
+            parent_C_self = self.body.parent_connection
+            world.remove_connection(parent_C_self)
+
+            semantic_annotation_C_self = FixedConnection(
+                parent=semantic_annotation_body,
+                child=self.body,
+                parent_T_connection_expression=semantic_annotation_T_self,
+            )
+            world.add_connection(semantic_annotation_C_self)
+            new_parent_T_semantic_annotation = world._forward_kinematic_manager.compute(
+                new_semantic_annotation_parent, semantic_annotation_body
+            )
+
+            parent_C_semantic_annotation = semantic_annotation.body.parent_connection
+            if not isinstance(parent_C_semantic_annotation, connection_type):
+                world.remove_connection(parent_C_semantic_annotation)
+
+                dof = DegreeOfFreedom(
+                    name=PrefixedName(f"{self.name.name}_dof", self.name.prefix),
+                    upper_limits=connection_limits[0],
+                    lower_limits=connection_limits[1],
+                )
+                world.add_degree_of_freedom(dof)
+
+                parent_C_semantic_annotation = connection_type(
+                    parent=new_semantic_annotation_parent,
+                    child=semantic_annotation.body,
+                    parent_T_connection_expression=new_parent_T_semantic_annotation,
+                    multiplier=connection_multiplier,
+                    offset=connection_offset,
+                    axis=active_axis,
+                    dof_id=dof.id,
+                )
+                world.add_connection(parent_C_semantic_annotation)
+
+    def _add_child_semantic_annotation(
+        self: HasRootBody | Self, semantic_annotation: HasRootBody
+    ):
+        if semantic_annotation._world != self._world:
+            raise ValueError("Hinge must be part of the same world as the door.")
+
+        world = self._world
+        semantic_annotation_body = semantic_annotation.body
+        self_T_semantic_annotation = self.get_self_T_new_child(semantic_annotation)
+
+        with world.modify_world():
+            parent_C_semantic_annotation = semantic_annotation_body.parent_connection
+            world.remove_connection(parent_C_semantic_annotation)
+
+            self_C_semantic_annotation = FixedConnection(
+                parent=self.body,
+                child=semantic_annotation_body,
+                parent_T_connection_expression=self_T_semantic_annotation,
+            )
+            world.add_connection(self_C_semantic_annotation)
+
 
 @dataclass(eq=False)
 class HasApertures(SemanticAssociation, ABC):
@@ -441,6 +535,7 @@ class HasApertures(SemanticAssociation, ABC):
         ).as_shapes()
         self.body.collision = new_bounding_box_collection
         self.body.visual = new_bounding_box_collection
+        self.apertures.append(aperture)
 
 
 @dataclass(eq=False)
@@ -469,58 +564,15 @@ class HasHinge(HasRevoluteConnection, SemanticAssociation, ABC):
         to the parent world.
         :param parent_world: The world to which the door will be added.
         """
-        if hinge._world != self._world:
-            raise ValueError("Hinge must be part of the same world as the door.")
-
-        world = self._world
-        hinge_body = hinge.body
-        hinge_T_self = self.get_new_parent_T_self(hinge)
-        new_hinge_parent = self.resolve_grandparent(hinge)
-
-        if connection_limits is not None:
-            if connection_limits[0].position <= connection_limits[1].position:
-                raise ValueError("Upper limit must be greater than lower limit.")
-        else:
-            connection_limits = self.create_default_upper_lower_limits(
-                hinge_T_self, rotation_axis
-            )
-
-        with world.modify_world():
-            parent_C_self = self.body.parent_connection
-            world.remove_connection(parent_C_self)
-
-            hinge_C_self = FixedConnection(
-                parent=hinge_body,
-                child=self.body,
-                parent_T_connection_expression=hinge_T_self,
-            )
-            world.add_connection(hinge_C_self)
-            new_parent_T_hinge = world._forward_kinematic_manager.compute(
-                new_hinge_parent, hinge_body
-            )
-
-            parent_C_hinge = hinge.body.parent_connection
-            if not isinstance(parent_C_hinge, RevoluteConnection):
-                world.remove_connection(parent_C_hinge)
-
-                dof = DegreeOfFreedom(
-                    name=PrefixedName(f"{self.name.name}_hinge_dof", self.name.prefix),
-                    upper_limits=connection_limits[0],
-                    lower_limits=connection_limits[1],
-                )
-                world.add_degree_of_freedom(dof)
-
-                parent_C_hinge = RevoluteConnection(
-                    parent=new_hinge_parent,
-                    child=hinge.body,
-                    parent_T_connection_expression=new_parent_T_hinge,
-                    multiplier=connection_multiplier,
-                    offset=connection_offset,
-                    axis=rotation_axis,
-                    dof_id=dof.id,
-                )
-                world.add_connection(parent_C_hinge)
-            self.hinge = hinge
+        self._add_parent_semantic_annotation(
+            hinge,
+            RevoluteConnection,
+            connection_limits,
+            rotation_axis,
+            connection_multiplier,
+            connection_offset,
+        )
+        self.hinge = hinge
 
 
 @dataclass(eq=False)
@@ -549,65 +601,19 @@ class HasSlider(HasPrismaticConnection, SemanticAssociation, ABC):
         to the parent world.
         :param parent_world: The world to which the door will be added.
         """
-        if slider._world != self._world:
-            raise ValueError("Hinge must be part of the same world as the door.")
-
-        world = self._world
-        slider_body = slider.body
-        slider_T_self = self.get_new_parent_T_self(slider)
-        new_slider_parent = self.resolve_grandparent(slider)
-
-        if connection_limits is not None:
-            if connection_limits[0].position <= connection_limits[1].position:
-                raise ValueError("Upper limit must be greater than lower limit.")
-        else:
-            bounding_box = self.body.collision.as_bounding_box_collection_in_frame(
-                self.body
-            ).bounding_box()
-            connection_limits = self.create_default_upper_lower_limits(
-                bounding_box.scale, translation_axis
-            )
-
-        with world.modify_world():
-            parent_C_self = self.body.parent_connection
-            world.remove_connection(parent_C_self)
-
-            hinge_C_self = FixedConnection(
-                parent=slider_body,
-                child=self.body,
-                parent_T_connection_expression=slider_T_self,
-            )
-            world.add_connection(hinge_C_self)
-            new_parent_T_slider = world._forward_kinematic_manager.compute(
-                new_slider_parent, slider_body
-            )
-
-            parent_C_slider = slider_body.parent_connection
-            if not isinstance(parent_C_slider, PrismaticConnection):
-                world.remove_connection(parent_C_slider)
-
-                dof = DegreeOfFreedom(
-                    name=PrefixedName(f"{self.name.name}_slider_dof", self.name.prefix),
-                    upper_limits=connection_limits[0],
-                    lower_limits=connection_limits[1],
-                )
-                world.add_degree_of_freedom(dof)
-
-                parent_C_slider = PrismaticConnection(
-                    parent=new_slider_parent,
-                    child=slider_body,
-                    parent_T_connection_expression=new_parent_T_slider,
-                    multiplier=connection_multiplier,
-                    offset=connection_offset,
-                    axis=translation_axis,
-                    dof_id=dof.id,
-                )
-                world.add_connection(parent_C_slider)
-            self.slider = slider
+        self._add_parent_semantic_annotation(
+            slider,
+            PrismaticConnection,
+            connection_limits,
+            translation_axis,
+            connection_multiplier,
+            connection_offset,
+        )
+        self.slider = slider
 
 
 @dataclass(eq=False)
-class HasDrawers(HasPrismaticConnection, ABC):
+class HasDrawers(SemanticAssociation, ABC):
     """
     A mixin class for semantic annotations that have drawers.
     """
@@ -627,36 +633,8 @@ class HasDrawers(HasPrismaticConnection, ABC):
         :param parent_world: The world to which the door will be added.
         """
 
-        self._add_drawer(drawer)
+        self._add_child_semantic_annotation(drawer)
         self.drawers.append(drawer)
-
-    def _add_drawer(
-        self: SemanticAnnotation | Self,
-        drawer: Drawer,
-    ):
-        """
-        Adds a hinge to the door. The hinge's pivot point is on the opposite side of the handle.
-        :param door_factory: The factory used to create the door.
-        :param parent_T_door: The transformation matrix defining the door's position and orientation relative
-        :param opening_axis: The axis around which the door opens.
-        """
-        if drawer._world != self._world:
-            raise ValueError("Hinge must be part of the same world as the door.")
-
-        world = self._world
-        door_body = drawer.body
-        self_T_door = self.get_self_T_new_child(drawer)
-
-        with world.modify_world():
-            parent_C_handle = drawer.body.parent_connection
-            world.remove_connection(parent_C_handle)
-
-            self_C_door = FixedConnection(
-                parent=self.body,
-                child=door_body,
-                parent_T_connection_expression=self_T_door,
-            )
-            world.add_connection(self_C_door)
 
 
 @dataclass(eq=False)
@@ -680,36 +658,8 @@ class HasDoors(SemanticAssociation, ABC):
         :param parent_world: The world to which the door will be added.
         """
 
-        self._add_door(door)
+        self._add_child_semantic_annotation(door)
         self.doors.append(door)
-
-    def _add_door(
-        self: SemanticAnnotation | Self,
-        door: Door,
-    ):
-        """
-        Adds a hinge to the door. The hinge's pivot point is on the opposite side of the handle.
-        :param door_factory: The factory used to create the door.
-        :param parent_T_door: The transformation matrix defining the door's position and orientation relative
-        :param opening_axis: The axis around which the door opens.
-        """
-        if door._world != self._world:
-            raise ValueError("Hinge must be part of the same world as the door.")
-
-        world = self._world
-        door_body = door.body
-        self_T_door = self.get_self_T_new_child(door)
-
-        with world.modify_world():
-            parent_C_handle = door.body.parent_connection
-            world.remove_connection(parent_C_handle)
-
-            self_C_door = FixedConnection(
-                parent=self.body,
-                child=door_body,
-                parent_T_connection_expression=self_T_door,
-            )
-            world.add_connection(self_C_door)
 
 
 @dataclass(eq=False)
@@ -734,7 +684,7 @@ class HasLeftRightDoor(HasDoors):
         door: Door,
         parent: KinematicStructureEntity,
     ):
-        self._add_door(door, parent)
+        self._add_child_semantic_annotation(door, parent)
         self.right_door = door
 
     def add_left_door(
@@ -742,12 +692,12 @@ class HasLeftRightDoor(HasDoors):
         door: Door,
         parent: KinematicStructureEntity,
     ):
-        self._add_door(door, parent)
+        self._add_child_semantic_annotation(door, parent)
         self.left_door = door
 
     @classmethod
     def create_with_left_right_door_in_world(
-        cls, left_door: Door, right_door: Door
+        cls: SemanticAnnotation | Self, left_door: Door, right_door: Door
     ) -> Self:
         """
         Create a DoubleDoor semantic annotation with the given left and right doors.
@@ -788,24 +738,8 @@ class HasHandle(SemanticAssociation, ABC):
         to the parent world.
         :param parent_world: The world to which the handle will be added.
         """
-        if handle._world != self._world:
-            raise ValueError("Hinge must be part of the same world as the door.")
-
-        world = self._world
-        handle_body = handle.body
-        self_T_handle = self.get_self_T_new_child(handle)
-
-        with world.modify_world():
-            parent_C_handle = handle.body.parent_connection
-            world.remove_connection(parent_C_handle)
-
-            self_C_handle = FixedConnection(
-                parent=self.body,
-                child=handle_body,
-                parent_T_connection_expression=self_T_handle,
-            )
-            world.add_connection(self_C_handle)
-            self.handle = handle
+        self._add_child_semantic_annotation(handle)
+        self.handle = handle
 
 
 @dataclass(eq=False)

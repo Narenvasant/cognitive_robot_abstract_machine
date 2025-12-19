@@ -407,6 +407,8 @@ class TestFactories(unittest.TestCase):
         )
         wall.add_aperture(aperture)
 
+        assert wall.apertures[0] == aperture
+
 
 if __name__ == "__main__":
     unittest.main()
