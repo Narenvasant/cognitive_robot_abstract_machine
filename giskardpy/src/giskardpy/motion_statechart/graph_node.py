@@ -533,7 +533,7 @@ class MotionStatechartNode(SubclassJSONSerializer):
             condition = sm.trinary_logic_or(condition, cond_expr)
         return condition
 
-    def get_condition(self, transition_kind: TransitionKind) -> Callable[[Any], Any]:
+    def get_condition(self, transition_kind: TransitionKind) -> Scalar:
         """
         Get the condition for the given transition kind.
         :param transition_kind: The kind of transition whose condition to get.
