@@ -360,11 +360,9 @@ def pr2_apartment_world(pr2_world_setup, apartment_world_setup):
     pr2_copy = deepcopy(pr2_world_setup)
     apartment_copy = deepcopy(apartment_world_setup)
 
-    apartment_copy.merge_world_at_pose(
-        pr2_copy,
-        HomogeneousTransformationMatrix.from_xyz_quaternion(
-            1.3, 2, 0, reference_frame=apartment_copy.root
-        ),
+    apartment_copy.merge_world(pr2_copy)
+    apartment_copy.get_body_by_name("base_footprint").parent_connection.origin = (
+        HomogeneousTransformationMatrix.from_xyz_rpy(1.3, 2, 0)
     )
     return apartment_copy
 

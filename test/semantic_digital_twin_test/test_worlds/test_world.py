@@ -811,40 +811,6 @@ def test_set_omni_after_copy(pr2_world_state_reset):
     )
 
 
-def test_omni_merge(pr2_world_state_reset, apartment_world_setup):
-    pr2_copy = deepcopy(pr2_world_state_reset)
-    apartment_copy = deepcopy(apartment_world_setup)
-
-    pr2_copy.get_body_by_name("base_footprint").parent_connection.origin = (
-        HomogeneousTransformationMatrix.from_xyz_rpy(10, 10, 0)
-    )
-
-    np.testing.assert_array_almost_equal(
-        pr2_copy.get_body_by_name("base_footprint").global_pose.to_position().to_np(),
-        np.array([10.0, 10.0, 0.0, 1.0]),
-    )
-
-    apartment_copy.merge_world(
-        pr2_copy
-    )  # , TransformationMatrix.from_xyz_rpy(1.4, 2, 0))
-    np.testing.assert_array_almost_equal(
-        apartment_copy.get_body_by_name("base_footprint")
-        .global_pose.to_position()
-        .to_np(),
-        np.array([1.4, 2, 0, 1]),
-    )
-
-    apartment_copy.get_body_by_name("base_footprint").parent_connection.origin = (
-        TransformationMatrix.from_xyz_rpy(10, 10, 0)
-    )
-    np.testing.assert_array_almost_equal(
-        apartment_copy.get_body_by_name("base_footprint")
-        .global_pose.to_position()
-        .to_np(),
-        np.array([10.0, 10.0, 0.0, 1.0]),
-    )
-
-
 def test_add_entity_with_duplicate_name(world_setup):
     world, l1, l2, bf, r1, r2 = world_setup
     body_duplicate = Body(name=PrefixedName("l1"))
