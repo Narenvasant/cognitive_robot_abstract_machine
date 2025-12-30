@@ -327,7 +327,8 @@ class CartesianPositionVelocityLimit(Task):
     """
 
     root_link: KinematicStructureEntity = field(kw_only=True)
-    """Root link of the kinematic chain. Defines the reference frame from which the tip's motion is measured."""
+    """Root link of the kinematic chain. 
+    Defines the reference frame from which the tip's motion is measured."""
     tip_link: KinematicStructureEntity = field(kw_only=True)
     """Tip link of the kinematic chain. The translational velocity of this link (expressed in the root link frame) is constrained."""
     max_linear_velocity: float = field(default=0.1, kw_only=True)

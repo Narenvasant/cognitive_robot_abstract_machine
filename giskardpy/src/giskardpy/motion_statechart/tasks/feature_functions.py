@@ -127,20 +127,17 @@ class AlignPerpendicular(FeatureFunctionGoal):
         self.reference_feature = self.reference_normal
         artifacts = super().build(context)
 
-        expr = self.root_V_reference_feature.angle_between(
-            self.root_V_controlled_feature
-        )
+        expr = self.root_V_reference_feature @ self.root_V_controlled_feature
 
-        angle = np.pi / 2
         artifacts.constraints.add_equality_constraint(
             reference_velocity=self.max_vel,
-            equality_bound=angle - expr,
+            equality_bound=0 - expr,
             weight=self.weight,
             task_expression=expr,
             name=f"{self.name}_constraint",
         )
 
-        artifacts.observation = cas.abs(angle - expr) < self.threshold
+        artifacts.observation = cas.abs(expr) < self.threshold
         return artifacts
 
 
