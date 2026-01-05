@@ -360,6 +360,8 @@ def test_print():
     assert end.life_cycle_state == LifeCycleValues.RUNNING
     assert msc.is_end_motion()
 
+    msc.plot_gantt_chart()
+
 
 def test_cancel_motion():
     msc = MotionStatechart()
@@ -377,6 +379,7 @@ def test_cancel_motion():
     with pytest.raises(Exception):
         kin_sim.tick()  # third tick, cancel goes true and triggers
     msc.draw("muh.pdf")
+    msc.plot_gantt_chart()
 
 
 def test_draw_with_invisible_node():
@@ -668,6 +671,14 @@ def test_nested_goals():
     outer = msc_copy.get_nodes_by_type(TestNestedGoal)[0]
     end = msc_copy.get_nodes_by_type(EndMotion)[0]
     kin_sim.compile(motion_statechart=msc_copy)
+
+    assert node1.depth == 0
+    assert outer.depth == 0
+    assert end.depth == 0
+    assert outer.inner.depth == 1
+    assert outer.inner.sub_node1.depth == 2
+    assert outer.inner.sub_node2.depth == 2
+
     msc_copy.draw("muh.pdf")
     assert node1.observation_state == ObservationStateValues.UNKNOWN
     assert outer.inner.sub_node1.observation_state == ObservationStateValues.UNKNOWN

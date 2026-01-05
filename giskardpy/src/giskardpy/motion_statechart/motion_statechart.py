@@ -280,7 +280,7 @@ class StateHistory:
 
     def get_observation_history_of_node(
         self, node: MotionStatechartNode
-    ) -> list[LifeCycleValues]:
+    ) -> list[ObservationStateValues]:
         return [history_item.observation_state[node] for history_item in self.history]
 
     def __len__(self) -> int:
