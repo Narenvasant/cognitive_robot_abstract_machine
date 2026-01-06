@@ -92,6 +92,11 @@ class HistoryGanttChartPlotter:
 
         The chart shows life cycle (top half) and observation state (bottom half)
         per node over time. If a context with dt is provided, the x-axis is in seconds; otherwise, control cycles are used.
+
+        This renders two side-by-side plots:
+        - Left: the normal timeline over control cycles or seconds
+        - Right: a compact column showing only the final state for each node, with the x label "final"
+        Y-axis labels are shown only once on the right plot.
         """
 
         nodes = self.motion_statechart.nodes
@@ -108,14 +113,26 @@ class HistoryGanttChartPlotter:
 
         ordered_nodes = self._sort_nodes_by_parents()
 
-        plt.figure(figsize=(self.figure_width, self.figure_height))
-        plt.grid(True, axis="x", zorder=-1)
+        # Create two subplots: main timeline and final-state-only column
+        fig, (ax_main, ax_final) = plt.subplots(
+            1,
+            2,
+            gridspec_kw={"width_ratios": [10, 1]},
+            sharey=True,
+            figsize=(self.figure_width, self.figure_height),
+        )
+        ax_main.grid(True, axis="x", zorder=-1)
 
         for node_idx, node in enumerate(ordered_nodes):
-            self._plot_lifecycle_bar(node=node, node_idx=node_idx)
-            self._plot_observation_bar(node=node, node_idx=node_idx)
+            self._plot_lifecycle_bar(ax=ax_main, node=node, node_idx=node_idx)
+            self._plot_observation_bar(ax=ax_main, node=node, node_idx=node_idx)
 
-        self._format_axes(ordered_nodes=ordered_nodes)
+            # Draw the final-state-only blocks on the right axis
+            self._plot_final_state_column(ax=ax_final, node=node, node_idx=node_idx)
+
+        self._format_axes(
+            ax_main=ax_main, ax_final=ax_final, ordered_nodes=ordered_nodes
+        )
         self._save_figure(file_name=file_name)
 
     def _sort_nodes_by_parents(self) -> List[MotionStatechartNode]:
@@ -134,6 +151,7 @@ class HistoryGanttChartPlotter:
 
     def _plot_lifecycle_bar(
         self,
+        ax: plt.Axes,
         node: MotionStatechartNode,
         node_idx: int,
     ):
@@ -144,6 +162,7 @@ class HistoryGanttChartPlotter:
             h.control_cycle for h in self.motion_statechart.history.history
         ]
         self._plot_node_bar(
+            ax=ax,
             node_idx=node_idx,
             history=life_cycle_history,
             control_cycle_indices=control_cycle_indices,
@@ -153,6 +172,7 @@ class HistoryGanttChartPlotter:
 
     def _plot_observation_bar(
         self,
+        ax: plt.Axes,
         node: MotionStatechartNode,
         node_idx: int,
     ):
@@ -163,6 +183,7 @@ class HistoryGanttChartPlotter:
             h.control_cycle for h in self.motion_statechart.history.history
         ]
         self._plot_node_bar(
+            ax=ax,
             node_idx=node_idx,
             history=obs_history,
             control_cycle_indices=control_cycle_indices,
@@ -170,8 +191,52 @@ class HistoryGanttChartPlotter:
             top=False,
         )
 
+    def _plot_final_state_column(
+        self,
+        ax: plt.Axes,
+        node: MotionStatechartNode,
+        node_idx: int,
+        column_padding: float = 0.1,
+    ) -> None:
+        """
+        Draw the final state for both lifecycle (top half) and observation (bottom half)
+        as a compact column on the right axes.
+        """
+        # Determine last lifecycle and observation states
+        life_cycle_history = (
+            self.motion_statechart.history.get_life_cycle_history_of_node(node)
+        )
+        obs_history = self.motion_statechart.history.get_observation_history_of_node(
+            node
+        )
+        last_lifecycle = life_cycle_history[-1]
+        last_observation = obs_history[-1]
+
+        # Column spans from padding to 1 - padding
+        width = max(0.0, 1.0 - 2 * column_padding)
+        start = column_padding
+
+        # Draw top (lifecycle) and bottom (observation) halves
+        self._draw_block(
+            ax=ax,
+            node_idx=node_idx,
+            block_start=start,
+            block_width=width,
+            color=LiftCycleStateToColor[last_lifecycle],
+            top=True,
+        )
+        self._draw_block(
+            ax=ax,
+            node_idx=node_idx,
+            block_start=start,
+            block_width=width,
+            color=ObservationStateToColor[last_observation],
+            top=False,
+        )
+
     def _plot_node_bar(
         self,
+        ax: plt.Axes,
         node_idx: int,
         history: List[LifeCycleValues | ObservationStateValues],
         control_cycle_indices: List[int],
@@ -184,6 +249,7 @@ class HistoryGanttChartPlotter:
             if current_state != next_state:
                 life_cycle_width = (idx - start_idx) * self.x_width_per_control_cycle
                 self._draw_block(
+                    ax=ax,
                     node_idx=node_idx,
                     block_start=start_idx * self.x_width_per_control_cycle,
                     block_width=life_cycle_width,
@@ -192,39 +258,21 @@ class HistoryGanttChartPlotter:
                 )
                 start_idx = idx
                 current_state = next_state
-        # plot last tick
+        # plot last stretch until final index
         last_idx = control_cycle_indices[-1]
         life_cycle_width = (last_idx - start_idx) * self.x_width_per_control_cycle
         self._draw_block(
+            ax=ax,
             node_idx=node_idx,
             block_start=start_idx * self.x_width_per_control_cycle,
             block_width=life_cycle_width,
             color=color_map[current_state],
             top=top,
         )
-        block_start = start_idx * self.x_width_per_control_cycle + life_cycle_width
-
-        # plot white buffer block
-        self._draw_block(
-            node_idx=node_idx,
-            block_start=block_start,
-            block_width=self.final_block_buffer,
-            color="white",
-            top=top,
-        )
-        block_start += self.final_block_buffer
-
-        # plot last tick
-        self._draw_block(
-            node_idx=node_idx,
-            block_start=block_start,
-            block_width=self.final_block_size,
-            color=color_map[current_state],
-            top=top,
-        )
 
     def _draw_block(
         self,
+        ax: plt.Axes,
         node_idx,
         block_start,
         block_width,
@@ -236,7 +284,7 @@ class HistoryGanttChartPlotter:
             y = node_idx + bar_height / 4
         else:
             y = node_idx - bar_height / 4
-        plt.barh(
+        ax.barh(
             y,
             block_width,
             height=bar_height / 2,
@@ -247,44 +295,49 @@ class HistoryGanttChartPlotter:
 
     def _format_axes(
         self,
+        ax_main: plt.Axes,
+        ax_final: plt.Axes,
         ordered_nodes: List[MotionStatechartNode],
     ) -> None:
-        if self.use_seconds_for_x_axis:
-            #     total_seconds = self.x_max * self.x_width_per_control_cycle
-            plt.xlabel("Time [s]")
-            #     plt.xlim(0, total_seconds)
+        # Configure x-axis for main timeline
+        if self.use_seconds_for_x_axis and self.time_span_seconds is not None:
+            ax_main.set_xlabel("Time [s]")
             base_ticks = np.arange(0.0, self.time_span_seconds + 1e-9, 0.5).tolist()
-        #     plt.xticks(ticks)
+            ax_main.set_xlim(0, self.time_span_seconds)
+            ax_main.set_xticks(base_ticks)
+            ax_main.set_xticklabels([str(t) for t in base_ticks])
         else:
-            plt.xlabel("Control cycle")
-            step = self.x_width_per_control_cycle
+            ax_main.set_xlabel("Control cycle")
+            step = max(int(self.x_width_per_control_cycle), 1)
             base_ticks = list(range(0, self.total_control_cycles + 1, step))
+            ax_main.set_xlim(0, self.total_control_cycles)
+            ax_main.set_xticks(base_ticks)
+            ax_main.set_xticklabels([str(t) for t in base_ticks])
 
-        blank_pos = self.time_span_seconds + self.final_block_buffer
-        final_pos = blank_pos + self.final_block_size // 2
-        final_blank_pose = final_pos + self.final_block_size // 2
+        # Configure final-state column x-axis
+        ax_final.set_xlim(0.0, 1.0)
+        ax_final.set_xticks([0.5])
+        ax_final.set_xticklabels(["final"])
+        ax_final.grid(False)
 
-        plt.xlim(0, final_blank_pose)
-
-        tick_positions = base_ticks + [final_pos]
-        tick_labels = [str(t) for t in base_ticks] + ["final"]
-
-        plt.xticks(tick_positions, tick_labels)
-
-        plt.ylabel("Nodes")
+        # Y axis labels and limits shown only on the right (final column)
         num_bars = len(self.motion_statechart.history.history[0].life_cycle_state)
-        plt.ylim(-0.8, num_bars - 1 + 0.8)
+        ymin, ymax = -0.8, num_bars - 1 + 0.8
+        ax_final.set_ylim(ymin, ymax)
 
         node_names = []
         for idx, n in enumerate(ordered_nodes):
-            if idx == 0:
-                prev_depth = 0
-            else:
-                prev_depth = ordered_nodes[idx - 1].depth
+            prev_depth = 0 if idx == 0 else ordered_nodes[idx - 1].depth
             node_names.append(self._make_label(n, prev_depth))
         node_idx = list(range(len(node_names)))
-        plt.yticks(node_idx, node_names)
-        plt.gca().yaxis.tick_right()
+
+        ax_main.set_yticks([])
+        ax_main.set_ylabel("Nodes")
+
+        ax_final.set_yticks(node_idx, node_names)
+        ax_final.set_ylabel("")
+        ax_final.yaxis.tick_right()
+
         plt.tight_layout()
 
     def _make_label(self, node: MotionStatechartNode, prev_depth: int) -> str:
