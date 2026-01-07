@@ -122,16 +122,6 @@ class Atom(NotMappedParent, Symbol):
     charge: float
     timestamp: datetime = field(default_factory=datetime.now)
 
-parameterizer = Parameterizer()
-
-# Call after classes exist
-position_vars = parameterizer(Position)
-pose_vars = parameterizer(Pose)
-atom_vars = parameterizer(Atom)
-
-print("Position variables:", position_vars)
-print("Pose variables:", pose_vars)
-print("Atom variables:", atom_vars)
 
 # check that custom type checks work
 class PhysicalObject:
