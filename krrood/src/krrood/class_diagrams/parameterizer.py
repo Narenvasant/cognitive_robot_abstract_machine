@@ -167,7 +167,6 @@ class Parameterizer:
     ) -> Plan:
         """
         Reconstruct a sequential plan from a sample array of all variables.
-
         :param model: Probabilistic model used to generate the sample
         :param sample: Sampled values
         :param world: World context to instantiate plan
