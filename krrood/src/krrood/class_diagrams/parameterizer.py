@@ -1,75 +1,96 @@
-from typing import List
+from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import datetime
-from random_events.variable import Continuous, Integer, Symbolic, Variable
-from random_events.set import Set
-from ..class_diagrams.class_diagram import WrappedClass
-from ..class_diagrams.wrapped_field import WrappedField
+from typing_extensions import List, Optional
+
 from probabilistic_model.probabilistic_circuit.rx.helper import fully_factorized
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit,
 )
+from random_events.set import Set
+from random_events.variable import Continuous, Integer, Symbolic, Variable
+
+from ..class_diagrams.class_diagram import WrappedClass
+from ..class_diagrams.wrapped_field import WrappedField
 
 
+@dataclass
 class Parameterizer:
     """
     Parameterizer for creating random event variables from WrappedClass instances.
     """
 
-    def __init__(self):
-        self._variables: List[Variable] = []
-
     def __call__(self, wrapped_class: WrappedClass) -> List[Variable]:
         """
-        Parameterize a WrappedClass instance and return its variables.
+        Create random event variables from a WrappedClass.
         """
-        self._variables = []
-        self._parameterize_wrapped_class(
+        return self._parameterize_wrapped_class(
             wrapped_class, prefix=wrapped_class.clazz.__name__
         )
-        return self._variables
 
-    def _parameterize_wrapped_class(self, wrapped_class: WrappedClass, prefix: str):
+    def _parameterize_wrapped_class(
+        self, wrapped_class: WrappedClass, prefix: str
+    ) -> List[Variable]:
         """
-        Parameterize all fields of a WrappedClass recursively.
+        Create variables for all fields of a WrappedClass recursively.
         """
+        variables = []
         for wrapped_field in wrapped_class.fields:
-            self._parameterize_wrapped_field(wrapped_field, prefix)
+            variables.extend(self._parameterize_wrapped_field(wrapped_field, prefix))
+        return variables
 
-    def _parameterize_wrapped_field(self, wrapped_field: WrappedField, prefix: str):
+    def _parameterize_wrapped_field(
+        self, wrapped_field: WrappedField, prefix: str
+    ) -> List[Variable]:
         """
-        Parameterize a single WrappedField.
+        Create variables for a single WrappedField.
         """
         field_name = f"{prefix}.{wrapped_field.name}"
-        endpoint_type = wrapped_field.type_endpoint
-
-        if endpoint_type is datetime:
-            return
-
-        if wrapped_field.is_optional:
-            endpoint_type = wrapped_field.contained_type
 
         if (
-            wrapped_field.is_one_to_one_relationship
-            and wrapped_field.clazz._class_diagram
+            wrapped_field.type_endpoint is datetime
+            or wrapped_field.is_type_type
+            or wrapped_field.is_one_to_many_relationship
         ):
-            if not wrapped_field.is_enum:
-                target_wrapped_class: WrappedClass = (
-                    wrapped_field.clazz._class_diagram.get_wrapped_class(endpoint_type)
-                )
-                self._parameterize_wrapped_class(
-                    target_wrapped_class, prefix=field_name
-                )
-                return
+            return []
+
+        if wrapped_field.is_one_to_one_relationship and not wrapped_field.is_enum:
+            return self._parameterize_relationship(wrapped_field, field_name)
+
+        variable = self._create_variable_from_field(wrapped_field, field_name)
+        return [variable] if variable else []
+
+    def _parameterize_relationship(
+        self, wrapped_field: WrappedField, field_name: str
+    ) -> List[Variable]:
+        """
+        Create variables for a one-to-one relationship field.
+        """
+        if not wrapped_field.clazz._class_diagram:
+            return []
+
+        target_wrapped_class = wrapped_field.clazz._class_diagram.get_wrapped_class(
+            wrapped_field.type_endpoint
+        )
+        return self._parameterize_wrapped_class(target_wrapped_class, prefix=field_name)
+
+    def _create_variable_from_field(
+        self, wrapped_field: WrappedField, field_name: str
+    ) -> Optional[Variable]:
+        """
+        Create a random event variable from a WrappedField based on its type.
+        """
+        endpoint_type = wrapped_field.type_endpoint
 
         if wrapped_field.is_enum:
-            enum_values = list(endpoint_type)
-            self._variables.append(Symbolic(field_name, Set.from_iterable(enum_values)))
+            return Symbolic(field_name, Set.from_iterable(list(endpoint_type)))
 
-        elif endpoint_type == int:
-            self._variables.append(Integer(field_name))
+        if endpoint_type is int:
+            return Integer(field_name)
 
-        elif endpoint_type == float:
-            self._variables.append(Continuous(field_name))
+        if endpoint_type is float:
+            return Continuous(field_name)
 
     def create_fully_factorized_distribution(
         self,
