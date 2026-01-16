@@ -5,9 +5,13 @@ from random_events.variable import Continuous, Integer, Symbolic
 from random_events.product_algebra import Event, SimpleEvent
 from krrood.class_diagrams.class_diagram import ClassDiagram
 from krrood.class_diagrams.parameterizer import Parameterizer
-from pycram.datastructures.enums import TorsoState
+from pycram.datastructures.enums import TorsoState, Arms
 from pycram.robot_plans import MoveTorsoAction
 from pycram.robot_plans.actions.core.navigation import NavigateAction
+from pycram.robot_plans.actions.core.pick_up import PickUpAction
+from pycram.robot_plans.actions.core.placing import PlaceAction
+from pycram.datastructures.grasp import GraspDescription
+
 from pycram.datastructures.pose import (
     PoseStamped,
     PyCramPose,
@@ -177,11 +181,9 @@ def test_parameterize_robot_plan(parameterizer: Parameterizer):
     Test parameterization of a robot plan consisting of: MoveTorso - Navigate - MoveTorso.
 
     This test verifies:
-    1. Parameterization of robot action plan with unique prefixes.
-    2. Creation of a fully factorized distribution over the plan variables.
-    3. Application of symbolic constraints (torso consistency).
-    4. Application of numeric constraints (navigation pose conditioning).
-    5. Sampling from the constrained distribution and validation of constraints.
+    1. Parameterization of robot action plan.
+    2. Create fully factorized distribution over the plan variables.
+    3. Sampling from the constrained distribution and validation of constraints.
     """
 
     plan_classes = [
@@ -245,4 +247,93 @@ def test_parameterize_robot_plan(parameterizer: Parameterizer):
         assert sample[nav_x] == target_x
         assert sample[nav_y] == target_y
 
+
+def test_parameterize_pickup_navigate_place(parameterizer: Parameterizer):
+    """
+    Test parameterization of a robot plan consisting of: PickUp - Navigate - Place.
+
+    This test verifies:
+    1. Parameterization of pick up, navigate, placing robot action plan
+    2. Creating and sampling from a constrained distribution over the plan variables.
+    """
+
+    plan_classes = [
+        PickUpAction, NavigateAction, PlaceAction,
+        GraspDescription, PoseStamped, PyCramPose,
+        PyCramVector3, PyCramQuaternion, Header
+    ]
+    class_diagram = ClassDiagram(plan_classes)
+
+    wrapped_pickup = class_diagram.get_wrapped_class(PickUpAction)
+    wrapped_navigate = class_diagram.get_wrapped_class(NavigateAction)
+    wrapped_place = class_diagram.get_wrapped_class(PlaceAction)
+
+    pickup_variables = parameterizer._parameterize_wrapped_class(wrapped_pickup, prefix="PickUpAction")
+    navigate_variables = parameterizer._parameterize_wrapped_class(wrapped_navigate, prefix="NavigateAction")
+    place_variables = parameterizer._parameterize_wrapped_class(wrapped_place, prefix="PlaceAction")
+
+    all_variables = pickup_variables + navigate_variables + place_variables
+    variables = {v.name: v for v in all_variables}
+
+    expected_variables = {
+        "PickUpAction.arm",
+        "PickUpAction.grasp_description.approach_direction",
+        "PickUpAction.grasp_description.vertical_alignment",
+        "PickUpAction.grasp_description.rotate_gripper",
+        "NavigateAction.keep_joint_states",
+        "NavigateAction.target_location.header.sequence",
+        "NavigateAction.target_location.pose.position.x",
+        "NavigateAction.target_location.pose.position.y",
+        "NavigateAction.target_location.pose.position.z",
+        "NavigateAction.target_location.pose.orientation.x",
+        "NavigateAction.target_location.pose.orientation.y",
+        "NavigateAction.target_location.pose.orientation.z",
+        "NavigateAction.target_location.pose.orientation.w",
+        "PlaceAction.arm",
+        "PlaceAction.target_location.header.sequence",
+        "PlaceAction.target_location.pose.position.x",
+        "PlaceAction.target_location.pose.position.y",
+        "PlaceAction.target_location.pose.position.z",
+        "PlaceAction.target_location.pose.orientation.x",
+        "PlaceAction.target_location.pose.orientation.y",
+        "PlaceAction.target_location.pose.orientation.z",
+        "PlaceAction.target_location.pose.orientation.w",
+    }
+
+    assert set(variables.keys()) == expected_variables
+
+    distribution = [v for v in all_variables if not isinstance(v, Integer)]
+    probabilistic_distribution = parameterizer.create_fully_factorized_distribution(distribution)
+
+    expected_distribution = expected_variables - {"NavigateAction.target_location.header.sequence", "PlaceAction.target_location.header.sequence"}
+    assert {v.name for v in probabilistic_distribution.variables} == expected_distribution
+
+    arm_pickup = variables["PickUpAction.arm"]
+    arm_place = variables["PlaceAction.arm"]
+
+    arm_consistency_events = [SimpleEvent({arm_pickup: [arm], arm_place: [arm]}) for arm in Arms]
+    restricted_dist, _ = probabilistic_distribution.truncated(Event(*arm_consistency_events))
+    restricted_dist.normalize()
+
+    nav_target_x = 2.0
+    nav_target_y = 3.0
+    pose_constraints = {
+        variables["NavigateAction.target_location.pose.position.x"]: nav_target_x,
+        variables["NavigateAction.target_location.pose.position.y"]: nav_target_y,
+    }
+
+    final_distribution, _ = restricted_dist.conditional(pose_constraints)
+    final_distribution.normalize()
+
+    v_nav_x = variables["NavigateAction.target_location.pose.position.x"]
+    v_nav_y = variables["NavigateAction.target_location.pose.position.y"]
+
+    for sample_values in final_distribution.sample(10):
+        sample = dict(zip(final_distribution.variables, sample_values))
+        assert sample[arm_pickup] == sample[arm_place]
+        assert sample[v_nav_x] == nav_target_x
+        assert sample[v_nav_y] == nav_target_y
+
+    for var in distribution:
+        assert var in sample
 
