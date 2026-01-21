@@ -29,7 +29,7 @@ def behaves_like_a_built_in_class(
 ) -> bool:
     return (
         is_builtin_class(clazz)
-        or clazz in [UUID, Any]
+        or clazz == UUID
         or (inspect.isclass(clazz) and issubclass(clazz, Enum))
     )
 

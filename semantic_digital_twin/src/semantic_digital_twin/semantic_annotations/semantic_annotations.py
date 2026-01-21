@@ -53,7 +53,7 @@ from ..world_description.world_entity import (
 
 
 @dataclass(eq=False)
-class Furniture(ABC): ...
+class Furniture(SemanticAnnotation, ABC): ...
 
 
 @dataclass(eq=False)
