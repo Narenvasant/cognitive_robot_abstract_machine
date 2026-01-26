@@ -432,6 +432,9 @@ class ExceptionJSONSerializer(ExternalClassJSONSerializer[Exception]):
 
 @dataclass
 class NumpyNDarrayJSONSerializer(ExternalClassJSONSerializer[np.ndarray]):
+    """
+    External JSON serializer for numpy ndarrays.
+    """
     @classmethod
     def to_json(cls, obj: np.ndarray) -> Dict[str, Any]:
         return {
