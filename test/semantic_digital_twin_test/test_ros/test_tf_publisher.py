@@ -13,6 +13,7 @@ from semantic_digital_twin.adapters.ros.visualization.viz_marker import (
 )
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.abstract_robot import AbstractRobot
+from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
     FixedConnection,
     Connection6DoF,
@@ -173,6 +174,44 @@ def test_tf_publisher_kitchen(rclpy_node, pr2_apartment_world):
     assert tf_wrapper.wait_for_transform(
         "odom_combined",
         str(milk.name),
+        timeout=Duration(seconds=1.0),
+        time=Time(),
+    )
+
+
+def test_empty_world(rclpy_node):
+    world = World()
+
+    tf_wrapper = TFWrapper(node=rclpy_node)
+    tf_publisher = TFPublisher(
+        node=rclpy_node,
+        world=world,
+    )
+    assert not tf_wrapper.wait_for_transform(
+        "muh1",
+        "muh2",
+        timeout=Duration(seconds=0.5),
+        time=Time(),
+    )
+
+
+def test_static_world(rclpy_node):
+    world = World()
+    with world.modify_world():
+        body1 = Body(name=PrefixedName("body1"))
+        body2 = Body(name=PrefixedName("body2"))
+        body1_C_body2 = FixedConnection(parent=body1, child=body2)
+        world.add_connection(body1_C_body2)
+
+    tf_wrapper = TFWrapper(node=rclpy_node)
+    tf_publisher = TFPublisher(
+        node=rclpy_node,
+        world=world,
+    )
+
+    assert tf_wrapper.wait_for_transform(
+        str(body1.name),
+        str(body2.name),
         timeout=Duration(seconds=1.0),
         time=Time(),
     )

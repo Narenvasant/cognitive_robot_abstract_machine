@@ -68,6 +68,8 @@ class TfPublisherModelCallback(ModelChangeCallback):
         tf = Matrix.vstack([pose for pose in self.connections_to_expression.values()])
         params = [v.variables.position for v in self.world.degrees_of_freedom]
         self.compiled_tf = tf.compile(parameters=VariableParameters.from_lists(params))
+        if self.compiled_tf.is_result_empty():
+            return
         self.compiled_tf.bind_args_to_memory_view(0, self.world.state.positions)
 
     def init_tf_message(self):
@@ -87,6 +89,8 @@ class TfPublisherModelCallback(ModelChangeCallback):
             self.tf_message.transforms[i].child_frame_id = str(child_link.name)
 
     def update_tf_message(self):
+        if self.compiled_tf.is_result_empty():
+            return
         tf_data = self.compiled_tf.evaluate()
         current_time = self.node.get_clock().now().to_msg()
         for i, (p_T_c, pose) in enumerate(zip(self.tf_message.transforms, tf_data)):

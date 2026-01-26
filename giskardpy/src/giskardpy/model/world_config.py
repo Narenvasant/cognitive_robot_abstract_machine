@@ -63,7 +63,7 @@ class WorldWithFixedRobot(WorldConfig):
     def setup_world(self):
         map = Body(name=self.root_name)
 
-        urdf_parser = URDFParser(urdf=self.urdf)
+        urdf_parser = URDFParser(urdf=self.urdf, prefix="")
         world_with_robot = urdf_parser.parse()
         self.urdf_view.from_world(world_with_robot)
         self.robot_root = world_with_robot.root
