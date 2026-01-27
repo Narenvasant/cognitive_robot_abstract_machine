@@ -29,7 +29,6 @@ jobs:
     defaults:
       run:
         shell: ${{ inputs.use_container && 'bash -ieo pipefail {0}' || 'bash' }}
-        working-directory: ${{ inputs.lib }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,12 +67,15 @@ jobs:
 
       - name: Install dependencies (Non-container)
         if: ${{ !inputs.use_container }}
+        working-directory: ${{ inputs.lib }}
         run: |
           pip install -U pip setuptools
           [ -f requirements-dev.txt ] && pip install -r requirements-dev.txt || echo "No requirements-dev.txt"
           [ -f requirements.txt ] && pip install -r requirements.txt || echo "No requirements.txt"
           pip install .
           [ -f ${{ inputs.doc_path }}/requirements.txt ] && pip install -r ${{ inputs.doc_path }}/requirements.txt || echo "No doc requirements"
+          [ -f doc/requirements.txt ] && pip install -r doc/requirements.txt || echo "No root doc requirements"
+          pip install jupyter-book
 
       - name: Install dependencies (Container)
         if: ${{ inputs.use_container }}
@@ -99,6 +101,7 @@ jobs:
 
       - name: Build the book (Non-container)
         if: ${{ !inputs.use_container }}
+        working-directory: ${{ inputs.lib }}
         run: jupyter-book build ${{ inputs.doc_path }}
 
       - name: Build the book (Container)
