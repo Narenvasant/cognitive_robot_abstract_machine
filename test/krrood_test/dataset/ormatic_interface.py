@@ -453,6 +453,24 @@ class PersonDAO(
     )
 
 
+class PolymorphicEnumAssociationDAO(
+    Base,
+    DataAccessObject[
+        test.krrood_test.dataset.example_classes.PolymorphicEnumAssociation
+    ],
+):
+
+    __tablename__ = "PolymorphicEnumAssociationDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        Integer, primary_key=True, use_existing_column=True
+    )
+
+    value: Mapped[test.krrood_test.dataset.example_classes.PolymorphicEnum] = (
+        mapped_column(use_existing_column=True)
+    )
+
+
 class PredicateClassRelationDAO(
     Base,
     DataAccessObject[krrood.entity_query_language.symbol_graph.PredicateClassRelation],

@@ -703,3 +703,19 @@ def test_post_init_and_circular_reference(session, database):
     # Check if __post_init__ was called and backreferences are set
     assert c1.items[0].container is c1
     assert c1.items[1].container is c1
+
+
+def test_polymorphic_enum(session, database):
+    v1 = PolymorphicEnumAssociation(ChildEnum1.A)
+    v2 = PolymorphicEnumAssociation(ChildEnum1.B)
+    v3 = PolymorphicEnumAssociation(ChildEnum2.B)
+    v4 = PolymorphicEnumAssociation(ChildEnum2.C)
+
+    dao_1 = to_dao(v1)
+
+    session.add(dao_1)
+    session.commit()
+
+    statement = select(PolymorphicEnumAssociationDAO)
+    r = session.scalars(statement).one()
+    print(r)
