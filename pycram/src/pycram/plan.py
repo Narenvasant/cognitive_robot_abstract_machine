@@ -649,14 +649,9 @@ class Plan:
             try:
                 wrapped_class = class_diagram.get_wrapped_class(node.designator_type)
             except ClassIsUnMappedInClassDiagram as e:
-                logger.warning(
-                    f"Skipping parameterization for node {getattr(node, 'name', repr(node))} "
-                    f"(designator_index={index}, node_index={node.index}, {node.__class__.__name__}): class not present in ClassDiagram: {e}"
-                )
-                continue
-            except Exception as e:
-                logger.exception(
-                    f"Unexpected error while parameterizing node {getattr(node, 'name', repr(node))} "
+                logger.error(
+                    f"Unmapped designator class for node {getattr(node, 'name', repr(node))} "
+                    f"(designator_index={index}, node_index={node.index}, {node.__class__.__name__}): {e}"
                 )
                 raise
 
