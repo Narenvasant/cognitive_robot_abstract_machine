@@ -223,6 +223,7 @@ def test_parameterize_pickup_navigate_place(parameterizer: Parameterizer):
         "PickUpAction.grasp_description.approach_direction",
         "PickUpAction.grasp_description.vertical_alignment",
         "PickUpAction.grasp_description.rotate_gripper",
+        "PickUpAction.grasp_description.manipulation_offset",
         "NavigateAction.keep_joint_states",
         "NavigateAction.target_location.header.sequence",
         "NavigateAction.target_location.pose.position.x",
