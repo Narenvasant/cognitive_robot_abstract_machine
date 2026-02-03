@@ -131,7 +131,6 @@ class MoveAndPickUpParameterizer(ProbabilisticAction):
         :return: An event that describes the free space.
         """
 
-        # xy = SortedSet([BoundingBox.x_variable, BoundingBox.y_variable])
         xy = SpatialVariables.xy
 
         # create search space for calculations

@@ -8,7 +8,6 @@ from enum import IntEnum
 from itertools import chain
 from typing import ClassVar
 
-import networkx as nx
 import numpy as np
 import rustworkx as rx
 import rustworkx.visualization
@@ -35,7 +34,7 @@ from semantic_digital_twin.world_description.world_modification import (
     WorldModelModificationBlock,
 )
 from krrood.class_diagrams.class_diagram import ClassDiagram
-from krrood.class_diagrams.parameterizer import Parameterizer
+from krrood.probabilistic_knowledge.parameterizer import Parameterizer
 from .datastructures.dataclasses import ExecutionData, Context
 from .datastructures.enums import TaskStatus
 from .datastructures.pose import PoseStamped
@@ -45,7 +44,7 @@ from .has_parameters import leaf_types
 from .motion_executor import MotionExecutor
 
 if TYPE_CHECKING:
-    from .robot_plans import BaseMotion, ActionDescription
+    from .robot_plans import ActionDescription
     from .designator import DesignatorDescription, DesignatorType
     from .datastructures.partial_designator import PartialDesignator
     from .robot_plans.actions.base import ActionType
@@ -620,7 +619,7 @@ class Plan:
             cls.on_end_callback[action_type].remove(callback)
 
 
-    def parameterize_plan(self, classes: List[type]) -> List:
+    def parameterize_plan(self, classes: Optional[List[type]] = None) -> List[Any]:
         """
         Parameterize all parameters of a plan using the krrood parameterizer.
 

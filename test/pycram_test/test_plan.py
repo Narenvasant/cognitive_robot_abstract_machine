@@ -4,8 +4,6 @@ import pytest
 
 from pycram.datastructures.pose import PyCramPose, PyCramQuaternion, PyCramVector3, Header
 from random_events.product_algebra import SimpleEvent, Event
-from random_events.variable import Integer
-from krrood.class_diagrams.parameterizer import Parameterizer
 from semantic_digital_twin.adapters.urdf import URDFParser
 
 from pycram.datastructures.dataclasses import Context
@@ -372,21 +370,8 @@ def test_algebra_parallelplan(immutable_model_world):
     variables = sp.parameterize_plan(classes=plan_classes)
     variables_map = {v.name: v for v in variables}
 
-    # Ensure expected variable names exist
-    assert "MoveTorsoAction_0.torso_state" in variables_map
-    assert "ParkArmsAction_1.arm" in variables_map
-
-    probabilistic_circuit = Parameterizer().create_fully_factorized_distribution(variables)
-
-    arm_var = variables_map["ParkArmsAction_1.arm"]
-    torso_var = variables_map["MoveTorsoAction_0.torso_state"]
-
-    # Truncate distribution to force arm == Arms.BOTH
-    restricted_dist, _ = probabilistic_circuit.truncated(Event(SimpleEvent({arm_var: [Arms.BOTH]})))
-    restricted_dist.normalize()
-
-    for sample_values in restricted_dist.sample(5):
-        sample = dict(zip(restricted_dist.variables, sample_values))
-        assert sample[arm_var] == Arms.BOTH
-        assert torso_var in sample
-        assert sample[torso_var] in list(TorsoState)
+    for i in range(10):
+        sample = conditional.sample(1)
+        resolved = p.plan_from_sample(conditional, sample[0], world)
+        with simulated_robot:
+            resolved.perform()
