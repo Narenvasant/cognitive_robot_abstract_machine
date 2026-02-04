@@ -29,7 +29,7 @@ from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.pr2 import PR2
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
-from semantic_digital_twin.world_description.connections import Connection6DoF
+from semantic_digital_twin.world_description.connections import Connection6DoF, OmniDrive, FixedConnection
 from semantic_digital_twin.world_description.geometry import FileMesh
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
@@ -67,6 +67,26 @@ def simple_plan():
     world.merge_world_at_pose(robot_world, robot_pose)
 
     robot = PR2.from_world(world)
+
+    with world.modify_world():
+        map_body = Body(name=PrefixedName("map"))
+        localization_body = Body(name=PrefixedName("odom_combined"))
+        world.add_body(map_body)
+        world.add_body(localization_body)
+
+        world.add_connection(FixedConnection(parent=world.root, child=map_body))
+        world.add_connection(Connection6DoF.create_with_dofs(world, map_body, localization_body))
+
+        old_root_connection = robot.root.parent_connection
+        if old_root_connection is not None:
+            world.remove_connection(old_root_connection)
+
+        omni_connection = OmniDrive.create_with_dofs(
+            parent=localization_body,
+            child=robot.root,
+            world=world,
+        )
+        world.add_connection(omni_connection)
 
     milk_mesh = FileMesh.from_file(milk_stl)
     milk_body = Body(
