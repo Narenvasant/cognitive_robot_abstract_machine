@@ -103,8 +103,6 @@ def simple_plan():
         world.add_connection(milk_connection)
         milk_connection.origin = milk_pose
 
-
-
     context = Context(world, robot, None)
 
     nav_pose_pickup = PoseStamped(
@@ -219,6 +217,8 @@ def simple_plan():
         print_sample(probabilistic_circuit, sample_values)
 
     return plan, probabilistic_circuit
+
+
 
 if __name__ == "__main__":
     simple_plan()
