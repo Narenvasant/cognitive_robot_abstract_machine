@@ -310,12 +310,11 @@ class ViewDependentSpatialRelation(PointSpatialRelation, ABC):
         Calculate the spatial relation between self.point and self.other with respect to a given
         reference point (self.point_of_semantic_annotation) and a specified axis index. This function computes the
         signed distance along a specified direction derived from the reference point
-        to compare the positions of the centers of mass of the two bodies.
+        to compare the positions.
 
         :param index: The index of the axis in the transformation matrix along which
             the spatial relation is computed.
-        :return: The signed distance between the first and the second body's centers
-            of mass along the given direction.
+        :return: The signed distance between the first and the second points along the given direction.
         """
         ref_np = self.point_of_semantic_annotation.to_np()
         front_world = ref_np[:3, index]
