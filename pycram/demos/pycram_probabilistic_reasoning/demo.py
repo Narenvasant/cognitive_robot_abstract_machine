@@ -116,7 +116,7 @@ def simple_plan():
             Header(world.get_body_by_name("map")),
         )
         placing_pose = PoseStamped(
-            PyCramPose(PyCramVector3(2.4, 1.5, 1.0), PyCramQuaternion(0, 0, 0, 1)),
+            PyCramPose(PyCramVector3(2.4, 1.5, 1.01), PyCramQuaternion(0, 0, 0, 1)),
             Header(world.get_body_by_name("map")),
         )
 
