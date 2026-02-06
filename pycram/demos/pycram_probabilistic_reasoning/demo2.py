@@ -1,5 +1,4 @@
 import os
-import math
 import time
 import threading
 
@@ -59,7 +58,7 @@ def update_pose_from_sample(sample_dict, prefix, position_list, orientation_list
     orientation_list[3] = sample_dict.get(f"{prefix}.pose.orientation.w", orientation_list[3])
 
 
-def update_arm_from_sample(plan, sample_dict, pickup_description, grasp_description, place_description):
+def update_arm_from_sample(sample_dict, pickup_description, grasp_description, place_description):
     """
     Dynamically update plan action descriptions with sampled values.
 
@@ -69,23 +68,50 @@ def update_arm_from_sample(plan, sample_dict, pickup_description, grasp_descript
     :param grasp_description: GraspDescription object to update
     :param place_description: PlaceActionDescription object to update
     """
-    if "PickUpAction_2.arm" in sample_dict:
-        pickup_description.arm = int(sample_dict["PickUpAction_2.arm"])
+    pickup_description.arm = int(sample_dict["PickUpAction_2.arm"])
 
-    if "PickUpAction_2.grasp_description.approach_direction" in sample_dict:
-        grasp_description.approach_direction = int(sample_dict["PickUpAction_2.grasp_description.approach_direction"])
+    grasp_description.approach_direction = int(sample_dict["PickUpAction_2.grasp_description.approach_direction"])
 
-    if "PickUpAction_2.grasp_description.manipulation_offset" in sample_dict:
-        grasp_description.manipulation_offset = sample_dict["PickUpAction_2.grasp_description.manipulation_offset"]
+    grasp_description.manipulation_offset = sample_dict["PickUpAction_2.grasp_description.manipulation_offset"]
 
-    if "PickUpAction_2.grasp_description.rotate_gripper" in sample_dict:
-        grasp_description.rotate_gripper = bool(sample_dict["PickUpAction_2.grasp_description.rotate_gripper"])
+    grasp_description.rotate_gripper = bool(sample_dict["PickUpAction_2.grasp_description.rotate_gripper"])
 
-    if "PickUpAction_2.grasp_description.vertical_alignment" in sample_dict:
-        grasp_description.vertical_alignment = int(sample_dict["PickUpAction_2.grasp_description.vertical_alignment"])
+    grasp_description.vertical_alignment = int(sample_dict["PickUpAction_2.grasp_description.vertical_alignment"])
 
-    if "PlaceAction_4.arm" in sample_dict:
-        place_description.arm = int(sample_dict["PlaceAction_4.arm"])
+    place_description.arm = int(sample_dict["PlaceAction_4.arm"])
+
+
+def set_pose_from_lists(pose_stamped, position, orientation):
+    pose_stamped.pose.position.x = position[0]
+    pose_stamped.pose.position.y = position[1]
+    pose_stamped.pose.position.z = position[2]
+    pose_stamped.pose.orientation.x = orientation[0]
+    pose_stamped.pose.orientation.y = orientation[1]
+    pose_stamped.pose.orientation.z = orientation[2]
+    pose_stamped.pose.orientation.w = orientation[3]
+
+
+def reset_action_iters(plan):
+    for action_node in plan.actions:
+        action_node.action_iter = None
+
+
+def add_milk_body(world, milk_body, milk_pose):
+    with world.modify_world():
+        world.add_body(milk_body)
+        milk_connection = Connection6DoF.create_with_dofs(parent=world.root, child=milk_body, world=world)
+        world.add_connection(milk_connection)
+        milk_connection.origin = milk_pose
+
+
+def make_pose_stamped(world, pos, ori):
+    return PoseStamped(
+        PyCramPose(
+            PyCramVector3(pos[0], pos[1], pos[2]),
+            PyCramQuaternion(ori[0], ori[1], ori[2], ori[3]),
+        ),
+        Header(world.get_body_by_name("map")),
+    )
 
 
 def simple_plan():
@@ -167,7 +193,7 @@ def simple_plan():
 
         context = Context(world, robot, None)
 
-        #dummy working values
+        # dummy working values
         nav_pickup_position = [1.6, 2.5, 0.0]
         nav_pickup_orientation = [0.0, 0.0, 0.0, 1.0]
 
@@ -177,18 +203,9 @@ def simple_plan():
         placing_position = [2.4, 1.5, 1.01]
         placing_orientation = [0.0, 0.0, 0.0, 1.0]
 
-        def make_pose_stamped(pos, ori):
-            return PoseStamped(
-                PyCramPose(
-                    PyCramVector3(pos[0], pos[1], pos[2]),
-                    PyCramQuaternion(ori[0], ori[1], ori[2], ori[3]),
-                ),
-                Header(world.get_body_by_name("map")),
-            )
-
-        nav_pose_pickup = make_pose_stamped(nav_pickup_position, nav_pickup_orientation)
-        nav_pose_placing = make_pose_stamped(nav_placing_position, nav_placing_orientation)
-        placing_pose = make_pose_stamped(placing_position, placing_orientation)
+        nav_pose_pickup = make_pose_stamped(world, nav_pickup_position, nav_pickup_orientation)
+        nav_pose_placing = make_pose_stamped(world, nav_placing_position, nav_placing_orientation)
+        placing_pose = make_pose_stamped(world, placing_position, placing_orientation)
 
         grasp_description = GraspDescription(
             ApproachDirection.FRONT,
@@ -242,11 +259,12 @@ def simple_plan():
         print("Starting sample iterations...")
         print(f"{'='*60}\n")
 
-        samples = probabilistic_circuit.sample(100)
+        sample_count = 10000
+        samples = probabilistic_circuit.sample(sample_count)
         results = []
 
-        for sample_idx in range(100):
-            print(f"Testing Sample {sample_idx + 1}/100")
+        for sample_idx in range(sample_count):
+            print(f"Testing Sample {sample_idx + 1}/{sample_count}")
 
             try:
                 sample_dict = sample_to_dict(probabilistic_circuit, samples[sample_idx])
@@ -272,42 +290,15 @@ def simple_plan():
                     placing_orientation,
                 )
 
-                update_arm_from_sample(plan, sample_dict, pickup_description, grasp_description, place_description)
+                update_arm_from_sample(sample_dict, pickup_description, grasp_description, place_description)
 
                 milk_pose = HomogeneousTransformationMatrix.from_xyz_rpy(2.4, 2.5, 1.01, 0, 0, 0)
-                with world.modify_world():
-                    world.add_body(milk_body)
-                    milk_connection = Connection6DoF.create_with_dofs(parent=world.root, child=milk_body, world=world)
-                    world.add_connection(milk_connection)
-                    milk_connection.origin = milk_pose
+                add_milk_body(world, milk_body, milk_pose)
 
-                nav_pose_pickup.pose.position.x = nav_pickup_position[0]
-                nav_pose_pickup.pose.position.y = nav_pickup_position[1]
-                nav_pose_pickup.pose.position.z = nav_pickup_position[2]
-                nav_pose_pickup.pose.orientation.x = nav_pickup_orientation[0]
-                nav_pose_pickup.pose.orientation.y = nav_pickup_orientation[1]
-                nav_pose_pickup.pose.orientation.z = nav_pickup_orientation[2]
-                nav_pose_pickup.pose.orientation.w = nav_pickup_orientation[3]
-
-                nav_pose_placing.pose.position.x = nav_placing_position[0]
-                nav_pose_placing.pose.position.y = nav_placing_position[1]
-                nav_pose_placing.pose.position.z = nav_placing_position[2]
-                nav_pose_placing.pose.orientation.x = nav_placing_orientation[0]
-                nav_pose_placing.pose.orientation.y = nav_placing_orientation[1]
-                nav_pose_placing.pose.orientation.z = nav_placing_orientation[2]
-                nav_pose_placing.pose.orientation.w = nav_placing_orientation[3]
-
-                placing_pose.pose.position.x = placing_position[0]
-                placing_pose.pose.position.y = placing_position[1]
-                placing_pose.pose.position.z = placing_position[2]
-                placing_pose.pose.orientation.x = placing_orientation[0]
-                placing_pose.pose.orientation.y = placing_orientation[1]
-                placing_pose.pose.orientation.z = placing_orientation[2]
-                placing_pose.pose.orientation.w = placing_orientation[3]
-
-
-                for action_node in plan.actions:
-                    action_node.action_iter = None
+                set_pose_from_lists(nav_pose_pickup, nav_pickup_position, nav_pickup_orientation)
+                set_pose_from_lists(nav_pose_placing, nav_placing_position, nav_placing_orientation)
+                set_pose_from_lists(placing_pose, placing_position, placing_orientation)
+                reset_action_iters(plan)
 
                 with simulated_robot:
                     plan.perform()
@@ -329,16 +320,6 @@ def simple_plan():
         print(f"Successful: {success_count}")
         print(f"Failed: {failure_count}")
         print(f"Success rate: {success_count / len(results) * 100:.1f}%")
-        print(f"\nDetailed Results:")
-
-        for sample_num, status, error in results:
-            if status == "SUCCESS":
-                print(f"  Sample {sample_num}: ✓ {status}")
-            else:
-                print(f"  Sample {sample_num}: ✗ {status}")
-                if error:
-                    error_msg = error if len(error) <= 100 else error[:97] + "..."
-                    print(f"    Error: {error_msg}")
 
         return plan, probabilistic_circuit
 
