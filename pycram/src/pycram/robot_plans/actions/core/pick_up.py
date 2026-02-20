@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing_extensions import Union, Optional, Type, Any, Iterable
 
 from krrood.entity_query_language.entity import and_, not_, or_
-from krrood.entity_query_language.predicate import Symbol
+from krrood.entity_query_language.predicate import Symbol, symbolic_function
 from krrood.entity_query_language.symbolic import SymbolicExpression
 from semantic_digital_twin.datastructures.definitions import GripperState
 from semantic_digital_twin.reasoning.predicates import reachable
@@ -192,7 +192,8 @@ class PickUpAction(ActionDescription):
         ).perform()
 
     def pre_condition(self, bound=True) -> SymbolicExpression:
-        variables = self.get_variables(bound)
+        variables = self.bound_variables if bound else self.unbound_variables
+
         return and_(
             manipulator := ViewManager.get_end_effector_view(
                 variables[self.arm], self.robot_view
@@ -206,7 +207,7 @@ class PickUpAction(ActionDescription):
         )
 
     def post_condition(self, bound=True) -> SymbolicExpression:
-        variables = self.get_variables(bound)
+        variables = self.bound_variables if bound else self.unbound_variables
         return or_(
             manipulator := ViewManager.get_end_effector_view(
                 variables[self.arm], self.robot_view

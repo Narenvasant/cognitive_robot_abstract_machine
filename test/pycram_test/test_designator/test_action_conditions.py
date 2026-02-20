@@ -1,4 +1,6 @@
+import numpy as np
 import pytest
+import rclpy
 
 from krrood.entity_query_language.entity import (
     exists,
@@ -11,6 +13,9 @@ from pycram.failures import ConditionNotSatisfied
 from pycram.language import SequentialPlan
 from pycram.motion_executor import simulated_robot
 from pycram.robot_plans import PickUpAction, PickUpActionDescription
+from semantic_digital_twin.adapters.ros.visualization.viz_marker import (
+    VizMarkerPublisher,
+)
 from semantic_digital_twin.reasoning.predicates import reachable
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.world_description.world_entity import Body
@@ -29,7 +34,7 @@ def test_get_bound_variables(immutable_model_world):
         ),
     )
 
-    bound_variables = pick_action.get_variables(bound=True)
+    bound_variables = pick_action._create_variables(bound=True)
 
     assert len(bound_variables) == 3
     assert list(bound_variables.keys()) == [
@@ -59,7 +64,7 @@ def test_get_unbound_variables(immutable_model_world):
     )
     SequentialPlan(context, pick_action)
 
-    unbound_variables = pick_action.get_variables(bound=False)
+    unbound_variables = pick_action._create_variables(bound=False)
 
     assert len(unbound_variables) == 3
     assert list(unbound_variables[arm]._domain_) == [Arms.LEFT, Arms.RIGHT, Arms.BOTH]
@@ -111,7 +116,40 @@ def test_pick_up_pre_conditions(immutable_model_world):
     assert pick_action.evaluate_post_condition() == True
 
 
-def test_pick_up_pose_condition(mutable_model_world):
+def test_pick_up_pre_condition_find_parameter(immutable_model_world):
+    world, view, context = immutable_model_world
+    node = rclpy.create_node("test")
+    VizMarkerPublisher(world, node).with_tf_publisher()
+
+    pick_action = PickUpAction(
+        world.get_body_by_name("milk.stl"),
+        Arms.RIGHT,
+        GraspDescription(
+            ApproachDirection.FRONT,
+            VerticalAlignment.NoAlignment,
+            view.right_arm.manipulator,
+        ),
+    )
+
+    plan = SequentialPlan(context, pick_action)
+
+    pre_condition = pick_action.pre_condition()
+    post_condition = pick_action.post_condition()
+
+    view.root.parent_connection.origin = HomogeneousTransformationMatrix.from_xyz_rpy(
+        1.8,
+        1.4,
+        0,  # yaw=-np.pi / 2
+    )
+
+    with pytest.raises(ConditionNotSatisfied):
+        pick_action.evaluate_pre_condition()
+
+    possible = list(pick_action.find_possible_parameter())
+    print(len(possible))
+
+
+def test_pick_up_post_condition(mutable_model_world):
     world, view, context = mutable_model_world
     pick_action = PickUpAction(
         world.get_body_by_name("milk.stl"),

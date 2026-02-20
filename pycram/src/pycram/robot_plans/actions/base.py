@@ -5,6 +5,7 @@ from abc import abstractmethod
 import logging
 from dataclasses import dataclass, fields
 from enum import Enum
+from functools import cached_property
 from itertools import product
 
 from typing_extensions import (
@@ -19,7 +20,13 @@ from typing_extensions import (
     Iterable,
 )
 
-from krrood.entity_query_language.entity import variable, evaluate_condition
+from krrood.entity_query_language.entity import (
+    variable,
+    evaluate_condition,
+    exists,
+    set_of,
+)
+from krrood.entity_query_language.entity_result_processors import an, a
 from krrood.entity_query_language.symbolic import Variable, SymbolicExpression
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.world_entity import (
@@ -80,26 +87,12 @@ class ActionDescription(DesignatorDescription):
         pass
 
     @abstractmethod
-    def pre_condition(self):
+    def pre_condition(self, bound=True) -> SymbolicExpression:
         pass
 
     @abstractmethod
-    def post_condition(self):
+    def post_condition(self, bound=True) -> SymbolicExpression:
         pass
-
-    @property
-    def validate_precondition(self) -> bool:
-        """
-        Symbolic/world state precondition validation.
-        """
-        return True
-
-    @property
-    def validate_postcondition(self) -> bool:
-        """
-        Symbolic/world state postcondition validation.
-        """
-        return True
 
     @classmethod
     def pre_perform(cls, func) -> Callable:
@@ -111,14 +104,26 @@ class ActionDescription(DesignatorDescription):
         cls._post_perform_callbacks.append(func)
         return func
 
+    @cached_property
+    def bound_variables(self):
+        return self._create_variables(True)
+
+    @cached_property
+    def unbound_variables(self):
+        return self._create_variables(False)
+
+    @property
+    def fields(self):
+        self_fields = list(fields(self))
+        [self_fields.remove(parent_field) for parent_field in fields(ActionDescription)]
+        return self_fields
+
     def _create_variables(self, bound=True) -> Dict[T, Variable[T] | T]:
         """
         Creates krrood variables for all parameter of this action either bound or unbound.
 
         :return: A dict with action parameters as keys and variables as values.
         """
-        self_fields = list(fields(self))
-        [self_fields.remove(parent_field) for parent_field in fields(ActionDescription)]
         return {
             getattr(self, f.name): variable(
                 type(getattr(self, f.name)),
@@ -128,12 +133,8 @@ class ActionDescription(DesignatorDescription):
                     else self._find_domain_for_value(getattr(self, f.name), self.world)
                 ),
             )
-            for f in self_fields
+            for f in self.fields
         }
-
-    def get_variables(self, bound=True) -> Dict[T, Variable[T] | T]:
-        # Maybe use python-box for a better interface
-        return self._create_variables(bound=bound)
 
     def evaluate_pre_condition(self) -> bool:
         evaluation = evaluate_condition(self.pre_condition())
@@ -156,7 +157,8 @@ class ActionDescription(DesignatorDescription):
                 if issubclass(type(sa), (value_type, SemanticAnnotation))
             ]
         elif issubclass(value_type, KinematicStructureEntity):
-            return world.kinematic_structure_entities
+            # return world.kinematic_structure_entities
+            return [value]
         elif issubclass(value_type, Enum):
             return get_all_values_in_enum(value_type)
         elif issubclass(value_type, PoseStamped):
@@ -171,6 +173,14 @@ class ActionDescription(DesignatorDescription):
             ]
         logger.warning(f"There is no domain for type {value_type}")
         return []
+
+    def find_possible_parameter(self):
+        unbound_condition = self.pre_condition(False)
+        query = a(set_of(*self.unbound_variables.values()).where(unbound_condition))
+        var_to_field = dict(zip(self.unbound_variables.values(), self.fields))
+        for result in query.evaluate():
+            bindings = result.data
+            yield {var_to_field[k].name: v for k, v in bindings.items()}
 
 
 ActionType = TypeVar("ActionType", bound=ActionDescription)
