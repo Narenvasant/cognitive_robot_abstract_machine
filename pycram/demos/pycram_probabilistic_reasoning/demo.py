@@ -9,9 +9,7 @@ import rclpy
 from pycram.datastructures.grasp import GraspDescription
 from pycram.motion_executor import simulated_robot
 from pycram.robot_plans import ParkArmsActionDescription, NavigateActionDescription, PickUpActionDescription, \
-    PlaceActionDescription, NavigateAction, PickUpAction, PlaceAction, ParkArmsAction
-
-from krrood.probabilistic_knowledge.parameterizer import Parameterizer
+    PlaceActionDescription
 
 from pycram.datastructures.dataclasses import Context
 from pycram.datastructures.pose import PoseStamped, PyCramPose, PyCramVector3, PyCramQuaternion, Header
@@ -29,85 +27,22 @@ from semantic_digital_twin.world_description.shape_collection import ShapeCollec
 from semantic_digital_twin.world_description.world_entity import Body
 
 
-def sample_to_dict(probabilistic_circuit, sample):
-    """
-    Convert a sample array to a dictionary mapping variable names to values.
-    """
-    result = {}
-    for idx, var in enumerate(probabilistic_circuit.variables):
-        result[var.name] = sample[idx]
-    return result
-
-
-def update_pose_from_sample(sample_dict, prefix, position_list, orientation_list):
-    """
-    Update position and orientation lists from sampled values.
-
-    :param sample_dict: Dictionary of sampled values
-    :param prefix: Variable name prefix (e.g., "NavigateAction_1.target_location")
-    :param pos_list: List [x, y, z] to update
-    :param ori_list: List [qx, qy, qz, qw] to update
-    """
-    #  position
-    position_list[0] = sample_dict.get(f"{prefix}.pose.position.x", position_list[0])
-    position_list[1] = sample_dict.get(f"{prefix}.pose.position.y", position_list[1])
-    position_list[2] = sample_dict.get(f"{prefix}.pose.position.z", position_list[2])
-
-    #  orientation
-    orientation_list[0] = sample_dict.get(f"{prefix}.pose.orientation.x", orientation_list[0])
-    orientation_list[1] = sample_dict.get(f"{prefix}.pose.orientation.y", orientation_list[1])
-    orientation_list[2] = sample_dict.get(f"{prefix}.pose.orientation.z", orientation_list[2])
-    orientation_list[3] = sample_dict.get(f"{prefix}.pose.orientation.w", orientation_list[3])
-
-
-def update_arm_from_sample(sample_dict, pickup_description, grasp_description, place_description):
-    """
-    Dynamically update plan action descriptions with sampled values.
-
-    :param plan: The SequentialPlan to update
-    :param sample_dict: Dictionary of sampled values
-    :param pickup_description: PickUpActionDescription object to update
-    :param grasp_description: GraspDescription object to update
-    :param place_description: PlaceActionDescription object to update
-    """
-    pickup_description.arm = int(sample_dict["PickUpAction_2.arm"])
-
-    grasp_description.approach_direction = int(sample_dict["PickUpAction_2.grasp_description.approach_direction"])
-
-    grasp_description.manipulation_offset = sample_dict["PickUpAction_2.grasp_description.manipulation_offset"]
-
-    grasp_description.rotate_gripper = bool(sample_dict["PickUpAction_2.grasp_description.rotate_gripper"])
-
-    grasp_description.vertical_alignment = int(sample_dict["PickUpAction_2.grasp_description.vertical_alignment"])
-
-    place_description.arm = int(sample_dict["PlaceAction_4.arm"])
-
-
-def set_pose_from_lists(pose_stamped, position, orientation):
-    pose_stamped.pose.position.x = position[0]
-    pose_stamped.pose.position.y = position[1]
-    pose_stamped.pose.position.z = position[2]
-    pose_stamped.pose.orientation.x = orientation[0]
-    pose_stamped.pose.orientation.y = orientation[1]
-    pose_stamped.pose.orientation.z = orientation[2]
-    pose_stamped.pose.orientation.w = orientation[3]
-
-
-def reset_action_iters(plan):
-    for action_node in plan.actions:
-        action_node.action_iter = None
-
-
-def add_milk_body(world, milk_body, milk_pose):
+def reset_milk_body(world, milk_body, milk_pose):
     """Reset milk body position by updating its connection origin."""
     with world.modify_world():
-        # Find the existing connection for this milk body
         connection = milk_body.parent_connection
         if connection:
             connection.origin = milk_pose
 
 
+def reset_action_iters(plan):
+    """Reset action iterators for all action nodes in the plan."""
+    for action_node in plan.actions:
+        action_node.action_iter = None
+
+
 def make_pose_stamped(world, pos, ori):
+    """Create a PoseStamped from position and orientation lists."""
     return PoseStamped(
         PyCramPose(
             PyCramVector3(pos[0], pos[1], pos[2]),
@@ -117,59 +52,56 @@ def make_pose_stamped(world, pos, ori):
     )
 
 
-NAV_POS_BOUNDS = {
-    "x": (1.0, 2.0),
-    "y": (1.0, 3.0),
-}
-
-
-def scale_into_range(value, min_v, max_v):
-    span = max_v - min_v
-    if span <= 0:
-        return min_v
-    return ((value - min_v) % span) + min_v
-
-
-def normalize_quaternion(quat_list):
+def contains_ellipsis(obj, visited=None, depth=0, max_depth=10):
     """
-    Normalize a quaternion to ensure it's a valid unit quaternion.
+    Check if an object or its nested attributes contain Ellipsis.
 
-    :param quat_list: List [qx, qy, qz, qw]
+    :param obj: The object to check
+    :param visited: Set of object IDs already visited (to prevent circular references)
+    :param depth: Current recursion depth
+    :param max_depth: Maximum recursion depth to prevent infinite loops
+    :return: True if Ellipsis is found, False otherwise
     """
-    import math
-    magnitude = math.sqrt(sum(q**2 for q in quat_list))
-    if magnitude > 0:
-        quat_list[0] /= magnitude
-        quat_list[1] /= magnitude
-        quat_list[2] /= magnitude
-        quat_list[3] /= magnitude
+    if depth > max_depth:
+        return False
 
+    if visited is None:
+        visited = set()
 
-def scale_orientation_to_valid_range(orientation):
-    """
-    Scale orientation values to [0.0, 1.0] range and normalize to valid quaternion.
+    # Check if this object was already visited
+    obj_id = id(obj)
+    if obj_id in visited:
+        return False
 
-    :param orientation: List [qx, qy, qz, qw] to update in-place
-    """
-    # Scale each component to [0.0, 1.0]
-    for i in range(4):
-        orientation[i] = abs(orientation[i]) % 1.0
+    # Check for Ellipsis
+    if obj is ...:
+        return True
 
-    # Normalize to ensure valid unit quaternion
-    normalize_quaternion(orientation)
+    # Check collections without recursing into complex objects
+    if isinstance(obj, (list, tuple)):
+        visited.add(obj_id)
+        return any(contains_ellipsis(item, visited, depth + 1, max_depth) for item in obj)
 
+    # Only recurse into simple dataclass-like objects, not complex world entities
+    if hasattr(obj, '__dict__') and not isinstance(obj, (Body, type)):
+        visited.add(obj_id)
+        # Filter out attributes that are likely to cause circular references
+        attrs_to_check = {
+            k: v for k, v in obj.__dict__.items()
+            if not k.startswith('_') and not callable(v)
+        }
+        return any(
+            contains_ellipsis(value, visited, depth + 1, max_depth)
+            for value in attrs_to_check.values()
+        )
 
-def scale_position_into_bounds(position, bounds):
-    position[0] = scale_into_range(position[0], *bounds["x"])
-    position[1] = scale_into_range(position[1], *bounds["y"])
-    # z is not scaled, kept constant
+    return False
 
 
 def simple_plan():
     """
-    Create and parameterize a pick-and-place plan in a world.
-
-    :return: A plan and a probabilistic circuit; also prints a few samples.
+    Create and parameterize a pick-and-place plan, then iterate through samples
+    to generate a dataset of successful executions.
     """
     base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     resource_path = os.path.join(base_path, "resources")
@@ -178,6 +110,7 @@ def simple_plan():
     robot_urdf = os.path.join(resource_path, "robots", "pr2.urdf")
     milk_stl = os.path.join(resource_path, "objects", "milk.stl")
 
+    # Load world and robot
     world = URDFParser.from_file(apartment_urdf).parse()
     robot_world = URDFParser.from_file(robot_urdf).parse()
 
@@ -187,6 +120,7 @@ def simple_plan():
 
     robot = PR2.from_world(world)
 
+    # Setup map and localization bodies
     with world.modify_world():
         map_body = Body(name=PrefixedName("map"))
         localization_body = Body(name=PrefixedName("odom_combined"))
@@ -208,8 +142,8 @@ def simple_plan():
         )
         world.add_connection(omni_connection)
 
+    # Create milk object
     milk_mesh = FileMesh.from_file(milk_stl)
-
     milk_body_1 = Body(
         name=PrefixedName("milk_1"),
         visual=ShapeCollection([milk_mesh]),
@@ -217,14 +151,13 @@ def simple_plan():
     )
     milk_pose_1 = HomogeneousTransformationMatrix.from_xyz_rpy(2.4, 2.5, 1.01, 0, 0, 0)
 
-
     with world.modify_world():
         world.add_body(milk_body_1)
         milk_connection_1 = Connection6DoF.create_with_dofs(parent=world.root, child=milk_body_1, world=world)
         world.add_connection(milk_connection_1)
         milk_connection_1.origin = milk_pose_1
 
-
+    # Initialize ROS
     rclpy.init()
     node = rclpy.create_node("pycram_demo")
     thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
@@ -236,19 +169,30 @@ def simple_plan():
 
         context = Context(world, robot, None)
 
-        # dummy working values
-        nav_pickup_position = [1.6, 2.5, 0.0]
-        nav_pickup_orientation = [0.0, 0.0, 0.0, 1.0]
+        # Define poses with dummy values for first execution
+        nav_pose_pickup = PoseStamped(
+            PyCramPose(
+                PyCramVector3(1.6, 2.5, 0.0),
+                PyCramQuaternion(0.0, 0.0, 0.0, 1.0),
+            ),
+            Header(world.get_body_by_name("map")),
+        )
 
-        nav_placing_position = [1.6, 1.5, 0.0]
-        nav_placing_orientation = [0.0, 0.0, 0.0, 1.0]
+        nav_pose_placing = PoseStamped(
+            PyCramPose(
+                PyCramVector3(1.6, 1.5, 0.0),
+                PyCramQuaternion(0.0, 0.0, 0.0, 1.0),
+            ),
+            Header(world.get_body_by_name("map")),
+        )
 
-        placing_position = [2.4, 1.5, 1.0]  # Constant
-        placing_orientation = [0.0, 0.0, 0.0, 1.0]
-
-        nav_pose_pickup = make_pose_stamped(world, nav_pickup_position, nav_pickup_orientation)
-        nav_pose_placing = make_pose_stamped(world, nav_placing_position, nav_placing_orientation)
-        placing_pose = make_pose_stamped(world, placing_position, placing_orientation)
+        placing_pose = PoseStamped(
+            PyCramPose(
+                PyCramVector3(2.4, 1.5, 1.0),
+                PyCramQuaternion(0.0, 0.0, 0.0, 1.0),
+            ),
+            Header(world.get_body_by_name("map")),
+        )
 
         grasp_description = GraspDescription(
             ApproachDirection.FRONT,
@@ -256,44 +200,119 @@ def simple_plan():
             robot.right_arm.manipulator,
         )
 
-        # Create initial pickup and place descriptions with milk_body_1
-        pickup_description = PickUpActionDescription(
-            object_designator=milk_body_1,
-            arm=Arms.RIGHT,
-            grasp_description=grasp_description,
-        )
-
-        place_description = PlaceActionDescription(
-            object_designator=milk_body_1,
-            target_location=placing_pose,
-            arm=Arms.RIGHT,
-        )
-
-        plan = SequentialPlan(
+        # Create initial plan with dummy values
+        initial_plan = SequentialPlan(
             context,
             ParkArmsActionDescription(arm=Arms.BOTH),
             NavigateActionDescription(target_location=nav_pose_pickup),
-            pickup_description,
+            PickUpActionDescription(
+                object_designator=milk_body_1,
+                arm=Arms.RIGHT,
+                grasp_description=grasp_description,
+            ),
             NavigateActionDescription(target_location=nav_pose_placing),
-            place_description,
+            PlaceActionDescription(
+                object_designator=milk_body_1,
+                target_location=placing_pose,
+                arm=Arms.RIGHT,
+            ),
             ParkArmsActionDescription(arm=Arms.BOTH),
         )
 
-        # parameterization = plan.parameterize()
-        # variables_map = {v.name: v for v in parameterization.variables}
+        # Execute first iteration with dummy values
+        print(f"\n{'='*60}")
+        print("Executing initial plan with dummy values...")
+        print(f"{'='*60}\n")
 
-        probabilistic_circuit = plan.parameterizer.create_fully_factorized_distribution()
-
-        print("First execution (with initial values):")
+        reset_milk_body(world, milk_body_1, milk_pose_1)
         with simulated_robot:
-            plan.perform()
+            initial_plan.perform()
+
+        print("✓ Initial execution SUCCESS\n")
+
+        # Now create parameterized plan for iterations
+        nav_pose_pickup_param = PoseStamped(
+            PyCramPose(
+                PyCramVector3(..., ..., 0.0),
+                PyCramQuaternion(0, 0, 0, 1),
+            ),
+            Header(world.get_body_by_name("map")),
+        )
+
+        nav_pose_placing_param = PoseStamped(
+            PyCramPose(
+                PyCramVector3(..., ..., 0.0),
+                PyCramQuaternion(0, 0, 0, 1),
+            ),
+            Header(world.get_body_by_name("map")),
+        )
+
+        # Create parameterized plan with Ellipsis for parameterizable fields only
+        param_plan = SequentialPlan(
+            context,
+            ParkArmsActionDescription(arm=Arms.BOTH),
+            NavigateActionDescription(target_location=nav_pose_pickup_param),
+            PickUpActionDescription(
+                object_designator=milk_body_1,
+                arm=...,
+                grasp_description=grasp_description,
+            ),
+            NavigateActionDescription(target_location=nav_pose_placing_param),
+            PlaceActionDescription(
+                object_designator=milk_body_1,
+                target_location=placing_pose,
+                arm=...,
+            ),
+            ParkArmsActionDescription(arm=Arms.BOTH),
+        )
+
+        # Generate parameterizations using the new API
+        print("Generating parameterizations...")
+
+        try:
+            # Create action instances from kwargs and parameterize them
+            from krrood.probabilistic_knowledge.parameterizer import Parameterizer
+
+            parameterizations = []
+
+            for action_node in param_plan.actions:
+                # Check if this action has any Ellipsis in kwargs
+                has_ellipsis = any(
+                    contains_ellipsis(value)
+                    for value in action_node.kwargs.values()
+                )
+
+                if has_ellipsis:
+                    # Create action instance directly from kwargs (which contain ...)
+                    # The action_node.designator_type is the Action class (e.g., NavigateAction, PickUpAction)
+                    action_instance = action_node.designator_type(**action_node.kwargs)
+
+                    try:
+                        # Parameterize the action instance
+                        parameterization = Parameterizer().parameterize(action_instance)
+                        if parameterization.variables:
+                            parameterizations.append((action_instance, parameterization, action_node))
+                    except Exception as e:
+                        print(f"Warning: Could not parameterize {action_node.designator_type.__name__}: {type(e).__name__}")
+                        traceback.print_exc()
+                        continue
+
+            print(f"Found {len(parameterizations)} parameterizable actions")
+
+        except Exception as e:
+            print(f"Error generating parameterizations: {type(e).__name__}")
+            traceback.print_exc()
+            return param_plan
+
+        if not parameterizations:
+            print("Error: No parameterizable actions found. Check the plan structure.")
+            return param_plan
 
         print(f"\n{'='*60}")
         print("Starting sample iterations...")
         print(f"{'='*60}\n")
 
         sample_count = 500
-        samples = probabilistic_circuit.sample(sample_count)
         results = []
         success_samples = []
 
@@ -301,95 +320,103 @@ def simple_plan():
             print(f"Testing Sample {sample_idx + 1}/{sample_count}")
 
             try:
-                sample_dict = sample_to_dict(probabilistic_circuit, samples[sample_idx])
+                # Create new actions by sampling parameters
+                sampled_params = []
+                new_action_instances = []
+                parameterized_node_ids = set()
 
-                # Update x, y from samples; z is constant
-                nav_pickup_position[0] = sample_dict.get("NavigateActionDescription_0.target_location.pose.position.x", nav_pickup_position[0])
-                nav_pickup_position[1] = sample_dict.get("NavigateActionDescription_0.target_location.pose.position.y", nav_pickup_position[1])
-                nav_pickup_position[2] = 0.0  # Constant z
+                for action_instance, parameterization, action_node in parameterizations:
+                    # Create fully factorized distribution
+                    distribution = parameterization.create_fully_factorized_distribution()
 
-                # Update orientation from samples and scale to valid range
-                nav_pickup_orientation[0] = sample_dict.get("NavigateActionDescription_0.target_location.pose.orientation.x", nav_pickup_orientation[0])
-                nav_pickup_orientation[1] = sample_dict.get("NavigateActionDescription_0.target_location.pose.orientation.y", nav_pickup_orientation[1])
-                nav_pickup_orientation[2] = sample_dict.get("NavigateActionDescription_0.target_location.pose.orientation.z", nav_pickup_orientation[2])
-                nav_pickup_orientation[3] = sample_dict.get("NavigateActionDescription_0.target_location.pose.orientation.w", nav_pickup_orientation[3])
-                scale_orientation_to_valid_range(nav_pickup_orientation)
+                    # Apply conditioning
+                    distribution, _ = distribution.conditional(
+                        parameterization.assignments_for_conditioning
+                    )
 
-                nav_placing_position[0] = sample_dict.get("NavigateActionDescription_2.target_location.pose.position.x", nav_placing_position[0])
-                nav_placing_position[1] = sample_dict.get("NavigateActionDescription_2.target_location.pose.position.y", nav_placing_position[1])
-                nav_placing_position[2] = 0.0  # Constant z
+                    # Sample from distribution
+                    sample = distribution.sample(1)[0]
 
-                # Update orientation from samples and scale to valid range
-                nav_placing_orientation[0] = sample_dict.get("NavigateActionDescription_2.target_location.pose.orientation.x", nav_placing_orientation[0])
-                nav_placing_orientation[1] = sample_dict.get("NavigateActionDescription_2.target_location.pose.orientation.y", nav_placing_orientation[1])
-                nav_placing_orientation[2] = sample_dict.get("NavigateActionDescription_2.target_location.pose.orientation.z", nav_placing_orientation[2])
-                nav_placing_orientation[3] = sample_dict.get("NavigateActionDescription_2.target_location.pose.orientation.w", nav_placing_orientation[3])
-                scale_orientation_to_valid_range(nav_placing_orientation)
+                    # Create assignment dictionary
+                    sample_dict = parameterization.create_assignment_from_variables_and_sample(
+                        distribution.variables, sample
+                    )
 
-                scale_position_into_bounds(nav_pickup_position, NAV_POS_BOUNDS)
-                scale_position_into_bounds(nav_placing_position, NAV_POS_BOUNDS)
+                    # Parameterize the action instance with the sample
+                    parameterized_action = parameterization.parameterize_object_with_sample(
+                        action_instance, sample_dict
+                    )
+                    new_action_instances.append(parameterized_action)
+                    parameterized_node_ids.add(id(action_node))
+                    sampled_params.append((type(action_instance).__name__, sample_dict))
 
-                # Update arm from samples if available
-                if "PickUpActionDescription_1.arm" in sample_dict:
-                    pickup_description.arm = int(sample_dict["PickUpActionDescription_1.arm"])
+                # Rebuild full action list including non-parameterized actions
+                all_action_descriptions = []
+                param_idx = 0
 
-                if "PickUpActionDescription_1.grasp_description.approach_direction" in sample_dict:
-                    grasp_description.approach_direction = int(sample_dict["PickUpActionDescription_1.grasp_description.approach_direction"])
+                for action_node in param_plan.actions:
+                    if id(action_node) in parameterized_node_ids:
+                        # Use parameterized action instance
+                        all_action_descriptions.append(new_action_instances[param_idx])
+                        param_idx += 1
+                    else:
+                        # Create non-parameterized action from kwargs
+                        action = action_node.designator_type(**action_node.kwargs)
+                        all_action_descriptions.append(action)
 
-                if "PickUpActionDescription_1.grasp_description.manipulation_offset" in sample_dict:
-                    grasp_description.manipulation_offset = sample_dict["PickUpActionDescription_1.grasp_description.manipulation_offset"]
-
-                if "PickUpActionDescription_1.grasp_description.rotate_gripper" in sample_dict:
-                    grasp_description.rotate_gripper = bool(sample_dict["PickUpActionDescription_1.grasp_description.rotate_gripper"])
-
-                if "PickUpActionDescription_1.grasp_description.vertical_alignment" in sample_dict:
-                    grasp_description.vertical_alignment = int(sample_dict["PickUpActionDescription_1.grasp_description.vertical_alignment"])
-
-                if "PlaceActionDescription_3.arm" in sample_dict:
-                    place_description.arm = int(sample_dict["PlaceActionDescription_3.arm"])
+                # Create new plan with all action instances
+                new_plan = SequentialPlan(context, *all_action_descriptions)
 
                 # Reset milk body position
-                add_milk_body(world, milk_body_1, milk_pose_1)
+                reset_milk_body(world, milk_body_1, milk_pose_1)
 
-                set_pose_from_lists(nav_pose_pickup, nav_pickup_position, nav_pickup_orientation)
-                set_pose_from_lists(nav_pose_placing, nav_placing_position, nav_placing_orientation)
-                set_pose_from_lists(placing_pose, placing_position, placing_orientation)
-                reset_action_iters(plan)
-
+                # Execute plan
                 with simulated_robot:
-                    plan.perform()
+                    new_plan.perform()
 
                 print(f"✓ Sample {sample_idx + 1} SUCCESS")
                 results.append((sample_idx + 1, "SUCCESS", None))
-                success_samples.append({
+
+                # Store successful sample data
+                success_sample = {
                     "sample_index": sample_idx + 1,
-                    "used_nav_pickup_position": list(nav_pickup_position),
-                    "used_nav_pickup_orientation": list(nav_pickup_orientation),
-                    "used_nav_placing_position": list(nav_placing_position),
-                    "used_nav_placing_orientation": list(nav_placing_orientation),
-                    "sample": sample_dict,
-                })
+                    "actions": []
+                }
+
+                for action_name, sample_dict in sampled_params:
+                    success_sample["actions"].append({
+                        "action_type": action_name,
+                        "parameters": {str(k.variable.name): v for k, v in sample_dict.items()}
+                    })
+
+                success_samples.append(success_sample)
 
             except Exception as e:
                 print(f"✗ Sample {sample_idx + 1} FAILED")
                 print(f"Error: {type(e).__name__}: {str(e)}")
                 traceback.print_exc()
+                results.append((sample_idx + 1, "FAILED", str(e)))
 
+        # Print summary
         success_count = sum(1 for _, status, _ in results if status == "SUCCESS")
         failure_count = len(results) - success_count
 
+        print(f"\n{'='*60}")
         print("EXECUTION SUMMARY")
+        print(f"{'='*60}")
         print(f"Total samples tested: {len(results)}")
         print(f"Successful: {success_count}")
         print(f"Failed: {failure_count}")
+        print(f"{'='*60}\n")
 
+        # Save successful samples to file
         dataset_path = os.path.join(os.path.dirname(__file__), "success_samples.jsonl")
         with open(dataset_path, "w", encoding="utf-8") as f:
             for item in success_samples:
                 f.write(json.dumps(item) + "\n")
         print(f"Saved {len(success_samples)} successful samples to: {dataset_path}")
 
-        return plan, probabilistic_circuit
+        return param_plan
 
     finally:
         time.sleep(0.1)
