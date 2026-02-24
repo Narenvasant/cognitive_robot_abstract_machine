@@ -5,11 +5,15 @@ import threading
 import rclpy
 
 from pycram.datastructures.dataclasses import Context
+from pycram.datastructures.enums import Arms, ApproachDirection, VerticalAlignment
+from pycram.datastructures.grasp import GraspDescription
 from pycram.datastructures.pose import PoseStamped, PyCramPose, PyCramVector3, PyCramQuaternion, Header
 from pycram.language import SequentialPlan
 from pycram.motion_executor import simulated_robot
-from pycram.robot_plans import MoveTorsoActionDescription, NavigateActionDescription
+from pycram.robot_plans import MoveTorsoActionDescription, NavigateActionDescription, ParkArmsActionDescription, \
+    PickUpActionDescription, PlaceActionDescription
 from pycram.orm.ormatic_interface import *  # This imports DAO mappings
+from pycram.view_manager import ViewManager
 
 from semantic_digital_twin.adapters.ros.tf_publisher import TFPublisher
 from semantic_digital_twin.adapters.ros.visualization.viz_marker import VizMarkerPublisher
@@ -24,13 +28,11 @@ from semantic_digital_twin.world_description.shape_collection import ShapeCollec
 from semantic_digital_twin.world_description.world_entity import Body
 
 
-def sequential_plan_with_apartment(num_iterations: int = 5):
+def sequential_plan_with_apartment():
     """
     Parameterize a SequentialPlan using krrood parameterizer in an apartment world,
     create a fully-factorized distribution and assert the correctness of sampled values
     after conditioning and truncation.
-
-    :param num_iterations: Number of times to sample and execute the plan
     """
     base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     resource_path = os.path.join(base_path, "resources")
@@ -87,7 +89,7 @@ def sequential_plan_with_apartment(num_iterations: int = 5):
 
     # Initialize ROS
     rclpy.init()
-    node = rclpy.create_node("pycram_test_sequential_plan")
+    node = rclpy.create_node("sequential_plan")
     thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     thread.start()
 
@@ -98,75 +100,86 @@ def sequential_plan_with_apartment(num_iterations: int = 5):
         context = Context(world, robot, None)
 
         target_location = PoseStamped.from_list([..., ..., 0], [0, 0, 0, 1], frame=None)
+        global_pose = HomogeneousTransformationMatrix()
+        # grasp_description = GraspDescription(
+        #     approach_direction=ApproachDirection.FRONT,
+        #     vertical_alignment=VerticalAlignment.NoAlignment,
+        #     manipulator=ViewManager.get_arm_view(Arms.RIGHT, robot).manipulator,
+        #     rotate_gripper=False,
+        #     manipulation_offset=0.05,
+        # )
 
         sp = SequentialPlan(
             context,
-            MoveTorsoActionDescription(TorsoState.LOW),
+            ParkArmsActionDescription(arm=Arms.BOTH),
             NavigateActionDescription(
                 target_location=target_location,
                 keep_joint_states=...,
             ),
-            MoveTorsoActionDescription(torso_state=...),
+            PickUpActionDescription(
+                object_designator=milk_pose_1,
+                arm=...,
+            ),
+            NavigateActionDescription(
+                target_location=target_location,
+                keep_joint_states=...,
+            ),
+            PlaceActionDescription(
+                object_designator=milk_pose_1,
+                target_location=target_location,
+                arm=...,
+            ),
+            ParkArmsActionDescription(arm=...),
         )
+
+
+        # PickUpActionDescription(
+        #     object_designator=milk_body_1,
+        #     arm=...,
+        #     grasp_description=GraspDescription(
+        #         approach_direction=ApproachDirection.FRONT,
+        #         vertical_alignment=VerticalAlignment.NoAlignment,
+        #         manipulator=ViewManager.get_arm_view(Arms.BOTH, robot).manipulator,
+        #     ),
+        # ),
+
 
         parameterization = sp.generate_parameterizations()
         target_location.frame_id = world.root
+        new_actions = []
 
-        print(f"\n{'='*80}")
-        print(f"RUNNING {num_iterations} ITERATIONS OF THE PARAMETERIZED PLAN")
-        print(f"{'='*80}\n")
+        for i, (action, parameters) in enumerate(parameterization):
+            print(f"\n--- Action {i}: {action.__class__.__name__} ---")
+            print(f"Variables: {[str(v) for v in parameters.random_events_variables]}")
+            print(f"Assignments: {parameters.assignments_for_conditioning}")
 
-        # Run multiple iterations
-        for iteration in range(num_iterations):
-            print(f"\n{'='*80}")
-            print(f"ITERATION {iteration + 1}/{num_iterations}")
-            print(f"{'='*80}\n")
+            distribution = parameters.create_fully_factorized_distribution()
+            print(f"Distribution variables: {distribution.variables}")
 
-            new_actions = []
+            distribution, event = distribution.conditional(
+                parameters.assignments_for_conditioning
+            )
+            print(f"Conditioned event: {event}")
 
-            for i, (action, parameters) in enumerate(parameterization):
-                print(f"\n--- Action {i}: {action.__class__.__name__} ---")
-                print(f"Variables: {[str(v) for v in parameters.random_events_variables]}")
-                print(f"Assignments: {parameters.assignments_for_conditioning}")
+            sample = distribution.sample(1)[0]
+            print(f"Sample: {sample}")
 
-                distribution = parameters.create_fully_factorized_distribution()
-                print(f"Distribution variables: {distribution.variables}")
+            sample_dict = parameters.create_assignment_from_variables_and_sample(
+                distribution.variables, sample
+            )
+            print(f"Sample dict keys: {list(sample_dict.keys())}")
+            print(f"Sample dict values: {list(sample_dict.values())}")
 
-                distribution, event = distribution.conditional(
-                    parameters.assignments_for_conditioning
-                )
-                print(f"Conditioned event: {event}")
+            parameterized = parameters.parameterize_object_with_sample(action, sample_dict)
+            print(f"Parameterized action: {parameterized}")
+            new_actions.append(parameterized)
 
-                # Sample from the distribution
-                sample = distribution.sample(1)[0]
-                print(f"Sample: {sample}")
+        new_plan = SequentialPlan(context, *new_actions)
 
-                sample_dict = parameters.create_assignment_from_variables_and_sample(
-                    distribution.variables, sample
-                )
-                print(f"Sample dict keys: {list(sample_dict.keys())}")
-                print(f"Sample dict values: {list(sample_dict.values())}")
+        with simulated_robot:
+            new_plan.perform()
 
-                parameterized = parameters.parameterize_object_with_sample(action, sample_dict)
-                print(f"Parameterized action: {parameterized}")
-                new_actions.append(parameterized)
-
-            # Create and execute the parameterized plan
-            new_plan = SequentialPlan(context, *new_actions)
-
-            print(f"\n--- Executing Plan for Iteration {iteration + 1} ---")
-            with simulated_robot:
-                new_plan.perform()
-
-            final_pose = robot.root.global_pose
-            print(f"\nIteration {iteration + 1} Final robot pose: {final_pose}")
-
-            # Optional: Add a small delay between iterations
-            time.sleep(0.5)
-
-        print(f"\n{'='*80}")
-        print(f"COMPLETED ALL {num_iterations} ITERATIONS")
-        print(f"{'='*80}\n")
+        print(f"\nFinal robot pose: {robot.root.global_pose}")
 
     finally:
         time.sleep(0.1)
@@ -176,5 +189,4 @@ def sequential_plan_with_apartment(num_iterations: int = 5):
 
 
 if __name__ == "__main__":
-    # Run with 5 iterations by default, or change the number as needed
-    sequential_plan_with_apartment(num_iterations=5)
+    sequential_plan_with_apartment()
