@@ -110,12 +110,17 @@ _COUNTER_APPROACH_Y: float = 3.28
 _TABLE_APPROACH_X:   float = 4.2
 _TABLE_APPROACH_Y:   float = 4.0
 
+#shelf
+# _MILK_X: float = 0.312
+# _MILK_Y: float = 3.281
+# _MILK_Z: float = 0.928
 
-_MILK_X: float = 0.312
-_MILK_Y: float = 3.281
-_MILK_Z: float = 0.928
+#counter
+_MILK_X: float = 2.4
+_MILK_Y: float = 2.5
+_MILK_Z: float = 1.01
 
-
+#table
 _PLACE_X: float = 5.0
 _PLACE_Y: float = 4.0
 _PLACE_Z: float = 0.724
@@ -351,9 +356,6 @@ def _place_pose(robot: Any) -> Any:
     )
 
 
-# ---------------------------------------------------------------------------
-# Action description factory
-# ---------------------------------------------------------------------------
 
 def _build_action_descriptions(
     world: Any,
