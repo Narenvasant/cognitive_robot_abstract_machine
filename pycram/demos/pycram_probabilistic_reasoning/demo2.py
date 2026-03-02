@@ -1,21 +1,39 @@
 import os
 import time
 import threading
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import rclpy
+from sqlalchemy.orm import Session
 
 from pycram.datastructures.dataclasses import Context
+from pycram.datastructures.enums import ApproachDirection, Arms, VerticalAlignment
+from pycram.datastructures.grasp import GraspDescription
 from pycram.datastructures.pose import PoseStamped, PyCramPose, PyCramVector3, PyCramQuaternion, Header
 from pycram.language import SequentialPlan
 from pycram.motion_executor import simulated_robot
-from pycram.robot_plans import MoveTorsoActionDescription, NavigateActionDescription
-from pycram.orm.ormatic_interface import *  # This imports DAO mappings
+from pycram.robot_plans import ParkArmsAction, NavigateAction, PickUpAction, PlaceAction
+from pycram.orm.ormatic_interface import *
+
+from krrood.entity_query_language.factories import (
+    probable,
+    probable_variable,
+    variable,
+    variable_from,
+)
+from krrood.ormatic.dao import to_dao
+from krrood.ormatic.utils import create_engine
+from krrood.probabilistic_knowledge.parameterizer import MatchParameterizer, Parameterization
+from krrood.probabilistic_knowledge.probable_variable import MatchToInstanceTranslator
+from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import ProbabilisticCircuit
 
 from semantic_digital_twin.adapters.ros.tf_publisher import TFPublisher
 from semantic_digital_twin.adapters.ros.visualization.viz_marker import VizMarkerPublisher
 from semantic_digital_twin.adapters.urdf import URDFParser
-from semantic_digital_twin.datastructures.definitions import TorsoState
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.robots.abstract_robot import Manipulator
 from semantic_digital_twin.robots.pr2 import PR2
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
 from semantic_digital_twin.world_description.connections import FixedConnection, Connection6DoF, OmniDrive
@@ -24,157 +42,429 @@ from semantic_digital_twin.world_description.shape_collection import ShapeCollec
 from semantic_digital_twin.world_description.world_entity import Body
 
 
-def sequential_plan_with_apartment(num_iterations: int = 5):
+# ── Iteration config ──────────────────────────────────────────────────────────
+NUM_ITERATIONS: int = 20
+"""
+Total number of plan iterations to run.
+Iteration 1 uses fixed/known-good values (original demo2.py behaviour).
+Iterations 2..NUM_ITERATIONS use probabilistic sampling (demo4.py behaviour).
+"""
+
+_DATABASE_URI: str = os.environ.get(
+    "SEMANTIC_DIGITAL_TWIN_DATABASE_URI",
+    "sqlite:///:memory:",
+)
+
+# ── World coordinates ─────────────────────────────────────────────────────────
+_MILK_X: float = 2.4
+_MILK_Y: float = 2.5
+_MILK_Z: float = 1.01
+
+_COUNTER_APPROACH_X: float = 1.6
+_COUNTER_APPROACH_Y: float = 2.5
+
+_TABLE_APPROACH_X: float = 4.2
+_TABLE_APPROACH_Y: float = 4.0
+
+_PLACE_X: float = 5.0
+_PLACE_Y: float = 4.0
+_PLACE_Z: float = 0.80   # slightly above table surface to account for milk height
+
+_RESOURCE_PATH = Path(__file__).resolve().parents[2] / "resources"
+APARTMENT_URDF: Path = _RESOURCE_PATH / "worlds" / "apartment.urdf"
+MILK_STL:       Path = _RESOURCE_PATH / "objects" / "milk.stl"
+
+_ACTION_LABELS = [
+    "ParkArms (pre)",
+    "Navigate → counter",
+    "PickUp milk",
+    "Navigate → table",
+    "Place milk",
+    "ParkArms (post)",
+]
+
+
+# ── Data container ────────────────────────────────────────────────────────────
+
+@dataclass
+class ActionEntry:
     """
-    Parameterize a SequentialPlan using krrood parameterizer in an apartment world,
-    create a fully-factorized distribution and assert the correctness of sampled values
-    after conditioning and truncation.
-
-    :param num_iterations: Number of times to sample and execute the plan
+    Groups a concrete action instance with its Parameterization and the
+    pre-built ProbabilisticCircuit so that all three travel together.
     """
-    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    resource_path = os.path.join(base_path, "resources")
+    instance: Any
+    parameterization: Parameterization
+    distribution: ProbabilisticCircuit
 
-    apartment_urdf = os.path.join(resource_path, "worlds", "apartment.urdf")
-    robot_urdf = os.path.join(resource_path, "robots", "pr2.urdf")
-    milk_stl = os.path.join(resource_path, "objects", "milk.stl")
 
-    # Load world and robot
-    world = URDFParser.from_file(apartment_urdf).parse()
-    robot_world = URDFParser.from_file(robot_urdf).parse()
+# ── World / robot setup ───────────────────────────────────────────────────────
 
-    robot_pose = HomogeneousTransformationMatrix.from_xyz_rpy(1.4, 1.5, 1.0, 0, 0, 0)
+def _build_world(apartment_urdf: Path) -> tuple:
+    """Parse URDF files and return (world, robot)."""
+    world = URDFParser.from_file(str(apartment_urdf)).parse()
+    pr2_urdf = "package://iai_pr2_description/robots/pr2_with_ft2_cableguide.xacro"
+    pr2_world = URDFParser.from_file(pr2_urdf).parse()
+    robot = PR2.from_world(pr2_world)
+    robot_pose = HomogeneousTransformationMatrix.from_xyz_rpy(1.4, 1.5, 0.0, 0, 0, 0)
     with world.modify_world():
-        world.merge_world_at_pose(robot_world, robot_pose)
+        world.merge_world_at_pose(pr2_world, robot_pose)
+    return world, robot
 
-    robot = PR2.from_world(world)
 
-    # Setup map and localization bodies
+def _add_localization_frame(world, robot) -> None:
+    """Insert map → odom_combined → robot base chain for OmniDrive navigation."""
     with world.modify_world():
-        map_body = Body(name=PrefixedName("map"))
-        localization_body = Body(name=PrefixedName("odom_combined"))
+        map_body  = Body(name=PrefixedName("map"))
+        odom_body = Body(name=PrefixedName("odom_combined"))
         world.add_body(map_body)
-        world.add_body(localization_body)
-
+        world.add_body(odom_body)
         world.add_connection(FixedConnection(parent=world.root, child=map_body))
-        world.add_connection(Connection6DoF.create_with_dofs(world, map_body, localization_body))
+        world.add_connection(Connection6DoF.create_with_dofs(world, map_body, odom_body))
 
-        old_root_connection = robot.root.parent_connection
-        if old_root_connection is not None:
-            world.remove_connection(old_root_connection)
+        old_connection = robot.root.parent_connection
+        if old_connection is not None:
+            world.remove_connection(old_connection)
 
-        omni_connection = OmniDrive.create_with_dofs(
-            parent=localization_body,
-            child=robot.root,
-            world=world,
-            parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(1.2, 1.5, 0.0, 0, 0, 0),
+        world.add_connection(
+            OmniDrive.create_with_dofs(
+                parent=odom_body,
+                child=robot.root,
+                world=world,
+                parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    1.4, 1.5, 0.0, 0, 0, 0
+                ),
+            )
         )
-        world.add_connection(omni_connection)
 
-    milk_mesh = FileMesh.from_file(milk_stl)
-    milk_body_1 = Body(
+
+def _add_milk(world, stl_path: Path) -> tuple[Body, HomogeneousTransformationMatrix]:
+    """Add a milk object to the world and return (body, pose)."""
+    mesh = FileMesh.from_file(str(stl_path))
+    body = Body(
         name=PrefixedName("milk_1"),
-        visual=ShapeCollection([milk_mesh]),
-        collision=ShapeCollection([milk_mesh]),
+        visual=ShapeCollection([mesh]),
+        collision=ShapeCollection([mesh]),
     )
-    milk_pose_1 = HomogeneousTransformationMatrix.from_xyz_rpy(2.4, 2.5, 1.01, 0, 0, 0)
-
+    pose = HomogeneousTransformationMatrix.from_xyz_rpy(_MILK_X, _MILK_Y, _MILK_Z, 0, 0, 0)
     with world.modify_world():
-        world.add_body(milk_body_1)
-        milk_connection_1 = Connection6DoF.create_with_dofs(parent=world.root, child=milk_body_1, world=world)
-        world.add_connection(milk_connection_1)
-        milk_connection_1.origin = milk_pose_1
+        world.add_body(body)
+        connection = Connection6DoF.create_with_dofs(parent=world.root, child=body, world=world)
+        world.add_connection(connection)
+        connection.origin = pose
+    return body, pose
 
-    # Initialize ROS
+
+def _create_pose_stamped(x: float, y: float, z: float, frame) -> PoseStamped:
+    """Create a PoseStamped at the given world coordinates."""
+    return PoseStamped(
+        pose=PyCramPose(
+            position=PyCramVector3(x=x, y=y, z=z),
+            orientation=PyCramQuaternion(x=0, y=0, z=0, w=1),
+        ),
+        header=Header(frame_id=frame),
+    )
+
+
+def _respawn_milk(world, milk_body: Body) -> None:
+    """
+    Teleport the milk body back to its original spawn pose on the counter.
+
+    After PlaceAction, the milk is detached from the robot and re-parented
+    under world.root with a Connection6DoF (see PlaceAction.execute). We
+    locate that connection and overwrite its origin with the initial pose,
+    which is equivalent to teleporting the object without removing/re-adding it.
+
+    This keeps the same Body reference alive so that all existing designators,
+    EQL variables, and probabilistic descriptions that point to milk_body
+    remain valid across iterations.
+    """
+    spawn_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
+        _MILK_X, _MILK_Y, _MILK_Z, 0, 0, 0
+    )
+    with world.modify_world():
+        # After PlaceAction the milk is always a direct child of world.root.
+        connection = milk_body.parent_connection
+        if connection is not None:
+            # Re-parent to world.root if it somehow ended up elsewhere.
+            if connection.parent is not world.root:
+                world.remove_connection(connection)
+                new_conn = Connection6DoF.create_with_dofs(
+                    parent=world.root, child=milk_body, world=world
+                )
+                world.add_connection(new_conn)
+                new_conn.origin = spawn_pose
+            else:
+                connection.origin = spawn_pose
+        else:
+            # Safety fallback: create a fresh connection.
+            new_conn = Connection6DoF.create_with_dofs(
+                parent=world.root, child=milk_body, world=world
+            )
+            world.add_connection(new_conn)
+            new_conn.origin = spawn_pose
+    print(f"  ↺  Milk respawned at  x={_MILK_X}, y={_MILK_Y}, z={_MILK_Z}")
+
+
+# ── Database ──────────────────────────────────────────────────────────────────
+
+def _create_session(database_uri: str) -> Session:
+    engine = create_engine(database_uri)
+    Base.metadata.create_all(bind=engine)
+    return Session(engine)
+
+
+def _persist_plan(session: Session, plan: SequentialPlan) -> None:
+    plan_dao = to_dao(plan)
+    session.add(plan_dao)
+    session.commit()
+
+
+# ── Iteration 1: fixed known-good plan ───────────────────────────────────────
+
+def _build_fixed_plan(context: Context, world, robot, milk_body: Body) -> SequentialPlan:
+    """
+    Build a SequentialPlan using the fixed, known-good coordinates from the
+    original demo2.py. Used exclusively for iteration 1.
+
+    All poses use world.root as the frame so coordinates stay correct in world
+    space regardless of where the robot navigates to.
+    """
+    world_frame = world.root
+
+    counter_pose      = _create_pose_stamped(_COUNTER_APPROACH_X, _COUNTER_APPROACH_Y, 0.0,      world_frame)
+    table_pose        = _create_pose_stamped(_TABLE_APPROACH_X,   _TABLE_APPROACH_Y,   0.0,      world_frame)
+    place_target_pose = _create_pose_stamped(_PLACE_X,            _PLACE_Y,            _PLACE_Z, world_frame)
+
+    return SequentialPlan(
+        context,
+        ParkArmsAction(arm=Arms.BOTH),
+        NavigateAction(
+            target_location=counter_pose,
+            keep_joint_states=False,
+        ),
+        PickUpAction(
+            object_designator=milk_body,
+            arm=Arms.RIGHT,
+            grasp_description=GraspDescription(
+                approach_direction=ApproachDirection.FRONT,
+                vertical_alignment=VerticalAlignment.NoAlignment,
+                rotate_gripper=False,
+                manipulation_offset=0.05,
+                manipulator=robot.right_arm.manipulator,
+            ),
+        ),
+        NavigateAction(
+            target_location=table_pose,
+            keep_joint_states=False,
+        ),
+        PlaceAction(
+            object_designator=milk_body,
+            target_location=place_target_pose,
+            arm=Arms.RIGHT,
+        ),
+        ParkArmsAction(arm=Arms.BOTH),
+    )
+
+
+# ── Iterations 2+: probabilistic plan ────────────────────────────────────────
+
+def _navigable_pose_description(robot) -> Any:
+    """
+    Build a probable PoseStamped description for a navigation target with
+    free x/y position components for probabilistic sampling.
+    """
+    return probable(PoseStamped)(
+        pose=probable(PyCramPose)(
+            position=probable(PyCramVector3)(x=..., y=..., z=0),
+            orientation=probable(PyCramQuaternion)(x=0, y=0, z=0, w=1),
+        ),
+        header=probable(Header)(frame_id=variable_from([robot.root])),
+    )
+
+
+def _place_pose_description(robot) -> Any:
+    """
+    Build a probable PoseStamped for the place target with free x/y and
+    fixed z (table surface height).
+    """
+    return probable(PoseStamped)(
+        pose=probable(PyCramPose)(
+            position=probable(PyCramVector3)(x=..., y=..., z=_PLACE_Z),
+            orientation=probable(PyCramQuaternion)(x=0, y=0, z=0, w=1),
+        ),
+        header=probable(Header)(frame_id=variable_from([robot.root])),
+    )
+
+
+def _build_action_descriptions(world, robot, milk_variable) -> list:
+    """
+    Construct the six probable_variable descriptions for the pick-and-place
+    plan. Mirrors the fixed plan structure but with free parameters for the
+    sampler to fill in.
+    """
+    manipulators = world.get_semantic_annotations_by_type(Manipulator)
+
+    return [
+        probable_variable(ParkArmsAction)(
+            arm=...,
+        ),
+        probable_variable(NavigateAction)(
+            target_location=_navigable_pose_description(robot),
+            keep_joint_states=...,
+        ),
+        probable_variable(PickUpAction)(
+            object_designator=milk_variable,
+            arm=...,
+            grasp_description=probable(GraspDescription)(
+                approach_direction=...,
+                vertical_alignment=...,
+                rotate_gripper=...,
+                manipulation_offset=0.05,
+                manipulator=variable(Manipulator, manipulators),
+            ),
+        ),
+        probable_variable(NavigateAction)(
+            target_location=_navigable_pose_description(robot),
+            keep_joint_states=...,
+        ),
+        probable_variable(PlaceAction)(
+            object_designator=milk_variable,
+            target_location=_place_pose_description(robot),
+            arm=...,
+        ),
+        probable_variable(ParkArmsAction)(
+            arm=...,
+        ),
+    ]
+
+
+def _build_action_entry(description) -> ActionEntry:
+    """
+    Translate a probable_variable match description into a concrete action
+    instance, derive its Parameterization, and pre-build the
+    fully-factorized ProbabilisticCircuit.
+    """
+    instance         = MatchToInstanceTranslator(description).translate()
+    parameterization = MatchParameterizer(instance).parameterize()
+    distribution     = parameterization.create_fully_factorized_distribution()
+    return ActionEntry(instance, parameterization, distribution)
+
+
+def _apply_sample(entry: ActionEntry) -> None:
+    """
+    Draw one sample from an action's circuit and apply it to the instance
+    in-place so the SequentialPlan receives freshly sampled parameters.
+    """
+    raw_sample   = entry.distribution.sample(1)[0]
+    named_sample = entry.parameterization.create_assignment_from_variables_and_sample(
+        entry.distribution.variables, raw_sample
+    )
+    entry.parameterization.parameterize_object_with_sample(entry.instance, named_sample)
+
+
+def _build_sampled_plan(context: Context, entries: list[ActionEntry]) -> SequentialPlan:
+    """
+    Apply one fresh sample to every ActionEntry and build a SequentialPlan
+    from the updated instances. Used for iterations 2 onwards.
+    """
+    for label, entry in zip(_ACTION_LABELS, entries):
+        _apply_sample(entry)
+        print(f"    Sampled  {label}")
+    return SequentialPlan(context, *[e.instance for e in entries])
+
+
+# ── Main entry point ──────────────────────────────────────────────────────────
+
+def sequential_plan_with_apartment() -> None:
+    """
+    Execute a pick-and-place plan for NUM_ITERATIONS iterations:
+
+      Iteration 1   — fixed known-good coordinates (original demo2.py behaviour).
+      Iterations 2+ — probabilistically sampled parameters (demo4.py behaviour).
+
+    Each successful execution is persisted to the configured database.
+
+    Set the database URI via the environment variable before running:
+        export SEMANTIC_DIGITAL_TWIN_DATABASE_URI=\\
+            postgresql://semantic_digital_twin:naren@localhost:5432/demo_robot_plans
+    """
+    print("Building world …")
+    world, robot = _build_world(APARTMENT_URDF)
+    _add_localization_frame(world, robot)
+    milk_body, milk_pose = _add_milk(world, MILK_STL)
+
+    print(f"  Milk spawned at  x={_MILK_X:.3f},  y={_MILK_Y:.3f},  z={_MILK_Z:.3f}  (Side-A countertop surface)")
+    print(f"  Place target at  x={_PLACE_X:.3f}, y={_PLACE_Y:.3f}, z={_PLACE_Z:.3f}  (dining table surface)")
+
+    session = _create_session(_DATABASE_URI)
+    print(f"  Database: {_DATABASE_URI}")
+
     rclpy.init()
-    node = rclpy.create_node("pycram_test_sequential_plan")
-    thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
-    thread.start()
+    ros_node    = rclpy.create_node("pycram_fixed_plan_demo")
+    spin_thread = threading.Thread(target=rclpy.spin, args=(ros_node,), daemon=True)
+    spin_thread.start()
 
     try:
-        _tf_publisher = TFPublisher(world=world, node=node)
-        _viz_publisher = VizMarkerPublisher(world=world, node=node)
+        _tf_publisher  = TFPublisher(_world=world, node=ros_node)
+        _viz_publisher = VizMarkerPublisher(_world=world, node=ros_node)
 
-        context = Context(world, robot, None)
+        context       = Context(world, robot, None)
+        milk_variable = variable_from([milk_body])
 
-        target_location = PoseStamped.from_list([..., ..., 0], [0, 0, 0, 1], frame=None)
+        # Build probabilistic entries once — instances are reused and updated
+        # in-place each sampled iteration, avoiding repeated construction cost.
+        print("\nBuilding per-action probabilistic distributions …")
+        descriptions = _build_action_descriptions(world, robot, milk_variable)
+        entries: list[ActionEntry] = [_build_action_entry(d) for d in descriptions]
 
-        sp = SequentialPlan(
-            context,
-            MoveTorsoActionDescription(TorsoState.LOW),
-            NavigateActionDescription(
-                target_location=target_location,
-                keep_joint_states=...,
-            ),
-            MoveTorsoActionDescription(torso_state=...),
-        )
+        for label, entry in zip(_ACTION_LABELS, entries):
+            n_vars = len(entry.parameterization.variables)
+            n_dist = len(entry.distribution.variables)
+            print(f"  {label:<25}  {n_vars:>2} param vars  /  {n_dist:>2} distribution vars")
 
-        parameterization = sp.generate_parameterizations()
-        target_location.frame_id = world.root
+        successful_count = 0
 
-        print(f"\n{'='*80}")
-        print(f"RUNNING {num_iterations} ITERATIONS OF THE PARAMETERIZED PLAN")
-        print(f"{'='*80}\n")
+        for iteration in range(1, NUM_ITERATIONS + 1):
+            separator = "=" * 64
+            print(f"\n{separator}")
 
-        # Run multiple iterations
-        for iteration in range(num_iterations):
-            print(f"\n{'='*80}")
-            print(f"ITERATION {iteration + 1}/{num_iterations}")
-            print(f"{'='*80}\n")
+            if iteration == 1:
+                # ── Iteration 1: fixed known-good plan ───────────────────────
+                print(f"  Iteration {iteration:>3} / {NUM_ITERATIONS}  [FIXED — known-good coordinates]")
+                print(separator)
+                plan = _build_fixed_plan(context, world, robot, milk_body)
 
-            new_actions = []
+            else:
+                # ── Iterations 2+: probabilistic sampling ────────────────────
+                print(f"  Iteration {iteration:>3} / {NUM_ITERATIONS}  [SAMPLED — probabilistic parameters]")
+                print(separator)
+                plan = _build_sampled_plan(context, entries)
 
-            for i, (action, parameters) in enumerate(parameterization):
-                print(f"\n--- Action {i}: {action.__class__.__name__} ---")
-                print(f"Variables: {[str(v) for v in parameters.random_events_variables]}")
-                print(f"Assignments: {parameters.assignments_for_conditioning}")
-
-                distribution = parameters.create_fully_factorized_distribution()
-                print(f"Distribution variables: {distribution.variables}")
-
-                distribution, event = distribution.conditional(
-                    parameters.assignments_for_conditioning
-                )
-                print(f"Conditioned event: {event}")
-
-                # Sample from the distribution
-                sample = distribution.sample(1)[0]
-                print(f"Sample: {sample}")
-
-                sample_dict = parameters.create_assignment_from_variables_and_sample(
-                    distribution.variables, sample
-                )
-                print(f"Sample dict keys: {list(sample_dict.keys())}")
-                print(f"Sample dict values: {list(sample_dict.values())}")
-
-                parameterized = parameters.parameterize_object_with_sample(action, sample_dict)
-                print(f"Parameterized action: {parameterized}")
-                new_actions.append(parameterized)
-
-            # Create and execute the parameterized plan
-            new_plan = SequentialPlan(context, *new_actions)
-
-            print(f"\n--- Executing Plan for Iteration {iteration + 1} ---")
             with simulated_robot:
-                new_plan.perform()
+                try:
+                    plan.perform()
+                    _persist_plan(session, plan)
+                    successful_count += 1
+                    print(f"\n  ✓  Iteration {iteration} succeeded — plan persisted to database.")
+                except Exception as exc:
+                    import traceback
+                    traceback.print_exc()
+                    print(f"\n  ✗  Iteration {iteration} failed — plan not stored.  ({type(exc).__name__}: {exc})")
+                finally:
+                    # Always respawn milk at its original counter position so the
+                    # next iteration starts from a clean, repeatable world state.
+                    _respawn_milk(world, milk_body)
 
-            final_pose = robot.root.global_pose
-            print(f"\nIteration {iteration + 1} Final robot pose: {final_pose}")
-
-            # Optional: Add a small delay between iterations
-            time.sleep(0.5)
-
-        print(f"\n{'='*80}")
-        print(f"COMPLETED ALL {num_iterations} ITERATIONS")
-        print(f"{'='*80}\n")
+        print(f"\n{'=' * 64}")
+        print(f"Done.  {successful_count} / {NUM_ITERATIONS} plans stored in '{_DATABASE_URI}'.")
 
     finally:
+        session.close()
         time.sleep(0.1)
-        node.destroy_node()
+        ros_node.destroy_node()
         rclpy.shutdown()
-        thread.join(timeout=2.0)
+        spin_thread.join(timeout=2.0)
 
 
 if __name__ == "__main__":
-    # Run with 5 iterations by default, or change the number as needed
-    sequential_plan_with_apartment(num_iterations=5)
+    sequential_plan_with_apartment()
