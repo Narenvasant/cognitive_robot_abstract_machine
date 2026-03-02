@@ -113,6 +113,8 @@ class FilterBuilder(ExpressionBuilder, ABC):
         """
         :return: A tuple containing the aggregators and non-aggregators in the conditions.
         """
+        from krrood.entity_query_language.query.query import Query
+
         aggregators, non_aggregators = [], []
 
         def walk(expr: SymbolicExpression):
@@ -122,11 +124,11 @@ class FilterBuilder(ExpressionBuilder, ABC):
                 # No need to traverse inside aggregators
                 return
             elif isinstance(expr, Selectable) and not isinstance(
-                expr, (Literal, ResultQuantifier)
+                expr, (Literal, ResultQuantifier, Query)
             ):
                 non_aggregators.append(expr)
 
-            if isinstance(expr, ResultQuantifier):
+            if isinstance(expr, (Literal, ResultQuantifier, Query)):
                 # Subqueries are a boundary, we don't need to traverse inside them.
                 return
 
@@ -372,7 +374,7 @@ class QuantifierBuilder(ExpressionBuilder):
     """
     The quantification constraint that must be satisfied by the result quantifier if present.
     """
-    child: Optional[SymbolicExpression] = None
+    child: Optional[Selectable] = None
     """
     The child expression of the quantifier.
     """
@@ -388,7 +390,7 @@ class QuantifierBuilder(ExpressionBuilder):
                 _quantification_constraint_=self.quantification_constraint,
             )
         else:
-            return self.type(self.query._expression_)
+            return self.type(self.child)
 
 
 @dataclass(eq=False)
