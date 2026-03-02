@@ -1,5 +1,5 @@
 """
-demo3.py
+demo: Probabilistic pick-and-place with database persistence
 ========
 Probabilistic pick-and-place demo: milk from kitchen counter → dining table
 in the PR2 apartment world, using the krrood parameterizer.
@@ -26,27 +26,12 @@ Action sequence
               →  Navigate-to-table    →  Place(milk)
               →  ParkArms
 
-Coordinate reference (apartment.urdf)
---------------------------------------
-Coordinate chain for the kitchen counter (Side A):
-  apartment_root  →  kitchen_base  (+(-0.03, 0.75, 0.005))
-                  →  side_A        (+(0.49, 0.696, 0.080))
-                  →  cabinet5      (+(-0.121, 1.625, 0.4))
-                  →  countertop    (+(-0.027, 0.21, 0.423))
-  World result:  x ≈ 0.312,  y ≈ 3.281,  z_surface ≈ 0.928
-
-Dining table (table_area_main_joint):
-  apartment_root  →  table         (+(5.0, 4.0, 0.0), rpy=(0,0,1.57))
-  Visual centre z offset: 0.3619 → surface z ≈ 0.724
-
-Robot base start:  x ≈ 1.4,  y ≈ 1.5 (clear of both fixtures)
-
 Database setup
 --------------
 Set the environment variable before running::
 
     export SEMANTIC_DIGITAL_TWIN_DATABASE_URI=\\
-        postgresql://semantic_digital_twin:password@localhost:5432/demo_robot_plans
+        postgresql://semantic_digital_twin:naren@localhost:5432/demo_robot_plans
 
 An in-memory SQLite database is used as a silent fallback so the demo can be
 run without PostgreSQL for quick local testing (data is lost on exit).
@@ -61,7 +46,6 @@ from __future__ import annotations
 import os
 import time
 import threading
-import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -80,7 +64,7 @@ from pycram.datastructures.pose import (
 )
 from pycram.language import SequentialPlan
 from pycram.motion_executor import simulated_robot
-from pycram.orm.ormatic_interface import *  # noqa: F401,F403  — registers all DAO mappings
+from pycram.orm.ormatic_interface import *
 from pycram.robot_plans import NavigateAction, ParkArmsAction, PickUpAction, PlaceAction
 
 from krrood.entity_query_language.factories import (
@@ -112,71 +96,37 @@ from semantic_digital_twin.world_description.geometry import FileMesh
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 
 NUM_ITERATIONS: int = 20
 
-# Fall back to in-memory SQLite when no URI is set.  Persistent storage
-# requires SEMANTIC_DIGITAL_TWIN_DATABASE_URI to be exported, e.g.:
-#   postgresql://semantic_digital_twin:password@localhost:5432/demo_robot_plans
 _DATABASE_URI: str = os.environ.get(
     "SEMANTIC_DIGITAL_TWIN_DATABASE_URI",
     "sqlite:///:memory:",
 )
 
-# ---------------------------------------------------------------------------
-# Known world coordinates (derived from apartment.urdf)
-# ---------------------------------------------------------------------------
-# All positions are in the apartment_root frame.
-#
-# Kitchen counter (Side A chain):
-#   apartment_root → kitchen_base(-0.03, 0.75, 0.005)
-#                  → side_A(0.49, 0.696, 0.080)
-#                  → cabinet5(-0.121, 1.625, 0.4)
-#                  → countertop(-0.027, 0.21, 0.423)
-#   World origin:  x≈0.312, y≈3.281, z_surface≈0.928
-#
-# Dining table (table_area_main_joint):
-#   apartment_root → table(5.0, 4.0, 0.0), rpy=(0,0,π/2)
-#   Visual centre at z+0.3619 → surface z≈0.724
-#
-# Robot home:  x≈1.4, y≈1.5 — clear of both fixtures.
-# ---------------------------------------------------------------------------
 
-# Robot approach poses for navigation
-_COUNTER_APPROACH_X: float = 1.0   # stand ~0.7 m in front of the Side-A counter (x≈0.31)
-_COUNTER_APPROACH_Y: float = 3.28  # aligned with countertop y centroid
-_TABLE_APPROACH_X:   float = 4.2   # stand ~0.8 m from the table (joint x=5.0)
-_TABLE_APPROACH_Y:   float = 4.0   # aligned with table y
+_COUNTER_APPROACH_X: float = 1.0
+_COUNTER_APPROACH_Y: float = 3.28
+_TABLE_APPROACH_X:   float = 4.2
+_TABLE_APPROACH_Y:   float = 4.0
 
-# Milk object pose on the kitchen countertop surface
-# countertop world origin is (0.312, 3.281, 0.908); surface ≈ +0.02 m
+
 _MILK_X: float = 0.312
 _MILK_Y: float = 3.281
-_MILK_Z: float = 0.928  # countertop surface height
+_MILK_Z: float = 0.928
 
-# Place target on the dining table surface
-# table_area_main at (5.0, 4.0, 0); visual centre z=0.3619 → surface z≈0.724
+
 _PLACE_X: float = 5.0
 _PLACE_Y: float = 4.0
-_PLACE_Z: float = 0.724  # table surface height
+_PLACE_Z: float = 0.724
 
-# ---------------------------------------------------------------------------
-# Resource paths (resolved relative to this file)
-# ---------------------------------------------------------------------------
 
 _RESOURCE_PATH = Path(__file__).resolve().parents[2] / "resources"
 
 APARTMENT_URDF: Path = _RESOURCE_PATH / "worlds"  / "apartment.urdf"
-ROBOT_URDF:     Path = _RESOURCE_PATH / "robots"  / "pr2.urdf"
 MILK_STL:       Path = _RESOURCE_PATH / "objects" / "milk.stl"
 
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ActionEntry:
@@ -194,10 +144,6 @@ class ActionEntry:
     distribution: ProbabilisticCircuit
     """Fully-factorized circuit from which one sample is drawn per iteration."""
 
-
-# ---------------------------------------------------------------------------
-# Database helpers
-# ---------------------------------------------------------------------------
 
 def _create_session(database_uri: str) -> Session:
     """
@@ -232,11 +178,7 @@ def _persist_plan(session: Session, plan: SequentialPlan) -> None:
     session.commit()
 
 
-# ---------------------------------------------------------------------------
-# World construction helpers
-# ---------------------------------------------------------------------------
-
-def _build_world(apartment_urdf: Path, robot_urdf: Path) -> tuple[Any, Any]:
+def _build_world(apartment_urdf: Path) -> tuple[Any, Any]:
     """
     Parse the apartment and PR2 URDF files, merge the robot into the world at
     its home position, and return ``(world, robot)``.
@@ -247,20 +189,11 @@ def _build_world(apartment_urdf: Path, robot_urdf: Path) -> tuple[Any, Any]:
     """
     world = URDFParser.from_file(str(apartment_urdf)).parse()
 
-    # Load PR2 using package URL with proper path resolution (same as conftest.py)
     pr2_urdf = "package://iai_pr2_description/robots/pr2_with_ft2_cableguide.xacro"
     robot_world = URDFParser.from_file(pr2_urdf).parse()
 
-    # Instantiate PR2 from the isolated robot world BEFORE merging.
-    # PR2.from_world calls _setup_collision_rules() which reads the SRDF and
-    # looks up every link by name — this only works while all PR2 links are
-    # still present in their own world.  After merge_world_at_pose the same
-    # body objects live in the apartment world, so the robot handle stays valid.
     robot = PR2.from_world(robot_world)
 
-    # Place the robot in the open area between kitchen and dining table.
-    # x=1.4, y=1.5 is clear of the Side-A counter (x≈0.31, y≈3.28) and the
-    # dining table (x=5.0, y=4.0); the PR2 base_footprint is at floor level.
     robot_home = HomogeneousTransformationMatrix.from_xyz_rpy(1.4, 1.5, 0.0, 0, 0, 0)
     with world.modify_world():
         world.merge_world_at_pose(robot_world, robot_home)
@@ -334,10 +267,6 @@ def _add_milk(world: Any, stl_path: Path) -> tuple[Body, HomogeneousTransformati
     return milk_body, pose
 
 
-# ---------------------------------------------------------------------------
-# Parameterization helpers
-# ---------------------------------------------------------------------------
-
 def _build_action_entry(description: Any) -> ActionEntry:
     """
     Translate a ``probable_variable`` Match description into a concrete
@@ -371,9 +300,6 @@ def _apply_sample(entry: ActionEntry) -> None:
     entry.parameterization.parameterize_object_with_sample(entry.instance, named_sample)
 
 
-# ---------------------------------------------------------------------------
-# Navigable-pose factory
-# ---------------------------------------------------------------------------
 
 def _navigable_pose(robot: Any, mean_x: float, mean_y: float) -> Any:
     """
@@ -407,10 +333,6 @@ def _navigable_pose(robot: Any, mean_x: float, mean_y: float) -> Any:
         header=probable(Header)(frame_id=variable_from([robot.root])),
     )
 
-
-# ---------------------------------------------------------------------------
-# Place-target pose factory
-# ---------------------------------------------------------------------------
 
 def _place_pose(robot: Any) -> Any:
     """
@@ -459,18 +381,15 @@ def _build_action_descriptions(
     manipulators = world.get_semantic_annotations_by_type(Manipulator)
 
     return [
-        # 1 ── Park arms before approaching the counter
         probable_variable(ParkArmsAction)(
             arm=...,
         ),
 
-        # 2 ── Drive to the kitchen counter
         probable_variable(NavigateAction)(
             target_location=_navigable_pose(robot, _COUNTER_APPROACH_X, _COUNTER_APPROACH_Y),
             keep_joint_states=...,
         ),
 
-        # 3 ── Pick up the milk object
         probable_variable(PickUpAction)(
             object_designator=milk_variable,
             arm=...,
@@ -478,18 +397,16 @@ def _build_action_descriptions(
                 approach_direction=...,
                 vertical_alignment=...,
                 rotate_gripper=...,
-                manipulation_offset=0.05,   # fixed 5 cm offset — not sampled
+                manipulation_offset=0.05,
                 manipulator=variable(Manipulator, manipulators),
             ),
         ),
 
-        # 4 ── Drive to the dining table
         probable_variable(NavigateAction)(
             target_location=_navigable_pose(robot, _TABLE_APPROACH_X, _TABLE_APPROACH_Y),
             keep_joint_states=...,
         ),
 
-        # 5 ── Place the milk on the table
         probable_variable(PlaceAction)(
             object_designator=milk_variable,
             target_location=_place_pose(robot),
@@ -502,10 +419,6 @@ def _build_action_descriptions(
         ),
     ]
 
-
-# ---------------------------------------------------------------------------
-# ROS publisher helpers
-# ---------------------------------------------------------------------------
 
 def _start_ros_publishers(world: Any, ros_node: Any) -> tuple[Any, Any]:
     """
@@ -522,10 +435,6 @@ def _start_ros_publishers(world: Any, ros_node: Any) -> tuple[Any, Any]:
     viz_publisher = VizMarkerPublisher(_world=world, node=ros_node)
     return tf_publisher, viz_publisher
 
-
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
 
 def sequential_plan_with_apartment() -> None:
     """
@@ -549,20 +458,17 @@ def sequential_plan_with_apartment() -> None:
     pattern, which stores the full plan graph — actions, motions, parameters and
     world-state snapshots — as a relational record.
     """
-    # ── World setup ──────────────────────────────────────────────────────────
     print("Building world …")
-    world, robot = _build_world(APARTMENT_URDF, ROBOT_URDF)
+    world, robot = _build_world(APARTMENT_URDF)
     _add_localization_frame(world, robot)
     milk_body, milk_pose = _add_milk(world, MILK_STL)
 
     print(f"  Milk spawned at  x={_MILK_X:.3f},  y={_MILK_Y:.3f},  z={_MILK_Z:.3f}  (Side-A countertop surface)")
     print(f"  Place target at  x={_PLACE_X:.3f}, y={_PLACE_Y:.3f}, z={_PLACE_Z:.3f}  (dining table surface)")
 
-    # ── Database session ──────────────────────────────────────────────────────
     session = _create_session(_DATABASE_URI)
     print(f"Database: {_DATABASE_URI}")
 
-    # ── ROS initialisation ────────────────────────────────────────────────────
     rclpy.init()
     ros_node    = rclpy.create_node("sequential_plan_demo")
     spin_thread = threading.Thread(
@@ -571,14 +477,12 @@ def sequential_plan_with_apartment() -> None:
     spin_thread.start()
 
     try:
-        # Start RViz publishers (TF tree + visual markers).
         _tf_pub, _viz_pub = _start_ros_publishers(world, ros_node)
 
         # ── Context + EQL milk variable ───────────────────────────────────────
         context       = Context(world, robot, None)
         milk_variable = variable_from([milk_body])
 
-        # ── Build action entries (translate → parameterize → distribute) ──────
         print("\nBuilding per-action probabilistic distributions …")
         descriptions = _build_action_descriptions(world, robot, milk_variable)
         entries: list[ActionEntry] = [_build_action_entry(d) for d in descriptions]
@@ -596,7 +500,6 @@ def sequential_plan_with_apartment() -> None:
             n_dist = len(entry.distribution.variables)
             print(f"  {label:<25}  {n_vars:>2} param vars  /  {n_dist:>2} distribution vars")
 
-        # ── Iteration loop ────────────────────────────────────────────────────
         successful_count = 0
 
         for iteration in range(1, NUM_ITERATIONS + 1):
@@ -605,24 +508,16 @@ def sequential_plan_with_apartment() -> None:
             print(f"  Iteration {iteration:>3} / {NUM_ITERATIONS}")
             print(separator)
 
-            # Sample every action from its own distribution and apply in-place.
             for label, entry in zip(_action_labels, entries):
                 _apply_sample(entry)
                 print(f"  Sampled  {label}")
 
-            # Build a fresh SequentialPlan from the updated instances.
             sp = SequentialPlan(context, *[e.instance for e in entries])
 
             with simulated_robot:
                 try:
                     sp.perform()
 
-                    # ── Persist successful plan ───────────────────────────────
-                    # ``to_dao`` traverses the entire SequentialPlan tree
-                    # (nodes, edges, action designators, motion designators,
-                    # execution data) and produces the SQLAlchemy DAO tree.
-                    # SQLAlchemy cascade rules persist every related object
-                    # on commit.
                     _persist_plan(session, sp)
 
                     successful_count += 1
@@ -632,13 +527,11 @@ def sequential_plan_with_apartment() -> None:
                     )
 
                 except Exception as exc:
-                    traceback.print_exc()
                     print(
                         f"\n  ✗  Iteration {iteration} failed — "
                         f"plan not stored.  ({type(exc).__name__}: {exc})"
                     )
 
-        # ── Summary ───────────────────────────────────────────────────────────
         print(f"\n{'=' * 62}")
         print(
             f"Done.  {successful_count} / {NUM_ITERATIONS} plans stored "
@@ -647,7 +540,6 @@ def sequential_plan_with_apartment() -> None:
 
     finally:
         session.close()
-        # Give pending ROS callbacks a moment to drain before shutdown.
         time.sleep(0.1)
         ros_node.destroy_node()
         rclpy.shutdown()
