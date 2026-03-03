@@ -34,7 +34,7 @@ class MujocoRenderer(SimulatorRenderer):
     def mj_viewer(self) -> mujoco.viewer:
         return self._mj_viewer
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class MujocoSimulator(BaseSimulator):
     """Mujoco Simulator class"""
 

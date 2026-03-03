@@ -570,6 +570,7 @@ class MJCFParser:
         body = self.world.get_body_by_name(body_name)
         body.simulator_additional_properties.append(
             MujocoCamera(
+                body=body,
                 name=camera_name,
                 mode=mujoco_camera.mode,
                 orthographic=(
