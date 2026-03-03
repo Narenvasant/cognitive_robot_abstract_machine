@@ -208,9 +208,106 @@ def _respawn_milk(world, milk_body: Body) -> None:
 # ── Database ──────────────────────────────────────────────────────────────────
 
 def _create_session(database_uri: str) -> Session:
+    """
+    Create a SQLAlchemy Session with all ORM tables ensured to exist.
+
+    For PostgreSQL, three compatibility patches are applied:
+
+    1.  Identifier shortening — PostgreSQL enforces a 63-character limit on
+        identifiers.  ORMatic-generated association table names can exceed this
+        (e.g. 'WorldEntityWithSimulatorPropertiesDAO_simulator_additional_
+        properties_association' is 80 chars).  Long names are deterministically
+        shortened using a SHA-256 suffix so they remain unique and stable across
+        runs.
+
+    2.  Numpy scalar coercion — plan execution populates DAO fields with
+        numpy scalars (np.float64, np.int64, etc.).  psycopg2 has no adapter
+        for these types and serializes them as their repr ('np.float64(0.0)'),
+        which PostgreSQL rejects.  A before_cursor_execute listener converts
+        all numpy scalars to their native Python equivalents.
+
+    3.  validate_identifier no-op — SQLAlchemy's dialect runs a Python-side
+        length check before DDL is compiled.  With shortened names already
+        applied to Base.metadata, this check is redundant and is silenced.
+    """
+
+
     engine = create_engine(database_uri)
-    Base.metadata.create_all(bind=engine)
-    return Session(engine)
+
+    if "postgresql" in database_uri or "postgres" in database_uri:
+        _apply_postgresql_patches(engine)
+
+    session = Session(engine)
+    Base.metadata.create_all(bind=engine, checkfirst=True)
+    return session
+
+
+def _apply_postgresql_patches(engine) -> None:
+    """Apply all PostgreSQL compatibility patches to *engine* and Base.metadata."""
+    _patch_identifier_validation(engine)
+    _shorten_metadata_table_names()
+    _register_numpy_coercion(engine)
+
+
+def _patch_identifier_validation(engine) -> None:
+    """Silence the Python-side identifier length check in the PostgreSQL dialect."""
+    engine.dialect.validate_identifier = lambda _ident: None
+
+
+def _shorten_metadata_table_names() -> None:
+    """
+    Rename any Base.metadata table whose name exceeds PostgreSQL's 63-character
+    identifier limit to a deterministic shortened form.
+
+    The shortened name is: ``original[:54] + "_" + sha256(original)[:8]``
+    This guarantees uniqueness and is stable across runs.
+    """
+    import hashlib
+
+    def _shorten(name: str, max_len: int = 63) -> str:
+        if len(name) <= max_len:
+            return name
+        suffix = hashlib.sha256(name.encode()).hexdigest()[:8]
+        return f"{name[:max_len - 9]}_{suffix}"
+
+    for table in Base.metadata.tables.values():
+        short = _shorten(table.name)
+        if short != table.name:
+            print(f"  [db] identifier shortened: '{table.name}' → '{short}'")
+            table.name = short
+            table.fullname = short
+
+
+def _register_numpy_coercion(engine) -> None:
+    """
+    Register a before_cursor_execute listener that converts numpy scalar types
+    (float64, int64, bool_) to native Python equivalents before psycopg2
+    serializes them into the SQL statement.
+    """
+    import numpy as np
+    from sqlalchemy import event
+
+    def _coerce(value):
+        if isinstance(value, np.floating):
+            return float(value)
+        if isinstance(value, np.integer):
+            return int(value)
+        if isinstance(value, np.bool_):
+            return bool(value)
+        return value
+
+    def _coerce_params(params):
+        if isinstance(params, dict):
+            return {k: _coerce(v) for k, v in params.items()}
+        return params
+
+    @event.listens_for(engine, "before_cursor_execute", retval=True)
+    def _coerce_numpy_params(conn, cursor, statement, parameters, context, executemany):
+        if isinstance(parameters, dict):
+            parameters = _coerce_params(parameters)
+        elif isinstance(parameters, (list, tuple)):
+            parameters = type(parameters)(_coerce_params(p) for p in parameters)
+        return statement, parameters
 
 
 def _persist_plan(session: Session, plan: SequentialPlan) -> None:
@@ -219,7 +316,7 @@ def _persist_plan(session: Session, plan: SequentialPlan) -> None:
     session.commit()
 
 
-# ── Iteration 1: fixed known-good plan ───────────────────────────────────────
+# Iteration 1: fixed plan
 
 def _build_fixed_plan(context: Context, world, robot, milk_body: Body) -> SequentialPlan:
     """
@@ -266,7 +363,7 @@ def _build_fixed_plan(context: Context, world, robot, milk_body: Body) -> Sequen
     )
 
 
-# ── Iterations 2+: probabilistic plan ────────────────────────────────────────
+# Iterations 2+: probabilistic plan
 
 def _navigable_pose_description(robot) -> Any:
     """
@@ -373,7 +470,6 @@ def _build_sampled_plan(context: Context, entries: list[ActionEntry]) -> Sequent
     return SequentialPlan(context, *[e.instance for e in entries])
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
 
 def sequential_plan_with_apartment() -> None:
     """
@@ -393,8 +489,8 @@ def sequential_plan_with_apartment() -> None:
     _add_localization_frame(world, robot)
     milk_body, milk_pose = _add_milk(world, MILK_STL)
 
-    print(f"  Milk spawned at  x={_MILK_X:.3f},  y={_MILK_Y:.3f},  z={_MILK_Z:.3f}  (Side-A countertop surface)")
-    print(f"  Place target at  x={_PLACE_X:.3f}, y={_PLACE_Y:.3f}, z={_PLACE_Z:.3f}  (dining table surface)")
+    print(f"  Milk spawned at  x={_MILK_X:.3f},  y={_MILK_Y:.3f},  z={_MILK_Z:.3f}")
+    print(f"  Place target at  x={_PLACE_X:.3f}, y={_PLACE_Y:.3f}, z={_PLACE_Z:.3f}")
 
     session = _create_session(_DATABASE_URI)
     print(f"  Database: {_DATABASE_URI}")
@@ -429,7 +525,7 @@ def sequential_plan_with_apartment() -> None:
             print(f"\n{separator}")
 
             if iteration == 1:
-                # ── Iteration 1: fixed known-good plan ───────────────────────
+
                 print(f"  Iteration {iteration:>3} / {NUM_ITERATIONS}  [FIXED — known-good coordinates]")
                 print(separator)
                 plan = _build_fixed_plan(context, world, robot, milk_body)
