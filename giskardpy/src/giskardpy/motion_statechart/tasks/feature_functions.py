@@ -196,7 +196,7 @@ class HeightGoal(FeatureFunctionGoal):
     def get_controlled_and_reference_features(self):
         return self.tip_point, self.reference_point
 
-    def build(self, context: BuildContext) -> NodeArtifacts:
+    def build(self, context: MotionStatechartContext) -> NodeArtifacts:
         artifacts = super().build(context)
 
         expr = (
@@ -255,7 +255,7 @@ class DistanceGoal(FeatureFunctionGoal):
     def get_controlled_and_reference_features(self):
         return self.tip_point, self.reference_point
 
-    def build(self, context: BuildContext) -> NodeArtifacts:
+    def build(self, context: MotionStatechartContext) -> NodeArtifacts:
         artifacts = super().build(context)
 
         root_V_diff = self.root_P_controlled_feature - self.root_P_reference_feature

@@ -1879,8 +1879,8 @@ class TestFeatureFunctions:
         Test that HeightGoal successfully constrains the vertical distance
         between tip and reference points within specified bounds.
         """
-        tf_publisher = TFPublisher(node=rclpy_node, world=pr2_world_state_reset)
-        viz = VizMarkerPublisher(world=pr2_world_state_reset, node=rclpy_node)
+        tf_publisher = TFPublisher(node=rclpy_node, _world=pr2_world_state_reset)
+        viz = VizMarkerPublisher(_world=pr2_world_state_reset, node=rclpy_node)
 
         tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
             "r_gripper_tool_frame"
@@ -1907,7 +1907,7 @@ class TestFeatureFunctions:
         msc.add_node(height_goal)
         msc.add_node(EndMotion.when_true(height_goal))
 
-        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim = Executor(MotionStatechartContext(world=pr2_world_state_reset))
         kin_sim.compile(motion_statechart=msc)
         kin_sim.tick_until_end()
 
@@ -1932,8 +1932,8 @@ class TestFeatureFunctions:
         """
         Test HeightGoal with negative height bounds (tip below reference).
         """
-        tf_publisher = TFPublisher(node=rclpy_node, world=pr2_world_state_reset)
-        viz = VizMarkerPublisher(world=pr2_world_state_reset, node=rclpy_node)
+        tf_publisher = TFPublisher(node=rclpy_node, _world=pr2_world_state_reset)
+        viz = VizMarkerPublisher(_world=pr2_world_state_reset, node=rclpy_node)
 
         tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
             "r_gripper_tool_frame"
@@ -1960,7 +1960,7 @@ class TestFeatureFunctions:
         msc.add_node(height_goal)
         msc.add_node(EndMotion.when_true(height_goal))
 
-        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim = Executor(MotionStatechartContext(world=pr2_world_state_reset))
         kin_sim.compile(motion_statechart=msc)
         kin_sim.tick_until_end()
 
@@ -1986,8 +1986,8 @@ class TestFeatureFunctions:
         Test that DistanceGoal successfully constrains the horizontal distance
         (in x-y plane) between tip and reference points within specified bounds.
         """
-        tf_publisher = TFPublisher(node=rclpy_node, world=pr2_world_state_reset)
-        viz = VizMarkerPublisher(world=pr2_world_state_reset, node=rclpy_node)
+        tf_publisher = TFPublisher(node=rclpy_node, _world=pr2_world_state_reset)
+        viz = VizMarkerPublisher(_world=pr2_world_state_reset, node=rclpy_node)
 
         tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
             "r_gripper_tool_frame"
@@ -2014,7 +2014,7 @@ class TestFeatureFunctions:
         msc.add_node(distance_goal)
         msc.add_node(EndMotion.when_true(distance_goal))
 
-        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim = Executor(MotionStatechartContext(world=pr2_world_state_reset))
         kin_sim.compile(motion_statechart=msc)
         kin_sim.tick_until_end()
 
@@ -2041,8 +2041,8 @@ class TestFeatureFunctions:
         """
         Test DistanceGoal with bounds that include zero (tip and reference at same x-y position).
         """
-        tf_publisher = TFPublisher(node=rclpy_node, world=pr2_world_state_reset)
-        viz = VizMarkerPublisher(world=pr2_world_state_reset, node=rclpy_node)
+        tf_publisher = TFPublisher(node=rclpy_node, _world=pr2_world_state_reset)
+        viz = VizMarkerPublisher(_world=pr2_world_state_reset, node=rclpy_node)
 
         tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
             "r_gripper_tool_frame"
@@ -2070,7 +2070,7 @@ class TestFeatureFunctions:
         msc.add_node(distance_goal)
         msc.add_node(EndMotion.when_true(distance_goal))
 
-        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim = Executor(MotionStatechartContext(world=pr2_world_state_reset))
         kin_sim.compile(motion_statechart=msc)
         kin_sim.tick_until_end()
 
@@ -2097,8 +2097,8 @@ class TestFeatureFunctions:
         Test that DistanceGoal only considers x-y plane distance and ignores z-axis.
         Even with large z difference, if x-y distance is within bounds, goal succeeds.
         """
-        tf_publisher = TFPublisher(node=rclpy_node, world=pr2_world_state_reset)
-        viz = VizMarkerPublisher(world=pr2_world_state_reset, node=rclpy_node)
+        tf_publisher = TFPublisher(node=rclpy_node, _world=pr2_world_state_reset)
+        viz = VizMarkerPublisher(_world=pr2_world_state_reset, node=rclpy_node)
 
         tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
             "r_gripper_tool_frame"
@@ -2126,7 +2126,7 @@ class TestFeatureFunctions:
         msc.add_node(distance_goal)
         msc.add_node(EndMotion.when_true(distance_goal))
 
-        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim = Executor(MotionStatechartContext(world=pr2_world_state_reset))
         kin_sim.compile(motion_statechart=msc)
         kin_sim.tick_until_end()
 
@@ -2154,8 +2154,8 @@ class TestFeatureFunctions:
         Test combining HeightGoal and DistanceGoal in parallel to constrain
         both vertical and horizontal distances simultaneously.
         """
-        tf_publisher = TFPublisher(node=rclpy_node, world=pr2_world_state_reset)
-        viz = VizMarkerPublisher(world=pr2_world_state_reset, node=rclpy_node)
+        tf_publisher = TFPublisher(node=rclpy_node, _world=pr2_world_state_reset)
+        viz = VizMarkerPublisher(_world=pr2_world_state_reset, node=rclpy_node)
 
         tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
             "r_gripper_tool_frame"
@@ -2197,7 +2197,7 @@ class TestFeatureFunctions:
         msc.add_node(combined_goal)
         msc.add_node(EndMotion.when_true(combined_goal))
 
-        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim = Executor(MotionStatechartContext(world=pr2_world_state_reset))
         kin_sim.compile(motion_statechart=msc)
         kin_sim.tick_until_end()
 
@@ -2230,8 +2230,8 @@ class TestFeatureFunctions:
         to constrain horizontal distance, vertical distance, and perpendicular
         alignment simultaneously.
         """
-        tf_publisher = TFPublisher(node=rclpy_node, world=pr2_world_state_reset)
-        viz = VizMarkerPublisher(world=pr2_world_state_reset, node=rclpy_node)
+        tf_publisher = TFPublisher(node=rclpy_node, _world=pr2_world_state_reset)
+        viz = VizMarkerPublisher(_world=pr2_world_state_reset, node=rclpy_node)
 
         tip = pr2_world_state_reset.get_kinematic_structure_entity_by_name(
             "r_gripper_tool_frame"
@@ -2283,7 +2283,7 @@ class TestFeatureFunctions:
         msc.add_node(combined_goal)
         msc.add_node(EndMotion.when_true(combined_goal))
 
-        kin_sim = Executor(world=pr2_world_state_reset)
+        kin_sim = Executor(MotionStatechartContext(world=pr2_world_state_reset))
         kin_sim.compile(motion_statechart=msc)
         kin_sim.tick_until_end()
 
