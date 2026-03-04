@@ -35,14 +35,15 @@ from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.abstract_robot import Manipulator
 from semantic_digital_twin.robots.pr2 import PR2
+from semantic_digital_twin.semantic_annotations.semantic_annotations import Milk, Table
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import FixedConnection, Connection6DoF, OmniDrive
 from semantic_digital_twin.world_description.geometry import FileMesh
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
 
 
-# ── Iteration config ──────────────────────────────────────────────────────────
 NUM_ITERATIONS: int = 20
 """
 Total number of plan iterations to run.
@@ -55,7 +56,6 @@ _DATABASE_URI: str = os.environ.get(
     "sqlite:///:memory:",
 )
 
-# ── World coordinates ─────────────────────────────────────────────────────────
 _MILK_X: float = 2.4
 _MILK_Y: float = 2.5
 _MILK_Z: float = 1.01
@@ -68,7 +68,7 @@ _TABLE_APPROACH_Y: float = 4.0
 
 _PLACE_X: float = 5.0
 _PLACE_Y: float = 4.0
-_PLACE_Z: float = 0.80   # slightly above table surface to account for milk height
+_PLACE_Z: float = 0.80
 
 _RESOURCE_PATH = Path(__file__).resolve().parents[2] / "resources"
 APARTMENT_URDF: Path = _RESOURCE_PATH / "worlds" / "apartment.urdf"
@@ -84,7 +84,6 @@ _ACTION_LABELS = [
 ]
 
 
-# ── Data container ────────────────────────────────────────────────────────────
 
 @dataclass
 class ActionEntry:
@@ -97,7 +96,6 @@ class ActionEntry:
     distribution: ProbabilisticCircuit
 
 
-# ── World / robot setup ───────────────────────────────────────────────────────
 
 def _build_world(apartment_urdf: Path) -> tuple:
     """Parse URDF files and return (world, robot)."""
@@ -108,6 +106,12 @@ def _build_world(apartment_urdf: Path) -> tuple:
     robot_pose = HomogeneousTransformationMatrix.from_xyz_rpy(1.4, 1.5, 0.0, 0, 0, 0)
     with world.modify_world():
         world.merge_world_at_pose(pr2_world, robot_pose)
+
+    table_body = world.get_body_by_name("table_area_main")
+    with world.modify_world():
+        world.add_semantic_annotation(Table(root=table_body))
+
+
     return world, robot
 
 
@@ -137,7 +141,7 @@ def _add_localization_frame(world, robot) -> None:
         )
 
 
-def _add_milk(world, stl_path: Path) -> tuple[Body, HomogeneousTransformationMatrix]:
+def _add_milk(world: World, stl_path: Path) -> tuple[Body, HomogeneousTransformationMatrix]:
     """Add a milk object to the world and return (body, pose)."""
     mesh = FileMesh.from_file(str(stl_path))
     body = Body(
@@ -151,6 +155,7 @@ def _add_milk(world, stl_path: Path) -> tuple[Body, HomogeneousTransformationMat
         connection = Connection6DoF.create_with_dofs(parent=world.root, child=body, world=world)
         world.add_connection(connection)
         connection.origin = pose
+        world.add_semantic_annotation(Milk(root=body))
     return body, pose
 
 
@@ -365,7 +370,7 @@ def _build_fixed_plan(context: Context, world, robot, milk_body: Body) -> Sequen
 
 # Iterations 2+: probabilistic plan
 
-def _navigable_pose_description(robot) -> Any:
+def _navigable_pose_description(robot: PR2) -> Any:
     """
     Build a probable PoseStamped description for a navigation target with
     free x/y position components for probabilistic sampling.
@@ -375,7 +380,7 @@ def _navigable_pose_description(robot) -> Any:
             position=probable(PyCramVector3)(x=..., y=..., z=0),
             orientation=probable(PyCramQuaternion)(x=0, y=0, z=0, w=1),
         ),
-        header=probable(Header)(frame_id=variable_from([robot.root])),
+        header=probable(Header)(frame_id=variable_from([robot._world.get_semantic_annotations_by_type(Milk)[0].root])),
     )
 
 
@@ -389,7 +394,7 @@ def _place_pose_description(robot) -> Any:
             position=probable(PyCramVector3)(x=..., y=..., z=_PLACE_Z),
             orientation=probable(PyCramQuaternion)(x=0, y=0, z=0, w=1),
         ),
-        header=probable(Header)(frame_id=variable_from([robot.root])),
+        header=probable(Header)(frame_id=variable_from([robot._world.get_semantic_annotations_by_type(Table)[0].root])),
     )
 
 
@@ -507,8 +512,6 @@ def sequential_plan_with_apartment() -> None:
         context       = Context(world, robot, None)
         milk_variable = variable_from([milk_body])
 
-        # Build probabilistic entries once — instances are reused and updated
-        # in-place each sampled iteration, avoiding repeated construction cost.
         print("\nBuilding per-action probabilistic distributions …")
         descriptions = _build_action_descriptions(world, robot, milk_variable)
         entries: list[ActionEntry] = [_build_action_entry(d) for d in descriptions]
