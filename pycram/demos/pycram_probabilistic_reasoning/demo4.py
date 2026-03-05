@@ -16,7 +16,14 @@ from pycram.datastructures.grasp import GraspDescription
 from pycram.datastructures.pose import PoseStamped, PyCramPose, PyCramVector3, PyCramQuaternion, Header
 
 # ---- Monkey-patch for Header and PoseStamped deepcopy ------------------------
-def _header_deepcopy(self, memo):
+def _header_deepcopy(self, memo: Any) -> Header:
+    """
+    Custom deepcopy for Header to handle missing 'stamp' attribute gracefully.
+
+    :param self: The Header instance.
+    :param memo: The deepcopy memo dictionary.
+    :return: A new Header instance.
+    """
     if isinstance(self, type):
         return self
     return Header(
@@ -25,7 +32,15 @@ def _header_deepcopy(self, memo):
         sequence=getattr(self, "sequence", 0),
     )
 
-def _pose_stamped_deepcopy(self, memo):
+
+def _pose_stamped_deepcopy(self, memo: Any) -> PoseStamped:
+    """
+    Custom deepcopy for PoseStamped to use the custom Header deepcopy.
+
+    :param self: The PoseStamped instance.
+    :param memo: The deepcopy memo dictionary.
+    :return: A new PoseStamped instance.
+    """
     if isinstance(self, type):
         return self
     return PoseStamped(
@@ -50,9 +65,14 @@ from krrood.entity_query_language.factories import (
 )
 from krrood.ormatic.dao import to_dao
 from krrood.ormatic.utils import create_engine
-from krrood.probabilistic_knowledge.parameterizer import MatchParameterizer, Parameterization
+from krrood.probabilistic_knowledge.parameterizer import (
+    MatchParameterizer,
+    Parameterization,
+)
 from krrood.probabilistic_knowledge.probable_variable import MatchToInstanceTranslator
-from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import ProbabilisticCircuit
+from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
+    ProbabilisticCircuit,
+)
 
 from semantic_digital_twin.adapters.ros.tf_publisher import TFPublisher
 from semantic_digital_twin.adapters.ros.visualization.viz_marker import VizMarkerPublisher
@@ -83,31 +103,44 @@ DATABASE_URI: str = os.environ.get(
 )
 
 MILK_X: float = 2.4
+"""Initial milk x-coordinate."""
+
 MILK_Y: float = 2.5
+"""Initial milk y-coordinate."""
+
 MILK_Z: float = 1.01
+"""Initial milk z-coordinate."""
 
 COUNTER_APPROACH_X: float = 1.6
+"""Target robot x-coordinate when approaching the counter."""
+
 COUNTER_APPROACH_Y: float = 2.5
+"""Target robot y-coordinate when approaching the counter."""
 
 TABLE_APPROACH_X: float = 4.2
+"""Target robot x-coordinate when approaching the table."""
+
 TABLE_APPROACH_Y: float = 4.0
+"""Target robot y-coordinate when approaching the table."""
 
 PLACE_X: float = 5.0
-PLACE_Y: float = 4.0
-PLACE_Z: float = 0.80
+"""Target x-coordinate for placing the milk."""
 
-# Search space bounds for the navigation map (covers the apartment floor area).
-# Adjust these to match your apartment URDF extents if needed.
+PLACE_Y: float = 4.0
+"""Target y-coordinate for placing the milk."""
+
+PLACE_Z: float = 0.80
+"""Target z-coordinate for placing the milk."""
+
+
 GRAPH_OF_CONVEX_SETS_MIN_X: float = -1.0
 GRAPH_OF_CONVEX_SETS_MAX_X: float = 7.0
 GRAPH_OF_CONVEX_SETS_MIN_Y: float = -1.0
 GRAPH_OF_CONVEX_SETS_MAX_Y: float = 7.0
-# Navigation is 2-D: z-slice at floor level.  A thin slab (0.0 -> 0.1) is
-# enough to build a floor-plan navigation map.
+
 GRAPH_OF_CONVEX_SETS_MIN_Z: float = 0.0
 GRAPH_OF_CONVEX_SETS_MAX_Z: float = 0.1
 
-# Robot footprint bloat applied to obstacles so the robot body is accounted for.
 GRAPH_OF_CONVEX_SETS_BLOAT_OBSTACLES: float = 0.3
 GRAPH_OF_CONVEX_SETS_BLOAT_WALLS: float = 0.05
 
@@ -138,6 +171,12 @@ class ActionEntry:
 
 
 def _build_navigation_map(world: World) -> GraphOfConvexSets:
+    """
+    Construct the GCS navigation map from the world obstacles.
+
+    :param world: The world instance.
+    :return: The generated GraphOfConvexSets.
+    """
     search_space = BoundingBoxCollection(
         [
             BoundingBox(
@@ -153,58 +192,87 @@ def _build_navigation_map(world: World) -> GraphOfConvexSets:
         world.root,
     )
 
-    print("  Building GCS navigation map ...")
-    t0 = time.time()
-    gcs = GraphOfConvexSets.navigation_map_from_world(
+    print("  Building GraphOfConvexSets navigation map ...")
+    start_time = time.time()
+    graph_of_convex_sets = GraphOfConvexSets.navigation_map_from_world(
         world=world,
         search_space=search_space,
         bloat_obstacles=GRAPH_OF_CONVEX_SETS_BLOAT_OBSTACLES,
     )
-    elapsed = time.time() - t0
-    print(f"  GCS built in {elapsed:.2f} s  ({len(list(gcs.graph.nodes()))} nodes)")
-    return gcs
+    elapsed = time.time() - start_time
+    print(
+        f"  GraphOfConvexSets built in {elapsed:.2f} s  "
+        f"({len(list(graph_of_convex_sets.graph.nodes()))} nodes)"
+    )
+    return graph_of_convex_sets
 
 
 def _gcs_collision_free_path(
-    gcs: GraphOfConvexSets,
+    graph_of_convex_sets: GraphOfConvexSets,
     start_x: float,
     start_y: float,
     goal_x: float,
     goal_y: float,
     world: World,
 ) -> Optional[List[Point3]]:
-    z_nav = (GRAPH_OF_CONVEX_SETS_MIN_Z + GRAPH_OF_CONVEX_SETS_MAX_Z) / 2.0
-    start = Point3(start_x, start_y, z_nav, reference_frame=world.root)
-    goal  = Point3(goal_x,  goal_y,  z_nav, reference_frame=world.root)
+    """
+    Find a collision-free path between two points using GraphOfConvexSets.
+
+    :param graph_of_convex_sets: The navigation map.
+    :param start_x: Starting x coordinate.
+    :param start_y: Starting y coordinate.
+    :param goal_x: Goal x coordinate.
+    :param goal_y: Goal y coordinate.
+    :param world: The world instance.
+    :return: A list of points forming the path, or None if no path found.
+    """
+    z_navigation = (GRAPH_OF_CONVEX_SETS_MIN_Z + GRAPH_OF_CONVEX_SETS_MAX_Z) / 2.0
+    start = Point3(start_x, start_y, z_navigation, reference_frame=world.root)
+    goal = Point3(goal_x, goal_y, z_navigation, reference_frame=world.root)
     try:
-        path = gcs.path_from_to(start, goal)
-    except Exception as exc:
-        print(f"    [GCS] path_from_to raised: {exc}")
+        path = graph_of_convex_sets.path_from_to(start, goal)
+    except Exception as exception:
+        print(f"    [GraphOfConvexSets] path_from_to raised: {exception}")
         return None
     return path
 
 
 def _gcs_path_to_pose_stamped_list(
     path: List[Point3],
-    world_frame,
+    world_frame: Any,
 ) -> List[PoseStamped]:
+    """
+    Convert a list of Point3 path waypoints to a list of PoseStamped.
+
+    :param path: The list of points in the path.
+    :param world_frame: The reference frame for the poses.
+    :return: A list of PoseStamped objects.
+    """
     poses = []
     for point in path[1:]:
-        ps = PoseStamped(
+        pose_stamped = PoseStamped(
             pose=PyCramPose(
                 position=PyCramVector3(x=float(point.x), y=float(point.y), z=0.0),
                 orientation=PyCramQuaternion(x=0, y=0, z=0, w=1),
             ),
             header=Header(frame_id=world_frame),
         )
-        poses.append(ps)
+        poses.append(pose_stamped)
     return poses
 
 
-def _build_world(apartment_urdf: Path) -> tuple:
-    world = URDFParser.from_file(str(apartment_urdf)).parse()
-    pr2_urdf = "package://iai_pr2_description/robots/pr2_with_ft2_cableguide.xacro"
-    pr2_world = URDFParser.from_file(pr2_urdf).parse()
+def _initialize_world(apartment_unified_robot_description_format: Path) -> tuple:
+    """
+    Initialize the simulation world with the apartment and PR2 robot.
+
+    :param apartment_unified_robot_description_format: Path to the apartment URDF.
+    :return: A tuple of (World, PR2).
+    """
+    world = URDFParser.from_file(str(apartment_unified_robot_description_format)).parse()
+    pr2_unified_robot_description_format = (
+        "package://iai_pr2_description/robots/pr2_with_ft2_cableguide.xacro"
+    )
+    pr2_world = URDFParser.from_file(pr2_unified_robot_description_format).parse()
     robot = PR2.from_world(pr2_world)
     robot_pose = HomogeneousTransformationMatrix.from_xyz_rpy(1.0, 1.5, 0.0, 0, 0, 0)
     with world.modify_world():
@@ -216,9 +284,15 @@ def _build_world(apartment_urdf: Path) -> tuple:
     return world, robot
 
 
-def _add_localization_frame(world, robot) -> None:
+def _add_localization_frames(world: World, robot: PR2) -> None:
+    """
+    Add necessary localization frames (map, odom) to the world.
+
+    :param world: The world instance.
+    :param robot: The PR2 robot instance.
+    """
     with world.modify_world():
-        map_body  = Body(name=PrefixedName("map"))
+        map_body = Body(name=PrefixedName("map"))
         odom_body = Body(name=PrefixedName("odom_combined"))
         world.add_body(map_body)
         world.add_body(odom_body)
@@ -239,7 +313,16 @@ def _add_localization_frame(world, robot) -> None:
         )
 
 
-def _add_milk(world: World, stl_path: Path) -> tuple[Body, HomogeneousTransformationMatrix]:
+def _add_milk_object(
+    world: World, stl_path: Path
+) -> tuple[Body, HomogeneousTransformationMatrix]:
+    """
+    Add the milk object to the world at its initial location.
+
+    :param world: The world instance.
+    :param stl_path: Path to the milk object's STL file.
+    :return: A tuple containing the milk body and its initial pose.
+    """
     mesh = FileMesh.from_file(str(stl_path))
     body = Body(
         name=PrefixedName("milk_1"),
@@ -249,24 +332,43 @@ def _add_milk(world: World, stl_path: Path) -> tuple[Body, HomogeneousTransforma
     pose = HomogeneousTransformationMatrix.from_xyz_rpy(MILK_X, MILK_Y, MILK_Z, 0, 0, 0)
     with world.modify_world():
         world.add_body(body)
-        connection = Connection6DoF.create_with_dofs(parent=world.root, child=body, world=world)
+        connection = Connection6DoF.create_with_dofs(
+            parent=world.root, child=body, world=world
+        )
         world.add_connection(connection)
         connection.origin = pose
         world.add_semantic_annotation(Milk(root=body))
     return body, pose
 
 
-def _create_pose_stamped(x: float, y: float, z: float, frame) -> PoseStamped:
+def _create_pose_stamped(
+    x_coordinate: float, y_coordinate: float, z_coordinate: float, frame_id: Any
+) -> PoseStamped:
+    """
+    Create a PoseStamped object with the given coordinates.
+
+    :param x_coordinate: The x coordinate.
+    :param y_coordinate: The y coordinate.
+    :param z_coordinate: The z coordinate.
+    :param frame_id: The reference frame id.
+    :return: A PoseStamped instance.
+    """
     return PoseStamped(
         pose=PyCramPose(
-            position=PyCramVector3(x=x, y=y, z=z),
+            position=PyCramVector3(x=x_coordinate, y=y_coordinate, z=z_coordinate),
             orientation=PyCramQuaternion(x=0, y=0, z=0, w=1),
         ),
-        header=Header(frame_id=frame),
+        header=Header(frame_id=frame_id),
     )
 
 
-def _respawn_milk(world, milk_body: Body) -> None:
+def _respawn_milk_object(world: World, milk_body: Body) -> None:
+    """
+    Reset the milk object to its initial spawn location.
+
+    :param world: The world instance.
+    :param milk_body: The milk body instance.
+    """
     spawn_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
         MILK_X, MILK_Y, MILK_Z, 0, 0, 0
     )
@@ -275,24 +377,30 @@ def _respawn_milk(world, milk_body: Body) -> None:
         if connection is not None:
             if connection.parent is not world.root:
                 world.remove_connection(connection)
-                new_conn = Connection6DoF.create_with_dofs(
+                new_connection = Connection6DoF.create_with_dofs(
                     parent=world.root, child=milk_body, world=world
                 )
-                world.add_connection(new_conn)
-                new_conn.origin = spawn_pose
+                world.add_connection(new_connection)
+                new_connection.origin = spawn_pose
             else:
                 connection.origin = spawn_pose
         else:
-            new_conn = Connection6DoF.create_with_dofs(
+            new_connection = Connection6DoF.create_with_dofs(
                 parent=world.root, child=milk_body, world=world
             )
-            world.add_connection(new_conn)
-            new_conn.origin = spawn_pose
+            world.add_connection(new_connection)
+            new_connection.origin = spawn_pose
     print(f"  Milk respawned at  x={MILK_X}, y={MILK_Y}, z={MILK_Z}")
 
 
 
-def _create_session(database_uri: str) -> Session:
+def _create_database_session(database_uri: str) -> Session:
+    """
+    Create a SQLAlchemy session and initialize the database.
+
+    :param database_uri: The database connection URI.
+    :return: A SQLAlchemy session.
+    """
     engine = create_engine(database_uri)
     if "postgresql" in database_uri or "postgres" in database_uri:
         _apply_postgresql_patches(engine)
@@ -357,9 +465,9 @@ def _persist_plan(session: Session, plan: SequentialPlan) -> None:
 
 
 
-def _navigate_via_gcs(
+def _navigate_via_graph_of_convex_sets(
     context: Context,
-    gcs: GraphOfConvexSets,
+    graph_of_convex_sets: GraphOfConvexSets,
     start_x: float,
     start_y: float,
     goal_x: float,
@@ -367,10 +475,25 @@ def _navigate_via_gcs(
     world: World,
     keep_joint_states: bool = False,
 ) -> List[NavigateAction]:
-    path = _gcs_collision_free_path(gcs, start_x, start_y, goal_x, goal_y, world)
+    """
+    Generate a sequence of NavigateActions following a GCS path.
+
+    :param context: The planning context.
+    :param graph_of_convex_sets: The GCS navigation map.
+    :param start_x: Start x.
+    :param start_y: Start y.
+    :param goal_x: Goal x.
+    :param goal_y: Goal y.
+    :param world: The world instance.
+    :param keep_joint_states: Whether to keep joint states during navigation.
+    :return: A list of NavigateAction instances.
+    """
+    path = _gcs_collision_free_path(
+        graph_of_convex_sets, start_x, start_y, goal_x, goal_y, world
+    )
     if path is None or len(path) < 2:
         print(
-            f"    [GCS] No path found "
+            f"    [GraphOfConvexSets] No path found "
             f"({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}). "
             f"Falling back to direct navigation."
         )
@@ -382,15 +505,15 @@ def _navigate_via_gcs(
         ]
     waypoint_poses = _gcs_path_to_pose_stamped_list(path, world.root)
     print(
-        f"    [GCS] Path ({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}): "
+        f"    [GraphOfConvexSets] Path ({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}): "
         f"{len(waypoint_poses)} waypoint(s)"
     )
     for i, pose in enumerate(waypoint_poses):
-        p = pose.pose.position
-        print(f"           waypoint {i+1}: ({p.x:.3f}, {p.y:.3f})")
+        position = pose.pose.position
+        print(f"           waypoint {i+1}: ({position.x:.3f}, {position.y:.3f})")
     return [
-        NavigateAction(target_location=ps, keep_joint_states=keep_joint_states)
-        for ps in waypoint_poses
+        NavigateAction(target_location=pose_stamped, keep_joint_states=keep_joint_states)
+        for pose_stamped in waypoint_poses
     ]
 
 
@@ -399,26 +522,46 @@ def _navigate_via_gcs(
 def _build_fixed_plan(
     context: Context,
     world: World,
-    robot,
+    robot: PR2,
     milk_body: Body,
-    gcs: GraphOfConvexSets,
+    graph_of_convex_sets: GraphOfConvexSets,
     robot_start_x: float = 1.4,
     robot_start_y: float = 1.5,
 ) -> SequentialPlan:
+    """
+    Construct a fixed SequentialPlan for the first iteration.
+
+    :param context: The planning context.
+    :param world: The world instance.
+    :param robot: The PR2 robot instance.
+    :param milk_body: The milk body instance.
+    :param graph_of_convex_sets: The GCS navigation map.
+    :param robot_start_x: Initial robot x.
+    :param robot_start_y: Initial robot y.
+    :return: A SequentialPlan instance.
+    """
     world_frame = world.root
-    nav_to_counter = _navigate_via_gcs(
-        context, gcs,
-        start_x=robot_start_x, start_y=robot_start_y,
-        goal_x=COUNTER_APPROACH_X, goal_y=COUNTER_APPROACH_Y,
+    nav_to_counter = _navigate_via_graph_of_convex_sets(
+        context,
+        graph_of_convex_sets,
+        start_x=robot_start_x,
+        start_y=robot_start_y,
+        goal_x=COUNTER_APPROACH_X,
+        goal_y=COUNTER_APPROACH_Y,
         world=world,
     )
-    nav_to_table = _navigate_via_gcs(
-        context, gcs,
-        start_x=COUNTER_APPROACH_X, start_y=COUNTER_APPROACH_Y,
-        goal_x=TABLE_APPROACH_X, goal_y=TABLE_APPROACH_Y,
+    nav_to_table = _navigate_via_graph_of_convex_sets(
+        context,
+        graph_of_convex_sets,
+        start_x=COUNTER_APPROACH_X,
+        start_y=COUNTER_APPROACH_Y,
+        goal_x=TABLE_APPROACH_X,
+        goal_y=TABLE_APPROACH_Y,
         world=world,
     )
-    place_target_pose = _create_pose_stamped(PLACE_X, PLACE_Y, PLACE_Z, world_frame)
+    place_target_pose = _create_pose_stamped(
+        PLACE_X, PLACE_Y, PLACE_Z, world_frame
+    )
     actions = (
         [ParkArmsAction(arm=Arms.BOTH)]
         + nav_to_counter
@@ -452,8 +595,13 @@ def _build_fixed_plan(
 
 def _navigable_pose_description(robot: PR2) -> Any:
     """
-    Build a probable PoseStamped description for a navigation target with
-    free x/y position components for probabilistic sampling.
+    Build a probable PoseStamped description for a navigation target.
+
+    This creates a description with free x/y position components for
+    probabilistic sampling.
+
+    :param robot: The PR2 robot instance.
+    :return: A probable PoseStamped description.
     """
     return probable(PoseStamped)(
         pose=probable(PyCramPose)(
@@ -464,10 +612,14 @@ def _navigable_pose_description(robot: PR2) -> Any:
     )
 
 
-def _place_pose_description(robot) -> Any:
+def _place_pose_description(robot: PR2) -> Any:
     """
-    Build a probable PoseStamped for the place target with free x/y and
-    fixed z (table surface height).
+    Build a probable PoseStamped for the place target.
+
+    Uses free x/y and fixed z (table surface height) for probabilistic sampling.
+
+    :param robot: The PR2 robot instance.
+    :return: A probable PoseStamped description.
     """
     return probable(PoseStamped)(
         pose=probable(PyCramPose)(
@@ -478,7 +630,17 @@ def _place_pose_description(robot) -> Any:
     )
 
 
-def _build_action_descriptions(world, robot, milk_variable) -> list:
+def _build_action_descriptions(
+    world: World, robot: PR2, milk_variable: Any
+) -> list:
+    """
+    Construct the sequence of action descriptions used for probabilistic reasoning.
+
+    :param world: The world instance.
+    :param robot: The PR2 robot instance.
+    :param milk_variable: The variable representing the milk object.
+    :return: A list of action descriptions.
+    """
     manipulators = world.get_semantic_annotations_by_type(Manipulator)
     return [
         probable_variable(ParkArmsAction)(
@@ -509,7 +671,7 @@ def _build_action_descriptions(world, robot, milk_variable) -> list:
         ),
         probable_variable(NavigateAction)(
             target_location=_navigable_pose_description(robot),
-            keep_joint_states=False
+            keep_joint_states=False,
         ),
         probable_variable(PlaceAction)(
             object_designator=milk_variable,
@@ -522,85 +684,66 @@ def _build_action_descriptions(world, robot, milk_variable) -> list:
     ]
 
 
-# ---- Approach bounds (world frame, derived from apartment URDF) --------------
-#
-# island_countertop world XY: apartment_root -> kitchen_root(-0.03,0.75)
-#   -> side_B(rpy=pi, xyz=(2.91,3.7)) -> island_countertop(0.13,1.786)
-#   => centre ~(2.747, 2.664), floor footprint x=[2.295,3.200], y=[1.113,4.215]
-#
-# The robot approaches the island from the LEFT (x < 2.295).
-# Known-good approach: (1.6, 2.5). Apartment walls: x=[0,7], y=[0,7] approx.
-#
-# Counter approach zone: x=[0.5, 2.2], y=[1.0, 4.3]  (open floor left of island)
-# Table approach zone:   x=[3.0, 4.8], y=[2.5, 5.5]  (open floor in front of table)
-
-# (x_min, x_max, y_min, y_max) — world frame, floor level
 _COUNTER_APPROACH_BOUNDS = (1.2, 1.8, 2.3, 2.7)
-_TABLE_APPROACH_BOUNDS   = (4.1, 4.5, 3.8, 4.2)
+"""Sampling bounds for robot approach to the kitchen counter."""
+
+_TABLE_APPROACH_BOUNDS = (4.1, 4.5, 3.8, 4.2)
+"""Sampling bounds for robot approach to the table."""
 
 
 def _truncate_navigate_distribution(
     distribution: ProbabilisticCircuit,
-    x_min: float, x_max: float,
-    y_min: float, y_max: float,
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
 ) -> ProbabilisticCircuit:
     """
-    Truncate a NavigateAction distribution so that the sampled (x, y) of the
-    target_location stays within [x_min, x_max] x [y_min, y_max].
+    Truncate a NavigateAction distribution within the given x and y bounds.
 
-    Previous attempts built a ``random_events.Event`` using ``SpatialVariables``
-    objects, which are different Python objects from the ``Continuous`` variables
-    inside the circuit (named e.g. ``NavigateAction.target_location.pose.position.x``).
-    The mismatch caused truncation to silently have zero effect.
-
-    This function avoids the mismatch by:
-      1. Walking the distribution leaves to find the *actual* x and y variable
-         objects by inspecting their ``.name`` suffix.
-      2. Building the ``SimpleEvent`` with those exact objects so the variable
-         equality check inside ``log_truncated_of_simple_event_in_place`` succeeds.
-      3. Extending the event to all distribution variables so non-spatial leaves
-         (keep_joint_states, orientation, frame_id ...) are left unconstrained.
+    This ensures that sampled navigation targets stay within the specified area.
 
     :param distribution: The fully-factorised circuit for a NavigateAction.
-    :param x_min, x_max: World-frame x bounds for the navigation goal.
-    :param y_min, y_max: World-frame y bounds for the navigation goal.
-    :return: The truncated circuit (same object, modified in-place), or the
-             original if truncation fails.
+    :param x_min: World-frame x minimum bound.
+    :param x_max: World-frame x maximum bound.
+    :param y_min: World-frame y minimum bound.
+    :param y_max: World-frame y maximum bound.
+    :return: The truncated circuit or the original if truncation fails.
     """
     from random_events.interval import closed
     from random_events.product_algebra import SimpleEvent
     from random_events.variable import Continuous
 
-
-    all_names = [v.name for v in distribution.variables]
+    all_names = [variable.name for variable in distribution.variables]
     print(f"    [truncate] distribution variables: {all_names}")
 
-    x_var = None
-    y_var = None
-    for var in distribution.variables:
-        if isinstance(var, Continuous):
-            if var.name.endswith(".position.x") or var.name.endswith(".x"):
-                x_var = var
-            elif var.name.endswith(".position.y") or var.name.endswith(".y"):
-                y_var = var
+    x_variable = None
+    y_variable = None
+    for variable in distribution.variables:
+        if isinstance(variable, Continuous):
+            if variable.name.endswith(".position.x") or variable.name.endswith(".x"):
+                x_variable = variable
+            elif variable.name.endswith(".position.y") or variable.name.endswith(".y"):
+                y_variable = variable
 
-    if x_var is None or y_var is None:
+    if x_variable is None or y_variable is None:
         print(
             f"    [truncate] WARNING: could not find position x/y variables in "
-            f"distribution (vars={[v.name for v in distribution.variables]}). "
+            f"distribution (vars={[variable.name for variable in distribution.variables]}). "
             f"Skipping truncation."
         )
         return distribution
 
-
-    position_event = SimpleEvent({
-        x_var: closed(x_min, x_max),
-        y_var: closed(y_min, y_max),
-    }).as_composite_set()
+    position_event = SimpleEvent(
+        {
+            x_variable: closed(x_min, x_max),
+            y_variable: closed(y_min, y_max),
+        }
+    ).as_composite_set()
 
     full_event = position_event.fill_missing_variables_pure(distribution.variables)
 
-    truncated, log_prob = distribution.log_truncated_in_place(full_event)
+    truncated, log_probability = distribution.log_truncated_in_place(full_event)
     if truncated is None:
         print(
             f"    [truncate] WARNING: zero-probability region "
@@ -611,30 +754,27 @@ def _truncate_navigate_distribution(
 
     print(
         f"    [truncate] x=[{x_min},{x_max}] y=[{y_min},{y_max}]  "
-        f"log_p={log_prob:.3f}"
+        f"log_p={log_probability:.3f}"
     )
     return truncated
 
 
-def _build_action_entry(description, approach_bounds: tuple = None) -> ActionEntry:
+def _build_action_entry(
+    description: Any, approach_bounds: tuple = None
+) -> ActionEntry:
     """
-    Translate a probable_variable match description into a concrete action
-    instance, derive its Parameterization, and pre-build the
-    fully-factorized ProbabilisticCircuit.
+    Translate a match description into a concrete action entry.
 
-    :param description:     The probable_variable match description.
-    :param approach_bounds: Optional (x_min, x_max, y_min, y_max) tuple in
-                            world-frame coordinates.  When provided the
-                            distribution's position x/y leaves are truncated to
-                            this rectangle so sampled navigation goals stay
-                            within the specified floor area.  Pass
-                            ``_COUNTER_APPROACH_BOUNDS`` for the counter
-                            NavigateAction and ``_TABLE_APPROACH_BOUNDS`` for
-                            the table NavigateAction.
+    This includes creating the action instance, its parameterization, and
+    its pre-built fully-factorized distribution.
+
+    :param description: The probable_variable match description.
+    :param approach_bounds: Optional (x_min, x_max, y_min, y_max) tuple.
+    :return: An ActionEntry instance.
     """
-    instance         = MatchToInstanceTranslator(description).translate()
+    instance = MatchToInstanceTranslator(description).translate()
     parameterization = MatchParameterizer(instance).parameterize()
-    distribution     = parameterization.create_fully_factorized_distribution()
+    distribution = parameterization.create_fully_factorized_distribution()
 
     if approach_bounds is not None:
         x_min, x_max, y_min, y_max = approach_bounds
@@ -646,25 +786,28 @@ def _build_action_entry(description, approach_bounds: tuple = None) -> ActionEnt
 
 
 def _apply_sample(entry: ActionEntry) -> None:
-    raw_sample   = entry.distribution.sample(1)[0]
+    """
+    Sample parameters from the entry's distribution and apply them to the instance.
+
+    :param entry: The action entry to sample and parameterize.
+    """
+    raw_sample = entry.distribution.sample(1)[0]
     named_sample = entry.parameterization.create_assignment_from_variables_and_sample(
         entry.distribution.variables, raw_sample
     )
     entry.parameterization.parameterize_object_with_sample(entry.instance, named_sample)
 
 
-def _build_sampled_plan_with_gcs(
+def _build_sampled_plan_with_graph_of_convex_sets(
     context: Context,
     entries: list[ActionEntry],
-    gcs: GraphOfConvexSets,
+    graph_of_convex_sets: GraphOfConvexSets,
     world: World,
     robot_start_x: float,
     robot_start_y: float,
 ) -> SequentialPlan:
     """
-    Sample fresh parameters for every action entry, then rewrite the two
-    NavigateAction targets so the robot follows a collision-free path derived
-    from the GCS instead of the raw sampled pose.
+    Sample fresh parameters for every action entry and rewrite navigation paths.
 
     Action entry layout (matches _build_action_descriptions):
       0  ParkArmsAction  (pre)
@@ -673,37 +816,51 @@ def _build_sampled_plan_with_gcs(
       3  NavigateAction  -> table area    [truncated to table approach zone]
       4  PlaceAction
       5  ParkArmsAction  (post)
+
+    :param context: The planning context.
+    :param entries: The list of action entries.
+    :param graph_of_convex_sets: The GCS navigation map.
+    :param world: The world instance.
+    :param robot_start_x: Start x.
+    :param robot_start_y: Start y.
+    :return: A SequentialPlan instance.
     """
     for label, entry in zip(_ACTION_LABELS, entries):
         _apply_sample(entry)
         print(f"    Sampled  {label}")
 
     nav_to_counter_entry: NavigateAction = entries[1].instance
-    nav_to_table_entry:   NavigateAction = entries[3].instance
+    nav_to_table_entry: NavigateAction = entries[3].instance
 
     sampled_counter_pos = nav_to_counter_entry.target_location.pose.position
-    sampled_table_pos   = nav_to_table_entry.target_location.pose.position
+    sampled_table_pos = nav_to_table_entry.target_location.pose.position
 
     counter_goal_x = float(sampled_counter_pos.x)
     counter_goal_y = float(sampled_counter_pos.y)
-    table_goal_x   = float(sampled_table_pos.x)
-    table_goal_y   = float(sampled_table_pos.y)
+    table_goal_x = float(sampled_table_pos.x)
+    table_goal_y = float(sampled_table_pos.y)
 
     print(
         f"    Sampled counter goal: ({counter_goal_x:.3f}, {counter_goal_y:.3f})"
         f"  |  table goal: ({table_goal_x:.3f}, {table_goal_y:.3f})"
     )
 
-    nav_to_counter_actions = _navigate_via_gcs(
-        context, gcs,
-        start_x=robot_start_x, start_y=robot_start_y,
-        goal_x=counter_goal_x, goal_y=counter_goal_y,
+    nav_to_counter_actions = _navigate_via_graph_of_convex_sets(
+        context,
+        graph_of_convex_sets,
+        start_x=robot_start_x,
+        start_y=robot_start_y,
+        goal_x=counter_goal_x,
+        goal_y=counter_goal_y,
         world=world,
     )
-    nav_to_table_actions = _navigate_via_gcs(
-        context, gcs,
-        start_x=counter_goal_x, start_y=counter_goal_y,
-        goal_x=table_goal_x,   goal_y=table_goal_y,
+    nav_to_table_actions = _navigate_via_graph_of_convex_sets(
+        context,
+        graph_of_convex_sets,
+        start_x=counter_goal_x,
+        start_y=counter_goal_y,
+        goal_x=table_goal_x,
+        goal_y=table_goal_y,
         world=world,
     )
 
@@ -718,24 +875,25 @@ def _build_sampled_plan_with_gcs(
     return SequentialPlan(context, *actions)
 
 
-# ---- Main entry point -------------------------------------------------------
-
 def sequential_plan_with_apartment() -> None:
+    """
+    Main entry point for the apartment pick-and-place probabilistic reasoning demo.
+    """
     print("Building world ...")
-    world, robot = _build_world(APARTMENT_URDF)
-    _add_localization_frame(world, robot)
-    milk_body, milk_pose = _add_milk(world, MILK_STL)
+    world, robot = _initialize_world(APARTMENT_URDF)
+    _add_localization_frames(world, robot)
+    milk_body, milk_pose = _add_milk_object(world, MILK_STL)
 
     print(f"  Milk spawned at  x={MILK_X:.3f},  y={MILK_Y:.3f},  z={MILK_Z:.3f}")
     print(f"  Place target at  x={PLACE_X:.3f}, y={PLACE_Y:.3f}, z={PLACE_Z:.3f}")
 
-    gcs = _build_navigation_map(world)
+    graph_of_convex_sets = _build_navigation_map(world)
 
-    session = _create_session(DATABASE_URI)
+    session = _create_database_session(DATABASE_URI)
     print(f"  Database: {DATABASE_URI}")
 
     rclpy.init()
-    ros_node    = rclpy.create_node("pycram_gcs_plan_demo")
+    ros_node = rclpy.create_node("pycram_graph_of_convex_sets_plan_demo")
     spin_thread = threading.Thread(target=rclpy.spin, args=(ros_node,), daemon=True)
     spin_thread.start()
 
@@ -746,25 +904,31 @@ def sequential_plan_with_apartment() -> None:
         _transformation_publisher = TFPublisher(_world=world, node=ros_node)
         _visualization_publisher = VizMarkerPublisher(_world=world, node=ros_node)
 
-        context       = Context(world, robot, None)
+        context = Context(world, robot, None)
         milk_variable = variable_from([milk_body])
 
         print("\nBuilding per-action probabilistic distributions ...")
         descriptions = _build_action_descriptions(world, robot, milk_variable)
 
         entries: list[ActionEntry] = [
-            _build_action_entry(descriptions[0]),                                        # ParkArms (pre)
-            _build_action_entry(descriptions[1], _COUNTER_APPROACH_BOUNDS),              # Navigate -> counter
-            _build_action_entry(descriptions[2]),                                        # PickUp
-            _build_action_entry(descriptions[3], _TABLE_APPROACH_BOUNDS),                # Navigate -> table
-            _build_action_entry(descriptions[4]),                                        # Place
-            _build_action_entry(descriptions[5]),                                        # ParkArms (post)
+            _build_action_entry(descriptions[0]),
+            _build_action_entry(
+                descriptions[1], _COUNTER_APPROACH_BOUNDS
+            ),
+            _build_action_entry(descriptions[2]),
+            _build_action_entry(
+                descriptions[3], _TABLE_APPROACH_BOUNDS
+            ),
+            _build_action_entry(descriptions[4]),
+            _build_action_entry(descriptions[5]),
         ]
 
         for label, entry in zip(_ACTION_LABELS, entries):
             n_vars = len(entry.parameterization.variables)
             n_dist = len(entry.distribution.variables)
-            print(f"  {label:<25}  {n_vars:>2} param vars  /  {n_dist:>2} distribution vars")
+            print(
+                f"  {label:<25}  {n_vars:>2} param vars  /  {n_dist:>2} distribution vars"
+            )
 
         successful_count = 0
 
@@ -773,18 +937,29 @@ def sequential_plan_with_apartment() -> None:
             print(f"\n{separator}")
 
             if iteration == 1:
-                print(f"  Iteration {iteration:>3} / {NUMBER_OF_ITERATIONS}  [FIXED + GCS navigation]")
+                print(
+                    f"  Iteration {iteration:>3} / {NUMBER_OF_ITERATIONS}  [FIXED + GCS navigation]"
+                )
                 print(separator)
                 plan = _build_fixed_plan(
-                    context, world, robot, milk_body, gcs,
+                    context,
+                    world,
+                    robot,
+                    milk_body,
+                    graph_of_convex_sets,
                     robot_start_x=robot_init_x,
                     robot_start_y=robot_init_y,
                 )
             else:
-                print(f"  Iteration {iteration:>3} / {NUMBER_OF_ITERATIONS}  [SAMPLED + GCS navigation]")
+                print(
+                    f"  Iteration {iteration:>3} / {NUMBER_OF_ITERATIONS}  [SAMPLED + GCS navigation]"
+                )
                 print(separator)
-                plan = _build_sampled_plan_with_gcs(
-                    context, entries, gcs, world,
+                plan = _build_sampled_plan_with_graph_of_convex_sets(
+                    context,
+                    entries,
+                    graph_of_convex_sets,
+                    world,
                     robot_start_x=robot_init_x,
                     robot_start_y=robot_init_y,
                 )
@@ -794,16 +969,24 @@ def sequential_plan_with_apartment() -> None:
                     plan.perform()
                     _persist_plan(session, plan)
                     successful_count += 1
-                    print(f"\n  v  Iteration {iteration} succeeded -- plan persisted to database.")
-                except Exception as exc:
+                    print(
+                        f"\n  v  Iteration {iteration} succeeded -- plan persisted to database."
+                    )
+                except Exception as exception:
                     import traceback
+
                     traceback.print_exc()
-                    print(f"\n  x  Iteration {iteration} failed -- plan not stored.  ({type(exc).__name__}: {exc})")
+                    print(
+                        f"\n  x  Iteration {iteration} failed -- plan not stored.  "
+                        f"({type(exception).__name__}: {exception})"
+                    )
                 finally:
-                    _respawn_milk(world, milk_body)
+                    _respawn_milk_object(world, milk_body)
 
         print(f"\n{'=' * 64}")
-        print(f"Done.  {successful_count} / {NUMBER_OF_ITERATIONS} plans stored in '{DATABASE_URI}'.")
+        print(
+            f"Done.  {successful_count} / {NUMBER_OF_ITERATIONS} plans stored in '{DATABASE_URI}'."
+        )
 
     finally:
         session.close()
