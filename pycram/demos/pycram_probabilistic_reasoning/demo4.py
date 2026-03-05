@@ -1,6 +1,8 @@
 import os
 import time
 import threading
+import copy
+import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, List
@@ -12,6 +14,29 @@ from pycram.datastructures.dataclasses import Context
 from pycram.datastructures.enums import ApproachDirection, Arms, VerticalAlignment
 from pycram.datastructures.grasp import GraspDescription
 from pycram.datastructures.pose import PoseStamped, PyCramPose, PyCramVector3, PyCramQuaternion, Header
+
+# ---- Monkey-patch for Header and PoseStamped deepcopy ------------------------
+def _header_deepcopy(self, memo):
+    if isinstance(self, type):
+        return self
+    return Header(
+        frame_id=getattr(self, "frame_id", None),
+        stamp=copy.deepcopy(getattr(self, "stamp", None), memo),
+        sequence=getattr(self, "sequence", 0),
+    )
+
+def _pose_stamped_deepcopy(self, memo):
+    if isinstance(self, type):
+        return self
+    return PoseStamped(
+        copy.deepcopy(getattr(self, "pose", None), memo),
+        copy.deepcopy(getattr(self, "header", None), memo),
+    )
+
+Header.__deepcopy__ = _header_deepcopy
+PoseStamped.__deepcopy__ = _pose_stamped_deepcopy
+# ------------------------------------------------------------------------------
+
 from pycram.language import SequentialPlan
 from pycram.motion_executor import simulated_robot
 from pycram.robot_plans import ParkArmsAction, NavigateAction, PickUpAction, PlaceAction
@@ -45,46 +70,46 @@ from semantic_digital_twin.world_description.shape_collection import ShapeCollec
 from semantic_digital_twin.world_description.world_entity import Body
 
 
-NUM_ITERATIONS: int = 5000
+NUMBER_OF_ITERATIONS: int = 5000
 """
 Total number of plan iterations to run.
-Iteration 1 uses fixed/known-good values (original demo2.py behaviour).
-Iterations 2..NUM_ITERATIONS use probabilistic sampling (demo4.py behaviour).
+Iteration 1 uses fixed/known-good values (original behaviour).
+Iterations 2..NUMBER_OF_ITERATIONS use probabilistic sampling.
 """
 
-_DATABASE_URI: str = os.environ.get(
+DATABASE_URI: str = os.environ.get(
     "SEMANTIC_DIGITAL_TWIN_DATABASE_URI",
     "sqlite:///:memory:",
 )
 
-_MILK_X: float = 2.4
-_MILK_Y: float = 2.5
-_MILK_Z: float = 1.01
+MILK_X: float = 2.4
+MILK_Y: float = 2.5
+MILK_Z: float = 1.01
 
-_COUNTER_APPROACH_X: float = 1.6
-_COUNTER_APPROACH_Y: float = 2.5
+COUNTER_APPROACH_X: float = 1.6
+COUNTER_APPROACH_Y: float = 2.5
 
-_TABLE_APPROACH_X: float = 4.2
-_TABLE_APPROACH_Y: float = 4.0
+TABLE_APPROACH_X: float = 4.2
+TABLE_APPROACH_Y: float = 4.0
 
-_PLACE_X: float = 5.0
-_PLACE_Y: float = 4.0
-_PLACE_Z: float = 0.80
+PLACE_X: float = 5.0
+PLACE_Y: float = 4.0
+PLACE_Z: float = 0.80
 
 # Search space bounds for the navigation map (covers the apartment floor area).
 # Adjust these to match your apartment URDF extents if needed.
-_GCS_MIN_X: float = -1.0
-_GCS_MAX_X: float = 7.0
-_GCS_MIN_Y: float = -1.0
-_GCS_MAX_Y: float = 7.0
+GRAPH_OF_CONVEX_SETS_MIN_X: float = -1.0
+GRAPH_OF_CONVEX_SETS_MAX_X: float = 7.0
+GRAPH_OF_CONVEX_SETS_MIN_Y: float = -1.0
+GRAPH_OF_CONVEX_SETS_MAX_Y: float = 7.0
 # Navigation is 2-D: z-slice at floor level.  A thin slab (0.0 -> 0.1) is
 # enough to build a floor-plan navigation map.
-_GCS_MIN_Z: float = 0.0
-_GCS_MAX_Z: float = 0.1
+GRAPH_OF_CONVEX_SETS_MIN_Z: float = 0.0
+GRAPH_OF_CONVEX_SETS_MAX_Z: float = 0.1
 
 # Robot footprint bloat applied to obstacles so the robot body is accounted for.
-_GCS_BLOAT_OBSTACLES: float = 0.3
-_GCS_BLOAT_WALLS: float = 0.05
+GRAPH_OF_CONVEX_SETS_BLOAT_OBSTACLES: float = 0.3
+GRAPH_OF_CONVEX_SETS_BLOAT_WALLS: float = 0.05
 
 _RESOURCE_PATH = Path(__file__).resolve().parents[2] / "resources"
 APARTMENT_URDF: Path = _RESOURCE_PATH / "worlds" / "apartment.urdf"
@@ -116,12 +141,12 @@ def _build_navigation_map(world: World) -> GraphOfConvexSets:
     search_space = BoundingBoxCollection(
         [
             BoundingBox(
-                min_x=_GCS_MIN_X,
-                max_x=_GCS_MAX_X,
-                min_y=_GCS_MIN_Y,
-                max_y=_GCS_MAX_Y,
-                min_z=_GCS_MIN_Z,
-                max_z=_GCS_MAX_Z,
+                min_x=GRAPH_OF_CONVEX_SETS_MIN_X,
+                max_x=GRAPH_OF_CONVEX_SETS_MAX_X,
+                min_y=GRAPH_OF_CONVEX_SETS_MIN_Y,
+                max_y=GRAPH_OF_CONVEX_SETS_MAX_Y,
+                min_z=GRAPH_OF_CONVEX_SETS_MIN_Z,
+                max_z=GRAPH_OF_CONVEX_SETS_MAX_Z,
                 origin=HomogeneousTransformationMatrix(reference_frame=world.root),
             )
         ],
@@ -133,7 +158,7 @@ def _build_navigation_map(world: World) -> GraphOfConvexSets:
     gcs = GraphOfConvexSets.navigation_map_from_world(
         world=world,
         search_space=search_space,
-        bloat_obstacles=_GCS_BLOAT_OBSTACLES,
+        bloat_obstacles=GRAPH_OF_CONVEX_SETS_BLOAT_OBSTACLES,
     )
     elapsed = time.time() - t0
     print(f"  GCS built in {elapsed:.2f} s  ({len(list(gcs.graph.nodes()))} nodes)")
@@ -148,7 +173,7 @@ def _gcs_collision_free_path(
     goal_y: float,
     world: World,
 ) -> Optional[List[Point3]]:
-    z_nav = (_GCS_MIN_Z + _GCS_MAX_Z) / 2.0
+    z_nav = (GRAPH_OF_CONVEX_SETS_MIN_Z + GRAPH_OF_CONVEX_SETS_MAX_Z) / 2.0
     start = Point3(start_x, start_y, z_nav, reference_frame=world.root)
     goal  = Point3(goal_x,  goal_y,  z_nav, reference_frame=world.root)
     try:
@@ -221,7 +246,7 @@ def _add_milk(world: World, stl_path: Path) -> tuple[Body, HomogeneousTransforma
         visual=ShapeCollection([mesh]),
         collision=ShapeCollection([mesh]),
     )
-    pose = HomogeneousTransformationMatrix.from_xyz_rpy(_MILK_X, _MILK_Y, _MILK_Z, 0, 0, 0)
+    pose = HomogeneousTransformationMatrix.from_xyz_rpy(MILK_X, MILK_Y, MILK_Z, 0, 0, 0)
     with world.modify_world():
         world.add_body(body)
         connection = Connection6DoF.create_with_dofs(parent=world.root, child=body, world=world)
@@ -243,7 +268,7 @@ def _create_pose_stamped(x: float, y: float, z: float, frame) -> PoseStamped:
 
 def _respawn_milk(world, milk_body: Body) -> None:
     spawn_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
-        _MILK_X, _MILK_Y, _MILK_Z, 0, 0, 0
+        MILK_X, MILK_Y, MILK_Z, 0, 0, 0
     )
     with world.modify_world():
         connection = milk_body.parent_connection
@@ -263,7 +288,7 @@ def _respawn_milk(world, milk_body: Body) -> None:
             )
             world.add_connection(new_conn)
             new_conn.origin = spawn_pose
-    print(f"  Milk respawned at  x={_MILK_X}, y={_MILK_Y}, z={_MILK_Z}")
+    print(f"  Milk respawned at  x={MILK_X}, y={MILK_Y}, z={MILK_Z}")
 
 
 
@@ -384,16 +409,16 @@ def _build_fixed_plan(
     nav_to_counter = _navigate_via_gcs(
         context, gcs,
         start_x=robot_start_x, start_y=robot_start_y,
-        goal_x=_COUNTER_APPROACH_X, goal_y=_COUNTER_APPROACH_Y,
+        goal_x=COUNTER_APPROACH_X, goal_y=COUNTER_APPROACH_Y,
         world=world,
     )
     nav_to_table = _navigate_via_gcs(
         context, gcs,
-        start_x=_COUNTER_APPROACH_X, start_y=_COUNTER_APPROACH_Y,
-        goal_x=_TABLE_APPROACH_X, goal_y=_TABLE_APPROACH_Y,
+        start_x=COUNTER_APPROACH_X, start_y=COUNTER_APPROACH_Y,
+        goal_x=TABLE_APPROACH_X, goal_y=TABLE_APPROACH_Y,
         world=world,
     )
-    place_target_pose = _create_pose_stamped(_PLACE_X, _PLACE_Y, _PLACE_Z, world_frame)
+    place_target_pose = _create_pose_stamped(PLACE_X, PLACE_Y, PLACE_Z, world_frame)
     actions = (
         [ParkArmsAction(arm=Arms.BOTH)]
         + nav_to_counter
@@ -405,7 +430,7 @@ def _build_fixed_plan(
                     approach_direction=ApproachDirection.FRONT,
                     vertical_alignment=VerticalAlignment.NoAlignment,
                     rotate_gripper=False,
-                    manipulation_offset=0.05,
+                    manipulation_offset=0.06,
                     manipulator=robot.right_arm.manipulator,
                 ),
             )
@@ -435,7 +460,7 @@ def _navigable_pose_description(robot: PR2) -> Any:
             position=probable(PyCramVector3)(x=..., y=..., z=0),
             orientation=probable(PyCramQuaternion)(x=0, y=0, z=0, w=1),
         ),
-        header=probable(Header)(frame_id=variable_from([robot._world.get_semantic_annotations_by_type(Milk)[0].root])),
+        header=probable(Header)(frame_id=variable_from([robot._world.root])),
     )
 
 
@@ -446,42 +471,54 @@ def _place_pose_description(robot) -> Any:
     """
     return probable(PoseStamped)(
         pose=probable(PyCramPose)(
-            position=probable(PyCramVector3)(x=..., y=..., z=_PLACE_Z),
+            position=probable(PyCramVector3)(x=..., y=..., z=PLACE_Z),
             orientation=probable(PyCramQuaternion)(x=0, y=0, z=0, w=1),
         ),
-        header=probable(Header)(frame_id=variable_from([robot._world.get_semantic_annotations_by_type(Table)[0].root])),
+        header=probable(Header)(frame_id=variable_from([robot._world.root])),
     )
 
 
 def _build_action_descriptions(world, robot, milk_variable) -> list:
     manipulators = world.get_semantic_annotations_by_type(Manipulator)
     return [
-        probable_variable(ParkArmsAction)(arm=...,),
+        probable_variable(ParkArmsAction)(
+            arm=variable(Arms, [Arms.BOTH]),
+        ),
         probable_variable(NavigateAction)(
             target_location=_navigable_pose_description(robot),
-            keep_joint_states=...,
+            keep_joint_states=False,
         ),
         probable_variable(PickUpAction)(
             object_designator=milk_variable,
-            arm=...,
+            arm=variable(Arms, [Arms.LEFT, Arms.RIGHT]),
             grasp_description=probable(GraspDescription)(
-                approach_direction=...,
-                vertical_alignment=...,
-                rotate_gripper=...,
-                manipulation_offset=0.05,
+                approach_direction=variable(
+                    ApproachDirection,
+                    [
+                        ApproachDirection.FRONT,
+                    ],
+                ),
+                vertical_alignment=variable(
+                    VerticalAlignment,
+                    [VerticalAlignment.NoAlignment],
+                ),
+                rotate_gripper=variable(bool, [False]),
+                manipulation_offset=0.06,
                 manipulator=variable(Manipulator, manipulators),
             ),
         ),
         probable_variable(NavigateAction)(
             target_location=_navigable_pose_description(robot),
-            keep_joint_states=...,
+            keep_joint_states=False
         ),
         probable_variable(PlaceAction)(
             object_designator=milk_variable,
             target_location=_place_pose_description(robot),
-            arm=...,
+            arm=variable(Arms, [Arms.LEFT, Arms.RIGHT]),
         ),
-        probable_variable(ParkArmsAction)(arm=...,),
+        probable_variable(ParkArmsAction)(
+            arm=variable(Arms, [Arms.BOTH]),
+        ),
     ]
 
 
@@ -498,8 +535,8 @@ def _build_action_descriptions(world, robot, milk_variable) -> list:
 # Table approach zone:   x=[3.0, 4.8], y=[2.5, 5.5]  (open floor in front of table)
 
 # (x_min, x_max, y_min, y_max) — world frame, floor level
-_COUNTER_APPROACH_BOUNDS = (1.0, 2.0, 1.8, 3.2)
-_TABLE_APPROACH_BOUNDS   = (3.0, 4.8, 2.5, 5.5)
+_COUNTER_APPROACH_BOUNDS = (1.2, 1.8, 2.3, 2.7)
+_TABLE_APPROACH_BOUNDS   = (4.1, 4.5, 3.8, 4.2)
 
 
 def _truncate_navigate_distribution(
@@ -689,13 +726,13 @@ def sequential_plan_with_apartment() -> None:
     _add_localization_frame(world, robot)
     milk_body, milk_pose = _add_milk(world, MILK_STL)
 
-    print(f"  Milk spawned at  x={_MILK_X:.3f},  y={_MILK_Y:.3f},  z={_MILK_Z:.3f}")
-    print(f"  Place target at  x={_PLACE_X:.3f}, y={_PLACE_Y:.3f}, z={_PLACE_Z:.3f}")
+    print(f"  Milk spawned at  x={MILK_X:.3f},  y={MILK_Y:.3f},  z={MILK_Z:.3f}")
+    print(f"  Place target at  x={PLACE_X:.3f}, y={PLACE_Y:.3f}, z={PLACE_Z:.3f}")
 
     gcs = _build_navigation_map(world)
 
-    session = _create_session(_DATABASE_URI)
-    print(f"  Database: {_DATABASE_URI}")
+    session = _create_session(DATABASE_URI)
+    print(f"  Database: {DATABASE_URI}")
 
     rclpy.init()
     ros_node    = rclpy.create_node("pycram_gcs_plan_demo")
@@ -706,8 +743,8 @@ def sequential_plan_with_apartment() -> None:
     robot_init_y: float = 1.5
 
     try:
-        _tf_publisher  = TFPublisher(_world=world, node=ros_node)
-        _viz_publisher = VizMarkerPublisher(_world=world, node=ros_node)
+        _transformation_publisher = TFPublisher(_world=world, node=ros_node)
+        _visualization_publisher = VizMarkerPublisher(_world=world, node=ros_node)
 
         context       = Context(world, robot, None)
         milk_variable = variable_from([milk_body])
@@ -731,12 +768,12 @@ def sequential_plan_with_apartment() -> None:
 
         successful_count = 0
 
-        for iteration in range(1, NUM_ITERATIONS + 1):
+        for iteration in range(1, NUMBER_OF_ITERATIONS + 1):
             separator = "=" * 64
             print(f"\n{separator}")
 
             if iteration == 1:
-                print(f"  Iteration {iteration:>3} / {NUM_ITERATIONS}  [FIXED + GCS navigation]")
+                print(f"  Iteration {iteration:>3} / {NUMBER_OF_ITERATIONS}  [FIXED + GCS navigation]")
                 print(separator)
                 plan = _build_fixed_plan(
                     context, world, robot, milk_body, gcs,
@@ -744,7 +781,7 @@ def sequential_plan_with_apartment() -> None:
                     robot_start_y=robot_init_y,
                 )
             else:
-                print(f"  Iteration {iteration:>3} / {NUM_ITERATIONS}  [SAMPLED + GCS navigation]")
+                print(f"  Iteration {iteration:>3} / {NUMBER_OF_ITERATIONS}  [SAMPLED + GCS navigation]")
                 print(separator)
                 plan = _build_sampled_plan_with_gcs(
                     context, entries, gcs, world,
@@ -766,7 +803,7 @@ def sequential_plan_with_apartment() -> None:
                     _respawn_milk(world, milk_body)
 
         print(f"\n{'=' * 64}")
-        print(f"Done.  {successful_count} / {NUM_ITERATIONS} plans stored in '{_DATABASE_URI}'.")
+        print(f"Done.  {successful_count} / {NUMBER_OF_ITERATIONS} plans stored in '{DATABASE_URI}'.")
 
     finally:
         session.close()
