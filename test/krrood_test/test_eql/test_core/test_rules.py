@@ -492,7 +492,5 @@ def test_doc_example(rule_tree_doc_example_connections, alternative_code,
 
     # 3. Execution
     results = query.tolist()
-    print(f"Inferred {len(results)} views from {len(rule_tree_doc_example_connections)} connections.")
-    print("\n".join([str(v) for v in results]))
     assert len(results) == len(result_set)
     assert set(results) == result_set
