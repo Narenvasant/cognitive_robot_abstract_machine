@@ -48,7 +48,7 @@ NUM_ITERATIONS: int = 20
 """
 Total number of plan iterations to run.
 Iteration 1 uses fixed/known-good values (original demo2.py behaviour).
-Iterations 2..NUM_ITERATIONS use probabilistic sampling (demo4.py behaviour).
+Iterations 2..NUM_ITERATIONS use probabilistic sampling (pick_place_demo(apartment_world).py behaviour).
 """
 
 _DATABASE_URI: str = os.environ.get(
@@ -481,7 +481,7 @@ def sequential_plan_with_apartment() -> None:
     Execute a pick-and-place plan for NUM_ITERATIONS iterations:
 
       Iteration 1   — fixed known-good coordinates (original demo2.py behaviour).
-      Iterations 2+ — probabilistically sampled parameters (demo4.py behaviour).
+      Iterations 2+ — probabilistically sampled parameters (pick_place_demo(apartment_world).py behaviour).
 
     Each successful execution is persisted to the configured database.
 
