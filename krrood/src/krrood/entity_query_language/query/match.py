@@ -440,6 +440,7 @@ class AttributeMatch(AbstractMatchExpression[T]):
             self.assigned_value.variable
             if isinstance(self.assigned_value, AbstractMatchExpression)
             else Literal(
+                _name__=self.variable._name_,
                 _type_=self.type,
                 _value_=self.assigned_value,
             )

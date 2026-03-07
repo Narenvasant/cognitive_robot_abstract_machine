@@ -50,6 +50,7 @@ def test_same_query_multiple_backends(session, database):
         position=underspecified(Position)(x=..., y=..., z=...),
         orientation=Orientation(x=0.0, y=0.0, z=0.0, w=1.0),
     )
+    prob_q.expression
     prob_q.where(prob_q.variable.position.x > 0.5)
 
     parameters = UnderspecifiedParameters(prob_q)

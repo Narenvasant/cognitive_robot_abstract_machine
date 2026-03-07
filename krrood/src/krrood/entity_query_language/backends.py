@@ -8,12 +8,12 @@ from krrood.entity_query_language.failures import (
     NoSolutionFound,
     GenerativeBackendQueryIsNotUnderspecifiedVariable,
 )
-from krrood.entity_query_language.query.match import UnderspecifiedVariable
+from krrood.entity_query_language.query.match import Match
 from krrood.entity_query_language.query.query import Query
 from krrood.ormatic.eql_interface import eql_to_sql
 from krrood.parametrization.model_registries import ModelRegistry
 from krrood.parametrization.parameterizer import (
-    UnderspecifiedFactory,
+    MatchVariable,
     UnderspecifiedParameters,
 )
 
@@ -49,26 +49,17 @@ class SelectiveBackend(QueryBackend, ABC):
 class GenerativeBackend(QueryBackend, ABC):
     """
     Generative backends are backends that generate new elements.
-    Generative backends have to take match expressions as input, since they need to construct new objects and currently
+    Generative backends have to take match expressions as input, since they need to construct new objects, and currently
     `Match` is the only way to do so.
     """
 
-    def _generate_factory_from_expression(
-        self, expression: UnderspecifiedVariable
-    ) -> UnderspecifiedFactory:
-        """
-        :param expression: A match expression describing the structure of an instance.
-        :return: An instance described by the match expression.
-        """
-        return UnderspecifiedFactory(expression)
-
     def evaluate(self, expression: Query) -> Iterable[T]:
-        if not isinstance(expression, UnderspecifiedVariable):
+        if not isinstance(expression, Match):
             raise GenerativeBackendQueryIsNotUnderspecifiedVariable(expression)
         yield from self._evaluate(expression)
 
     @abstractmethod
-    def _evaluate(self, expression: UnderspecifiedVariable) -> Iterable[T]: ...
+    def _evaluate(self, expression: Match[T]) -> Iterable[T]: ...
 
 
 @dataclass
@@ -114,7 +105,7 @@ class ProbabilisticBackend(GenerativeBackend):
     The number of samples to generate.
     """
 
-    def _evaluate(self, expression: UnderspecifiedVariable) -> Iterable[T]:
+    def _evaluate(self, expression: Match[T]) -> Iterable[T]:
 
         # generate parameters from example instance values
         parameters = UnderspecifiedParameters(expression)

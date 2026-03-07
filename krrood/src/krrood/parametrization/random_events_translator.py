@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import operator
 from collections import deque
 from dataclasses import dataclass
@@ -46,7 +47,9 @@ class WhereExpressionToRandomEventTranslator:
     @cached_property
     def variables(self) -> Dict[MappedVariable, random_events.variable.Variable]:
         result = {}
-        for comparator in self.conditions_root._descendants_:
+        for comparator in itertools.chain(
+            [self.conditions_root], self.conditions_root._descendants_
+        ):
             if not is_literal_comparator(comparator):
                 continue
             result[comparator.left] = (
