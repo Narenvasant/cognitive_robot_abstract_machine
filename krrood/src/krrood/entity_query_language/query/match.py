@@ -178,7 +178,7 @@ class Match(AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
         >>>     body: Body
         >>> drawer = match_variable(Drawer, domain=None)(body=match(Body)(name="drawer_1")))
 
-    .. warn::
+    .. warning::
         Match can take a factory as a mean to construct `T`. If the keyword argument names of the match are not
         available in the class itself, the variables reffered to in the `where` conditions will not align with the
         variables from the factory. It is strongly recommended to have the names of the factory available in the class,
@@ -221,7 +221,6 @@ class Match(AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
             raise ValueError("Match instance has already been called")
         self.kwargs = kwargs
         self._has_been_called = True
-        # _ = self.expression
         return self
 
     @property
@@ -289,10 +288,6 @@ class Match(AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
             attr_match.resolve()
             self.children.append(attr_match)
             self.conditions.extend(attr_match.conditions)
-
-    def _get_parameter_from_value_in_kwarg(self, parameter: Any):
-        assert isinstance(parameter, Literal)
-        return parameter._value_
 
     def update_fields(
         self,
