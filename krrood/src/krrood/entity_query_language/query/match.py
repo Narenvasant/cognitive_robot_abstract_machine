@@ -31,6 +31,7 @@ from typing_extensions import (
 from krrood.adapters.json_serializer import list_like_classes
 from krrood.entity_query_language.core.base_expressions import (
     Selectable,
+    SymbolicExpression,
 )
 from krrood.entity_query_language.core.mapped_variable import (
     Attribute,
@@ -445,16 +446,16 @@ class AttributeMatch(AbstractMatchExpression[T]):
         """
         :return: The symbolic variable representing the assigned value.
         """
-
-        return (
-            self.assigned_value.variable
-            if isinstance(self.assigned_value, AbstractMatchExpression)
-            else Literal(
+        if isinstance(self.assigned_value, AbstractMatchExpression):
+            return self.assigned_value.variable
+        elif not isinstance(self.assigned_value, SymbolicExpression):
+            return Literal(
                 _name__=self.variable._name_,
                 _type_=self.type,
                 _value_=self.assigned_value,
             )
-        )
+        else:
+            return self.assigned_value
 
     @cached_property
     def attribute(self) -> Attribute:
