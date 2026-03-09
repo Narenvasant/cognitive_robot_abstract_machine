@@ -56,11 +56,7 @@ logging.basicConfig(
 )
 
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-NUMBER_OF_ITERATIONS: int = 50
+NUMBER_OF_ITERATIONS: int = 30000
 """Total number of plan iterations to run. Iteration 1 uses fixed parameters; all others sample."""
 
 DATABASE_URI: str = os.environ.get(
@@ -195,9 +191,6 @@ def _patch_orm_numpy_array_type() -> None:
 _patch_orm_numpy_array_type()
 
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
 
 @dataclass
 class ActionEntry:
@@ -216,10 +209,6 @@ class ActionEntry:
     distribution: ProbabilisticCircuit
     base_distribution: ProbabilisticCircuit = None
 
-
-# ---------------------------------------------------------------------------
-# World construction
-# ---------------------------------------------------------------------------
 
 def _build_world_with_robot() -> tuple[World, PR2]:
     """
@@ -315,10 +304,6 @@ def _add_milk_to_world(world: World) -> Body:
     return milk_body
 
 
-# ---------------------------------------------------------------------------
-# Per-iteration respawn
-# ---------------------------------------------------------------------------
-
 def _respawn_milk(world: World, milk_body: Body) -> None:
     """
     Reset the milk object to its configured initial position.
@@ -368,9 +353,6 @@ def _respawn_robot(world: World, robot: PR2) -> None:
             base_connection.origin = initial_pose
 
 
-# ---------------------------------------------------------------------------
-# Database
-# ---------------------------------------------------------------------------
 
 def _create_database_session(database_uri: str) -> Session:
     """
