@@ -380,14 +380,22 @@ class Match(AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
         return self
 
     def _update_kwargs_from_literal_values(self):
-        for literal in self.matches_with_variables:
-            literal._update_kwargs_from(self)
+        """
+        Update the kwargs dictionary with values from this statements leaves.
+        """
+        for attribute_match in self.matches_with_variables:
+            attribute_match._update_kwargs_from(self)
 
     def _get_mapped_variable_by_name(self, name: str) -> MappedVariable:
+        """
+        Get a mapped variable by its name in the path.
+        :param name: The name
+        :return: The mapped variable
+        """
         [result] = [
-            literal.assigned_variable
-            for literal in self.matches_with_variables
-            if literal.assigned_variable._name_ == name
+            attribute_match.assigned_variable
+            for attribute_match in self.matches_with_variables
+            if attribute_match.name_from_variable_access_path == name
         ]
         return result
 
@@ -561,6 +569,14 @@ class AttributeMatch(AbstractMatchExpression[T]):
             final_step._set_child_instance_value_(
                 current_value, self.assigned_variable._value_
             )
+
+    @property
+    def name_from_variable_access_path(self):
+        """
+        :return: The last name from the variables access path. This is similar to `self.name` but without `Match`
+        specific wrappings.
+        """
+        return self.variable._access_path_[-1]._name_
 
 
 def construct_graph_and_get_root(

@@ -62,25 +62,25 @@ class UnderspecifiedParameters:
         """
         result = {v.name: v for v in self._random_event_compiler.variables.values()}
 
-        for literal in self.statement.matches_with_variables:
-            name = literal.variable._access_path_[-1]._name_
+        for attribute_match in self.statement.matches_with_variables:
+            name = attribute_match.name_from_variable_access_path
 
-            if isinstance(literal.assigned_value, SymbolicExpression):
+            if isinstance(attribute_match.assigned_value, SymbolicExpression):
                 random_events_variable = random_events.variable.Symbolic(
                     name,
-                    Set.from_iterable(literal.assigned_value.tolist()),
+                    Set.from_iterable(attribute_match.assigned_value.tolist()),
                 )
                 result[random_events_variable.name] = random_events_variable
                 continue
 
             if not issubclass(
-                literal.assigned_variable._type_,
+                attribute_match.assigned_variable._type_,
                 random_events.variable.compatible_types,
             ):
                 continue
 
             random_events_variable = random_events.variable.variable_from_name_and_type(
-                name, literal.assigned_variable._type_
+                name, attribute_match.assigned_variable._type_
             )
 
             result[random_events_variable.name] = random_events_variable
