@@ -20,11 +20,10 @@ import datetime
 import enum
 import krrood.adapters.json_serializer
 import krrood.entity_query_language.orm.model
-import krrood.entity_query_language.predicate
-import krrood.entity_query_language.symbol_graph
 import krrood.ormatic.alternative_mappings
 import krrood.ormatic.custom_types
 import krrood.ormatic.type_dict
+import krrood.symbol_graph.symbol_graph
 import sqlalchemy.sql.sqltypes
 import test.krrood_test.dataset.example_classes
 import test.krrood_test.dataset.semantic_world_like_classes
@@ -50,7 +49,7 @@ class Base(DeclarativeBase):
 # Association tables for many-to-many relationships
 class GenericClass_PositionDAO_container_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "GenericClass_PositionDAO_container_association"
+    __tablename__ = "_-1319596179410880473"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_genericclass_positiondao_id: Mapped[int] = mapped_column(
@@ -69,7 +68,7 @@ class GenericClassAssociationDAO_associated_value_list_association(
     Base, AssociationDataAccessObject
 ):
 
-    __tablename__ = "GenericClassAssociationDAO_associated_value_list_association"
+    __tablename__ = "_-2265554251189241194"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_genericclassassociationdao_id: Mapped[int] = mapped_column(
@@ -88,7 +87,7 @@ class ParentAlternativelyMappedMappingDAO_entities_association(
     Base, AssociationDataAccessObject
 ):
 
-    __tablename__ = "ParentAlternativelyMappedMappingDAO_entities_association"
+    __tablename__ = "_-233528499307801135"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_parentalternativelymappedmappingdao_id: Mapped[int] = mapped_column(
@@ -105,7 +104,7 @@ class ParentAlternativelyMappedMappingDAO_entities_association(
 
 class PersonDAO_knows_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "PersonDAO_knows_association"
+    __tablename__ = "_-764543936281445367"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_persondao_id: Mapped[int] = mapped_column(
@@ -124,7 +123,7 @@ class AlternativeMappingAggregatorDAO_entities1_association(
     Base, AssociationDataAccessObject
 ):
 
-    __tablename__ = "AlternativeMappingAggregatorDAO_entities1_association"
+    __tablename__ = "_5456822333810866603"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_alternativemappingaggregatordao_id: Mapped[int] = mapped_column(
@@ -143,7 +142,7 @@ class AlternativeMappingAggregatorDAO_entities2_association(
     Base, AssociationDataAccessObject
 ):
 
-    __tablename__ = "AlternativeMappingAggregatorDAO_entities2_association"
+    __tablename__ = "_6505792746534469036"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_alternativemappingaggregatordao_id: Mapped[int] = mapped_column(
@@ -160,7 +159,7 @@ class AlternativeMappingAggregatorDAO_entities2_association(
 
 class ContainerGenerationDAO_items_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "ContainerGenerationDAO_items_association"
+    __tablename__ = "_-8125350060059031574"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_containergenerationdao_id: Mapped[int] = mapped_column(
@@ -179,7 +178,7 @@ class DoublePositionAggregatorDAO_positions1_association(
     Base, AssociationDataAccessObject
 ):
 
-    __tablename__ = "DoublePositionAggregatorDAO_positions1_association"
+    __tablename__ = "_7264942353974454251"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_doublepositionaggregatordao_id: Mapped[int] = mapped_column(
@@ -198,7 +197,7 @@ class DoublePositionAggregatorDAO_positions2_association(
     Base, AssociationDataAccessObject
 ):
 
-    __tablename__ = "DoublePositionAggregatorDAO_positions2_association"
+    __tablename__ = "_-7834511131901786554"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_doublepositionaggregatordao_id: Mapped[int] = mapped_column(
@@ -215,7 +214,7 @@ class DoublePositionAggregatorDAO_positions2_association(
 
 class FruitBoxDAO_fruits_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "FruitBoxDAO_fruits_association"
+    __tablename__ = "_-2018994952024394665"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_fruitboxdao_id: Mapped[int] = mapped_column(
@@ -228,7 +227,7 @@ class FruitBoxDAO_fruits_association(Base, AssociationDataAccessObject):
 
 class MoreShapesDAO_shapes_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "MoreShapesDAO_shapes_association"
+    __tablename__ = "_1989541833943678677"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_moreshapesdao_id: Mapped[int] = mapped_column(
@@ -243,28 +242,9 @@ class MoreShapesDAO_shapes_association(Base, AssociationDataAccessObject):
     )
 
 
-class OptionalTestCaseDAO_list_of_orientations_association(
-    Base, AssociationDataAccessObject
-):
-
-    __tablename__ = "OptionalTestCaseDAO_list_of_orientations_association"
-
-    database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source_optionaltestcasedao_id: Mapped[int] = mapped_column(
-        ForeignKey("OptionalTestCaseDAO.database_id")
-    )
-    target_orientationdao_id: Mapped[int] = mapped_column(
-        ForeignKey("OrientationDAO.database_id")
-    )
-
-    target: Mapped[OrientationDAO] = relationship(
-        "OrientationDAO", foreign_keys=[target_orientationdao_id]
-    )
-
-
 class PositionsDAO_positions_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "PositionsDAO_positions_association"
+    __tablename__ = "_-695462867070949316"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_positionsdao_id: Mapped[int] = mapped_column(
@@ -281,7 +261,7 @@ class PositionsDAO_positions_association(Base, AssociationDataAccessObject):
 
 class ShapesDAO_shapes_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "ShapesDAO_shapes_association"
+    __tablename__ = "_3566490050815224974"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_shapesdao_id: Mapped[int] = mapped_column(
@@ -296,7 +276,7 @@ class ShapesDAO_shapes_association(Base, AssociationDataAccessObject):
 
 class SymbolGraphMappingDAO_instances_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "SymbolGraphMappingDAO_instances_association"
+    __tablename__ = "_3764806922124777437"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_symbolgraphmappingdao_id: Mapped[int] = mapped_column(
@@ -315,7 +295,7 @@ class SymbolGraphMappingDAO_predicate_relations_association(
     Base, AssociationDataAccessObject
 ):
 
-    __tablename__ = "SymbolGraphMappingDAO_predicate_relations_association"
+    __tablename__ = "_-6233525190122171443"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_symbolgraphmappingdao_id: Mapped[int] = mapped_column(
@@ -332,7 +312,7 @@ class SymbolGraphMappingDAO_predicate_relations_association(
 
 class TestPositionSetDAO_positions_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "TestPositionSetDAO_positions_association"
+    __tablename__ = "_8699849896003446407"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_testpositionsetdao_id: Mapped[int] = mapped_column(
@@ -349,7 +329,7 @@ class TestPositionSetDAO_positions_association(Base, AssociationDataAccessObject
 
 class TorsoDAO_kinematic_chains_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "TorsoDAO_kinematic_chains_association"
+    __tablename__ = "_-7005955729705049080"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_torsodao_id: Mapped[int] = mapped_column(ForeignKey("TorsoDAO.database_id"))
@@ -366,7 +346,7 @@ class VectorsWithPropertyMappedDAO_vectors_association(
     Base, AssociationDataAccessObject
 ):
 
-    __tablename__ = "VectorsWithPropertyMappedDAO_vectors_association"
+    __tablename__ = "_-7123101327185400199"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_vectorswithpropertymappeddao_id: Mapped[int] = mapped_column(
@@ -383,7 +363,7 @@ class VectorsWithPropertyMappedDAO_vectors_association(
 
 class WorldDAO_bodies_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "WorldDAO_bodies_association"
+    __tablename__ = "_-1216039366961030543"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_worlddao_id: Mapped[int] = mapped_column(ForeignKey("WorldDAO.database_id"))
@@ -394,7 +374,7 @@ class WorldDAO_bodies_association(Base, AssociationDataAccessObject):
 
 class WorldDAO_connections_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "WorldDAO_connections_association"
+    __tablename__ = "_5049961575030979927"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_worlddao_id: Mapped[int] = mapped_column(ForeignKey("WorldDAO.database_id"))
@@ -409,7 +389,7 @@ class WorldDAO_connections_association(Base, AssociationDataAccessObject):
 
 class WorldDAO_views_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "WorldDAO_views_association"
+    __tablename__ = "_-3736483489722177717"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_worlddao_id: Mapped[int] = mapped_column(ForeignKey("WorldDAO.database_id"))
@@ -420,7 +400,7 @@ class WorldDAO_views_association(Base, AssociationDataAccessObject):
 
 class CabinetDAO_drawers_association(Base, AssociationDataAccessObject):
 
-    __tablename__ = "CabinetDAO_drawers_association"
+    __tablename__ = "_-5957619959266055858"
 
     database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_cabinetdao_id: Mapped[int] = mapped_column(
@@ -857,8 +837,7 @@ class PolymorphicEnumAssociationDAO(
 
 
 class PredicateClassRelationDAO(
-    Base,
-    DataAccessObject[krrood.entity_query_language.symbol_graph.PredicateClassRelation],
+    Base, DataAccessObject[krrood.symbol_graph.symbol_graph.PredicateClassRelation]
 ):
 
     __tablename__ = "PredicateClassRelationDAO"
@@ -942,7 +921,7 @@ class MultipleInheritanceDAO(
     }
 
 
-class SymbolDAO(Base, DataAccessObject[krrood.entity_query_language.predicate.Symbol]):
+class SymbolDAO(Base, DataAccessObject[krrood.symbol_graph.symbol_graph.Symbol]):
 
     __tablename__ = "SymbolDAO"
 
@@ -1437,50 +1416,6 @@ class ObjectAnnotationDAO(
     }
 
 
-class OptionalTestCaseDAO(
-    SymbolDAO,
-    DataAccessObject[test.krrood_test.dataset.example_classes.OptionalTestCase],
-):
-
-    __tablename__ = "OptionalTestCaseDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(SymbolDAO.database_id), primary_key=True, use_existing_column=True
-    )
-
-    value: Mapped[builtins.int] = mapped_column(use_existing_column=True)
-
-    list_of_values: Mapped[typing.List[builtins.int]] = mapped_column(
-        JSON, nullable=False, use_existing_column=True
-    )
-
-    optional_position_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
-        ForeignKey("PositionDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-
-    optional_position: Mapped[PositionDAO] = relationship(
-        "PositionDAO",
-        uselist=False,
-        foreign_keys=[optional_position_id],
-        post_update=True,
-    )
-    list_of_orientations: Mapped[
-        builtins.list[OptionalTestCaseDAO_list_of_orientations_association]
-    ] = relationship(
-        "OptionalTestCaseDAO_list_of_orientations_association",
-        collection_class=builtins.list,
-        cascade="all, delete-orphan",
-        foreign_keys="[OptionalTestCaseDAO_list_of_orientations_association.source_optionaltestcasedao_id]",
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "OptionalTestCaseDAO",
-        "inherit_condition": database_id == SymbolDAO.database_id,
-    }
-
-
 class OrientationDAO(
     SymbolDAO, DataAccessObject[test.krrood_test.dataset.example_classes.Orientation]
 ):
@@ -1769,22 +1704,6 @@ class PositionsSubclassWithAnotherPositionDAO(
     __mapper_args__ = {
         "polymorphic_identity": "PositionsSubclassWithAnotherPositionDAO",
         "inherit_condition": database_id == PositionsDAO.database_id,
-    }
-
-
-class PredicateDAO(
-    SymbolDAO, DataAccessObject[krrood.entity_query_language.predicate.Predicate]
-):
-
-    __tablename__ = "PredicateDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(SymbolDAO.database_id), primary_key=True, use_existing_column=True
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "PredicateDAO",
-        "inherit_condition": database_id == SymbolDAO.database_id,
     }
 
 

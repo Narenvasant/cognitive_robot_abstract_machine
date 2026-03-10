@@ -4,6 +4,7 @@ import copy
 import datetime
 import math
 from dataclasses import dataclass, field
+from numbers import Number
 
 import numpy as np
 from semantic_digital_twin.spatial_types.spatial_types import (
@@ -14,9 +15,9 @@ from semantic_digital_twin.spatial_types.spatial_types import (
 from semantic_digital_twin.world_description.world_entity import Body
 from typing_extensions import Self, Tuple, Optional, List, TYPE_CHECKING
 
-from .enums import AxisIdentifier, Arms
-from ..ros import Time as ROSTime
-from ..tf_transformations import (
+from pycram.datastructures.enums import AxisIdentifier, Arms
+from pycram.ros import Time as ROSTime
+from pycram.tf_transformations import (
     quaternion_multiply,
     translation_matrix,
     quaternion_matrix,
@@ -26,7 +27,7 @@ from ..tf_transformations import (
 )
 
 if TYPE_CHECKING:
-    from .grasp import GraspDescription
+    from pycram.datastructures.grasp import GraspDescription
 
 
 @dataclass
@@ -185,10 +186,10 @@ class PyCramQuaternion:
         # TODO fix this
         # if the object is not fully constructed yet
         if not (
-            hasattr(self, "x")
-            and hasattr(self, "y")
-            and hasattr(self, "z")
-            and hasattr(self, "w")
+            hasattr(self, "x") and isinstance(self.x, Number)
+            and hasattr(self, "y") and isinstance(self.y, Number)
+            and hasattr(self, "z") and isinstance(self.z, Number)
+            and hasattr(self, "w") and isinstance(self.w, Number)
         ):
             return
 

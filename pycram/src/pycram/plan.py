@@ -6,10 +6,10 @@ from dataclasses import field, dataclass
 from datetime import datetime
 from enum import IntEnum
 from itertools import chain
+
 import numpy as np
 import rustworkx as rx
 import rustworkx.visualization
-from random_events.variable import Variable
 from typing_extensions import (
     Optional,
     Callable,
@@ -28,32 +28,25 @@ from typing_extensions import (
 )
 
 from giskardpy.motion_statechart.graph_node import Task
-from krrood.class_diagrams.failures import ClassIsUnMappedInClassDiagram
-from krrood.ormatic.dao import get_dao_class, to_dao
-from random_events.product_algebra import SimpleEvent
+from krrood.entity_query_language.query.match import Match
 from krrood.ormatic.utils import leaf_types
+
+from pycram.datastructures.dataclasses import ExecutionData, Context
+from pycram.datastructures.enums import TaskStatus
+from pycram.datastructures.pose import PoseStamped
+from pycram.failures import PlanFailure
+from pycram.motion_executor import MotionExecutor
 from semantic_digital_twin.world_description.world_entity import Body
 from semantic_digital_twin.world_description.world_modification import (
     WorldModelModificationBlock,
 )
-from krrood.class_diagrams.class_diagram import ClassDiagram
-from krrood.probabilistic_knowledge.parameterizer import (
-    Parameterizer,
-    Parameterizer,
-    Parameterization,
-)
-from .datastructures.dataclasses import ExecutionData, Context
-from .datastructures.enums import TaskStatus
-from .datastructures.pose import PoseStamped
-from .failures import PlanFailure
-from .motion_executor import MotionExecutor
 
 if TYPE_CHECKING:
-    from .robot_plans import ActionDescription
-    from .designator import DesignatorDescription, DesignatorType
-    from .datastructures.partial_designator import PartialDesignator
-    from .robot_plans.actions.base import ActionType
-    from .robot_plans.motions.base import MotionType
+    from pycram.robot_plans import ActionDescription
+    from pycram.designator import DesignatorDescription, DesignatorType
+    from pycram.datastructures.partial_designator import PartialDesignator
+    from pycram.robot_plans.actions.base import ActionType
+    from pycram.robot_plans.motions.base import MotionType
 else:
     ActionType = TypeVar("ActionType")
     MotionType = TypeVar("MotionType")
@@ -99,10 +92,6 @@ class Plan:
     """
     Callbacks to be called when a node of the given type is ended.
     """
-    parameterizer: Parameterizer = field(init=False)
-    """
-    Parameterizer used to parameterize the plan.
-    """
 
     def __init__(self, root: PlanNode, context: Context):
         super().__init__()
@@ -119,7 +108,6 @@ class Plan:
         self.current_node: PlanNode = self.root
         if self.super_plan:
             self.super_plan.add_edge(self.super_plan.current_node, self.root)
-        self.parameterizer = Parameterizer()
 
     @property
     def nodes(self) -> List[PlanNode]:
@@ -627,37 +615,6 @@ class Plan:
         """
         if cls.on_end_callback and action_type in cls.on_end_callback:
             cls.on_end_callback[action_type].remove(callback)
-
-    def parameterize(self) -> Parameterization:
-        """
-        Parameterize all parameters of a plan using the krrood parameterizer.
-
-        :param classes: List of classes to include in the ClassDiagram
-                        (including classes found on the plan nodes).
-        :return: List of random event variables created by the parameterizer.
-        """
-
-        ordered_nodes = [self.root] + self.root.recursive_children
-
-        designator_nodes = [
-            node
-            for node in ordered_nodes
-            if isinstance(node, DesignatorNode) and node.designator_type is not None
-        ]
-
-        parameterization = Parameterization()
-
-        for index, node in enumerate(designator_nodes):
-            prefix = f"{node.designator_type.__name__}_{index}"
-            new_parameterization = self.parameterizer.parameterize(
-                node.designator_type(**node.kwargs), prefix=prefix
-            )
-            parameterization.merge_parameterization(new_parameterization)
-
-        return parameterization
-
-    def create_fully_factorized_distribution(self):
-        return self.parameterizer.create_fully_factorized_distribution()
 
 
 def managed_node(func: Callable) -> Callable:

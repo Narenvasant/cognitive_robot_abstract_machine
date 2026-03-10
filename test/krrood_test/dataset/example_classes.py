@@ -8,13 +8,13 @@ from enum import Enum, auto
 from types import FunctionType
 from typing import Set, Generic
 
-from sqlalchemy import types, TypeDecorator, JSON
+from sqlalchemy import types, TypeDecorator
 from typing_extensions import Dict, Any, Sequence, Self
 from typing_extensions import List, Optional, Type
 
 from krrood.adapters.json_serializer import SubclassJSONSerializer, to_json, from_json
-from krrood.entity_query_language.predicate import Symbol
 from krrood.ormatic.dao import AlternativeMapping, T
+from krrood.symbol_graph.symbol_graph import Symbol
 
 
 # check that custom enums works
@@ -38,6 +38,10 @@ class Position(Symbol):
     y: float
     z: float
 
+    @classmethod
+    def from_abc(cls, a: float, b: float, c: float) -> Self:
+        return Position(a, b, c)
+
 
 # check that classes with optional values work
 @dataclass
@@ -53,14 +57,6 @@ class Orientation(Symbol):
 class Pose(Symbol):
     position: Position
     orientation: Orientation
-
-
-@dataclass
-class OptionalTestCase(Symbol):
-    value: int
-    optional_position: Optional[Position] = None
-    list_of_orientations: List[Orientation] = field(default_factory=list)
-    list_of_values: List[int] = field(default_factory=list)
 
 
 # check that many to many relationship to built in types and non built in types work

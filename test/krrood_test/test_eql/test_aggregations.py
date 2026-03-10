@@ -1,38 +1,36 @@
 from collections import defaultdict
-from dataclasses import dataclass, field
 
 import pytest
-from typing_extensions import List
 
-import krrood.entity_query_language.entity_result_processors as eql
-from ..dataset.example_classes import NamedNumbers
-from krrood.entity_query_language.entity import (
-    variable,
-    variable_from,
-    entity,
-    set_of,
-    contains,
-    distinct,
-)
-from krrood.entity_query_language.entity_result_processors import an, a
-from krrood.entity_query_language.failures import (
+import krrood.entity_query_language.factories as eql
+from krrood.entity_query_language.exceptions import (
     NonAggregatedSelectedVariablesError,
     AggregatorInWhereConditionsError,
     NestedAggregationError,
     UnsupportedAggregationOfAGroupedByVariable,
 )
-from krrood.entity_query_language.symbolic import Having, GroupBy
+from krrood.entity_query_language.factories import (
+    entity,
+    set_of,
+    variable,
+    distinct,
+    contains,
+    an,
+    a,
+    flat_variable,
+)
+from krrood.entity_query_language.predicate import length
+from krrood.entity_query_language.query.operations import GroupedBy
 from ..dataset.department_and_employee import Department, Employee
+from ..dataset.example_classes import NamedNumbers
 from ..dataset.semantic_world_like_classes import Cabinet, Body, Container, Drawer
 
 
 def test_count(handles_and_containers_world):
     world = handles_and_containers_world
     body = variable(type_=Body, domain=world.bodies)
-    query = eql.count(
-        entity(body).where(
-            contains(body.name, "Handle"),
-        )
+    query = entity(eql.count(body)).where(
+        contains(body.name, "Handle"),
     )
     assert query.tolist()[0] == len([b for b in world.bodies if "Handle" in b.name])
 
@@ -111,7 +109,7 @@ def test_max_on_empty_list(handles_and_containers_world):
 def test_non_aggregated_selectables_with_aggregated_ones(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    drawer = variable_from(cabinet.drawers)
+    drawer = flat_variable(cabinet.drawers)
     with pytest.raises(NonAggregatedSelectedVariablesError):
         query = a(
             set_of(drawer, eql.max(drawer))
@@ -121,10 +119,28 @@ def test_non_aggregated_selectables_with_aggregated_ones(handles_and_containers_
         _ = list(query.evaluate())
 
 
+def test_non_aggregated_selectables_without_aggregation_and_with_grouped_by(
+    handles_and_containers_world,
+):
+    world = handles_and_containers_world
+    cabinet = variable(Cabinet, domain=world.views)
+    drawer = flat_variable(cabinet.drawers)
+    results = a(
+        set_of(cabinet, drawer)
+        .where(drawer.handle.name.startswith("H"))
+        .grouped_by(cabinet)
+    ).tolist()
+    assert len(results) == 2
+    assert all(isinstance(r[cabinet], Cabinet) for r in results)
+    assert all(isinstance(r[drawer], list) and len(r[drawer]) > 0 for r in results)
+    assert all(isinstance(d, Drawer) for r in results for d in r[drawer])
+    assert all(r[drawer] == r[cabinet].drawers for r in results)
+
+
 def test_non_aggregated_conditions_with_aggregated_ones(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    drawer = variable_from(cabinet.drawers)
+    drawer = flat_variable(cabinet.drawers)
     query = a(
         set_of(cabinet, eql.max(drawer.handle.name))
         .where(cabinet.container.name.startswith("C"))
@@ -143,10 +159,9 @@ def test_non_aggregated_conditions_with_aggregated_ones(handles_and_containers_w
 def test_max_grouped_by(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    drawer = variable_from(cabinet.drawers)
+    drawer = flat_variable(cabinet.drawers)
 
     # We want to find the drawer with the "largest" handle name (alphabetically) per cabinet.
-    # drawers_by_cabinet = variable_from(cabinet.drawers).grouped_by(cabinet)
     query = a(
         set_of(
             cabinet, max_drawer := eql.max(drawer, key=lambda d: d.handle.name)
@@ -163,13 +178,16 @@ def test_max_grouped_by(handles_and_containers_world):
         c = res[cabinet]
         d = res[max_drawer]
         assert d in c.drawers
-        assert d.handle.name == max(cd.handle.name for cd in c.drawers)
+        assert (
+            d.handle.name
+            == max((cd for cd in c.drawers), key=lambda d: d.handle.name).handle.name
+        )
 
 
 def test_having_with_max(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    drawer = variable_from(cabinet.drawers)
+    drawer = flat_variable(cabinet.drawers)
 
     query = a(
         set_of(
@@ -180,7 +198,6 @@ def test_having_with_max(handles_and_containers_world):
         .grouped_by(cabinet)
         .having(drawer_count > 1)
     )
-    query.visualize()
     results = list(query.evaluate())
     assert len(results) == 1
 
@@ -188,7 +205,7 @@ def test_having_with_max(handles_and_containers_world):
 def test_multiple_grouped_variables(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    drawer = variable_from(cabinet.drawers)
+    drawer = flat_variable(cabinet.drawers)
 
     # Group by both cabinet and drawer (silly, but tests multiple variables)
     query = a(
@@ -206,13 +223,13 @@ def test_multiple_grouped_variables(handles_and_containers_world):
 def test_sum_grouped_by(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    drawer = variable_from(cabinet.drawers)
+    drawer = flat_variable(cabinet.drawers)
     # Give drawers a numeric property to sum. They don't have one, but we can use a key func.
     # Let's sum the length of handle names per cabinet.
 
     query = a(
         set_of(
-            total_characters := eql.sum(drawer, key=lambda d: len(d.handle.name)),
+            total_characters := eql.sum(length(drawer.handle.name)),
             cabinet,
         ).grouped_by(cabinet)
     )
@@ -230,7 +247,7 @@ def test_sum_grouped_by(handles_and_containers_world):
 def test_count_grouped_by(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    cabinet_drawers = variable_from(cabinet.drawers)
+    cabinet_drawers = flat_variable(cabinet.drawers)
     query = an(entity(eql.count(cabinet_drawers)).grouped_by(cabinet))
     result = list(query.evaluate())
     expected = [len(c.drawers) for c in world.views if isinstance(c, Cabinet)]
@@ -248,7 +265,7 @@ def test_count_grouped_by(handles_and_containers_world):
 def test_count_all_or_without_a_specific_child(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    query = a(set_of(count := eql.count(), cabinet).grouped_by(cabinet))
+    query = a(set_of(count := eql.count_all(), cabinet).grouped_by(cabinet))
     results = list(query.evaluate())
     expected = defaultdict(lambda: 0)
     for c in world.views:
@@ -307,9 +324,9 @@ def test_count_with_duplicates(handles_and_containers_world):
     )
     world.views.append(cabinet_with_duplicate_drawers)
     cabinet = variable(Cabinet, domain=world.views)
-    cabinet_drawer = variable_from(cabinet.drawers)
+    cabinet_drawer = flat_variable(cabinet.drawers)
     query = a(
-        set_of(count := eql.count(), cabinet, cabinet_drawer).grouped_by(
+        set_of(count := eql.count_all(), cabinet, cabinet_drawer).grouped_by(
             cabinet, cabinet_drawer
         )
     )
@@ -327,7 +344,7 @@ def test_count_with_duplicates(handles_and_containers_world):
 def test_max_count_grouped_by(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    cabinet_drawers = variable_from(cabinet.drawers)
+    cabinet_drawers = flat_variable(cabinet.drawers)
     query = eql.max(entity(eql.count(cabinet_drawers)).grouped_by(cabinet))
     result = query.tolist()
     assert len(result) == 1
@@ -342,7 +359,7 @@ def test_max_count_grouped_by(handles_and_containers_world):
 def test_max_count_grouped_by_without_explicit_entity(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    cabinet_drawers = variable_from(cabinet.drawers)
+    cabinet_drawers = flat_variable(cabinet.drawers)
     query = eql.max(eql.count(cabinet_drawers).grouped_by(cabinet))
     result = query.tolist()
     assert len(result) == 1
@@ -357,12 +374,12 @@ def test_max_count_grouped_by_without_explicit_entity(handles_and_containers_wor
 def test_max_count_grouped_by_wrong(handles_and_containers_world):
     world = handles_and_containers_world
     cabinet = variable(Cabinet, domain=world.views)
-    cabinet_drawers = variable_from(cabinet.drawers)
+    cabinet_drawers = flat_variable(cabinet.drawers)
     with pytest.raises(NestedAggregationError):
         query = eql.max(eql.count(cabinet_drawers))
 
 
-def test_max_min_no_variable():
+def test_max_min_on_entity():
     values = [2, 1, 3, 5, 4]
     value = variable(int, domain=values)
 
@@ -416,7 +433,6 @@ def test_average_with_condition(departments_and_employees):
         .grouped_by(department)
         .having(avg_salary > 20000)
     )
-    query.visualize()
     results = list(query.evaluate())
     assert len(results) == 1
     assert results[0][department] == next(
@@ -458,28 +474,9 @@ def test_multiple_aggregations_per_group_on_same_variable(departments_and_employ
         .having(max_salary > 25000)
     )
     results = list(query.evaluate())
-    result_tuples = []
-    assert len(results) == 2
-    for result in results:
-        result_tuples.append(
-            (result[department], result[avg_salary], result[max_salary])
-        )
-    salary_per_department = defaultdict(list)
-    for emp in employees:
-        salary_per_department[emp.department].append(emp.salary)
-    expected_result_tuples = [
-        (
-            d,
-            sum(salary_per_department[d]) / len(salary_per_department[d]),
-            max(salary_per_department[d]),
-        )
-        for d in departments
-        if max(salary_per_department[d]) > 25000
-    ]
-    for result_tuple, expected_result_tuple in zip(
-        result_tuples, expected_result_tuples
-    ):
-        assert result_tuple == expected_result_tuple
+    assert_correct_results_for_complex_aggregation_query(
+        results, 2, 25000, max_salary, department, avg_salary, employees, departments
+    )
 
 
 def test_having_node_hierarchy(departments_and_employees):
@@ -490,13 +487,12 @@ def test_having_node_hierarchy(departments_and_employees):
 
     query = a(
         set_of(department, avg_salary).grouped_by(department).having(avg_salary > 20000)
-    )
+    ).build()
 
-    descriptor = query._child_
     # Graph hierarchy check
-    assert isinstance(descriptor._child_, Having)
-    assert isinstance(descriptor._child_.group_by, GroupBy)
-    assert descriptor._child_.conditions._name_ == ">"
+    assert query._having_expression_._parent_ is query
+    assert isinstance(query._having_expression_.grouped_by, GroupedBy)
+    assert query._conditions_root_._name_ == ">"
 
 
 def test_complex_having_success(departments_and_employees):
@@ -513,3 +509,180 @@ def test_complex_having_success(departments_and_employees):
     # Should only return Finance department (avg 35000)
     assert len(results) == 1
     assert results[0][department].name == "Finance"
+
+
+def test_recalling_having(departments_and_employees):
+    departments, employees = departments_and_employees
+
+    emp = variable(Employee, domain=None)
+    department = emp.department
+    avg_salary = eql.average(emp.salary)
+    max_salary = eql.max(emp.salary)
+    query = a(
+        set_of(avg_salary, max_salary, department)
+        .grouped_by(department)
+        .having(max_salary > 25000)
+    )
+    query.having(max_salary > 30000)
+    results = list(query.evaluate())
+    assert_correct_results_for_complex_aggregation_query(
+        results, 1, 30000, max_salary, department, avg_salary, employees, departments
+    )
+
+
+def assert_correct_results_for_complex_aggregation_query(
+    results,
+    num_results_expected,
+    max_salary_condition,
+    max_salary,
+    department,
+    avg_salary,
+    employees,
+    departments,
+):
+    result_tuples = []
+    assert len(results) == num_results_expected
+    for result in results:
+        result_tuples.append(
+            (result[department], result[avg_salary], result[max_salary])
+        )
+    salary_per_department = defaultdict(list)
+    for emp in employees:
+        salary_per_department[emp.department].append(emp.salary)
+    expected_result_tuples = [
+        (
+            d,
+            sum(salary_per_department[d]) / len(salary_per_department[d]),
+            max(salary_per_department[d]),
+        )
+        for d in departments
+        if max(salary_per_department[d]) > max_salary_condition
+    ]
+    for result_tuple, expected_result_tuple in zip(
+        result_tuples, expected_result_tuples
+    ):
+        assert result_tuple == expected_result_tuple
+
+
+def test_order_by_aggregation(handles_and_containers_world):
+    world = handles_and_containers_world
+    cabinet = variable(Cabinet, domain=world.views)
+    drawer = flat_variable(cabinet.drawers)
+    query = an(
+        entity(cabinet)
+        .grouped_by(cabinet)
+        .ordered_by(eql.count(drawer), descending=True)
+    )
+    assert query.tolist() == sorted(
+        cabinet.tolist(), key=lambda c: len(c.drawers), reverse=True
+    )
+
+
+def test_where_with_aggregation_subquery_on_different_variable():
+    var1 = variable(int, domain=[1, 2, 3])
+    var2 = variable(int, domain=[1, 2, 3])
+    query = entity(var1).where(var1 == entity(eql.max(var2)))
+    assert query.tolist() == [3]
+
+
+def test_where_with_aggregation_subquery_on_same_variable():
+    var1 = variable(int, domain=[1, 2, 3])
+    query = entity(var1).where(var1 == entity(eql.max(var1)))
+    assert query.tolist() == [3]
+
+
+@pytest.fixture
+def number_variable_with_repeated_values():
+    domain = [1, 2, 3, 2, 2, 1, 3]
+    var = variable(int, domain=domain)
+    assert var.tolist() == domain
+    return var
+
+
+@pytest.fixture
+def set_of_query_of_number_variable_with_repeated_values(
+    number_variable_with_repeated_values,
+):
+    var = number_variable_with_repeated_values
+    var_count = set_of(var, c := eql.count_all()).grouped_by(var)
+    return var_count, var, c
+
+
+def test_count_all_with_set_of(set_of_query_of_number_variable_with_repeated_values):
+    var_count, var, c = set_of_query_of_number_variable_with_repeated_values
+    assert [(val[var], val[c]) for val in var_count.evaluate()] == [
+        (1, 2),
+        (2, 3),
+        (3, 2),
+    ]
+
+
+def test_reusing_set_of_query_by_selecting_the_count_from_the_selected_variables(
+    set_of_query_of_number_variable_with_repeated_values,
+):
+    var_count, var, c = set_of_query_of_number_variable_with_repeated_values
+    max_count_from_sub_query = eql.max(var_count[c])
+    assert max_count_from_sub_query.tolist() == [3]
+
+
+def test_max_count_all(number_variable_with_repeated_values):
+    var = number_variable_with_repeated_values
+    # one-line query without using a previous set_of query
+    max_count = eql.max(eql.count_all().grouped_by(var))
+    assert max_count.tolist() == [3]
+
+
+def test_reusing_set_of_query_by_selecting_the_count_from_the_selected_variables_as_key_for_max(
+    set_of_query_of_number_variable_with_repeated_values,
+):
+    var_count, var, c = set_of_query_of_number_variable_with_repeated_values
+    var_max_count = eql.max(
+        set_of(var, c := eql.count_all()).grouped_by(var), key=lambda x: x[c]
+    )
+    results = var_max_count.tolist()
+    assert len(results) == 1
+    assert results[0][var] == 2
+    assert results[0][c] == 3
+
+
+@pytest.fixture
+def number_variable_with_repeated_values_for_more_than_one_number():
+    domain = [1, 2, 3, 2, 2, 1, 3, 3]
+    var2 = variable(int, domain=domain)
+    assert var2.tolist() == domain
+    return var2
+
+
+def test_independent_subquery_that_calculates_the_max_on_var_with_one_mode(
+    number_variable_with_repeated_values,
+):
+    var = number_variable_with_repeated_values
+    query = independent_max_count_subquery(var)
+    assert query.tolist() == [2]
+
+
+def test_independent_subquery_that_calculates_the_max_on_var_with_multiple_mode(
+    number_variable_with_repeated_values_for_more_than_one_number,
+):
+    var = number_variable_with_repeated_values_for_more_than_one_number
+    query = independent_max_count_subquery(var)
+    assert query.tolist() == [2, 3]
+
+
+def independent_max_count_subquery(var):
+    max_count = entity(eql.max(eql.count(var).grouped_by(var)))
+    return entity(var).having(eql.count_all() == max_count).grouped_by(var)
+
+
+def test_mode_and_multi_mode(
+    number_variable_with_repeated_values,
+    number_variable_with_repeated_values_for_more_than_one_number,
+):
+    var = number_variable_with_repeated_values
+
+    assert eql.mode(var).tolist() == [2]
+    assert eql.multimode(var).tolist() == [2]
+
+    var2 = number_variable_with_repeated_values_for_more_than_one_number
+    assert eql.mode(var2).tolist() == [2]
+    assert eql.multimode(var2).tolist() == [2, 3]
