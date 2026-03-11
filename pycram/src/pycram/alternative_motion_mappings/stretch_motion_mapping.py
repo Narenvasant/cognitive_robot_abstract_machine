@@ -1,5 +1,7 @@
 from copy import deepcopy
 
+from giskardpy.motion_statechart.binding_policy import GoalBindingPolicy
+from giskardpy.motion_statechart.data_types import DefaultWeights
 from giskardpy.motion_statechart.goals.cartesian_goals import DiffDriveBaseGoal
 from giskardpy.motion_statechart.goals.open_close import Close
 from giskardpy.motion_statechart.goals.templates import Sequence, Parallel
@@ -41,6 +43,7 @@ class StretchMoveTCP(MoveTCPMotion, AlternativeMotion[Stretch]):
                     pointing_axis=Vector3(
                         0, -1, 0, reference_frame=self.robot_view.root
                     ),
+                    binding_policy=GoalBindingPolicy.Bind_at_build,
                 ),
                 CartesianPose(
                     root_link=self.world.root,

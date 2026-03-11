@@ -551,21 +551,6 @@ class CartesianPose(CartesianTask):
             weight=self.weight,
         )
 
-        artifacts.debug_expressions.append(
-            DebugExpression(
-                "current_pose",
-                expression=HomogeneousTransformationMatrix(
-                    reference_frame=self.tip_link
-                ),
-            )
-        )
-        artifacts.debug_expressions.append(
-            DebugExpression(
-                "goal_pose",
-                expression=self._fk_binding.root_T_tip @ self.goal_pose,
-            )
-        )
-
         rotation_error = root_R_current.rotational_error(root_R_goal)
         artifacts.observation = sm.logic_and(
             sm.abs(rotation_error) < self.threshold,
