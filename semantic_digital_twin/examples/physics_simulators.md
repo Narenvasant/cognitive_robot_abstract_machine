@@ -143,7 +143,7 @@ Always specify appropriate stopping criteria using `SimulatorConstraints`.
 
 **2. Avoid busy waiting**
 
-Do not implement busy waiting inside the simulation loop.
+Do not implement [busy waiting](https://en.wikipedia.org/wiki/Busy_waiting) inside the simulation loop.
 Busy waiting can cause excessive CPU usage and degrade overall system responsiveness.
 If CPU usage becomes high, the simulation may run significantly slower than expected.
 
@@ -162,9 +162,9 @@ Simulation performance depends primarily on:
 * Prefer primitive geometries (boxes, cylinders, spheres)
 * Avoid high-resolution meshes unless strictly necessary
 
-# 2. Persistent World State Manipulation
+# 2. Persistent World Structure Manipulation
 
-During execution, the world state can be modified dynamically.
+During execution, the world structure can be modified dynamically.
 Bodies, connections, and degrees of freedom may be added or removed at runtime.
 These changes are immediately reflected in the physics simulation.
 
@@ -343,7 +343,7 @@ if __name__ == "__main__":
 
 As reflected in the output, the new bodies and connections are created in under **0.5 seconds**, while the simulation continues uninterrupted. The physical state remains continuous, and the world is modified dynamically at runtime without resetting or restarting the engine.
 
-## Important Notes
+## Common Mistakes to Avoid
 
 **1. Do not rely on catching an exact step number inside the simulation loop**
 (e.g., `if multi_sim.simulator.current_number_of_steps == 100`)
