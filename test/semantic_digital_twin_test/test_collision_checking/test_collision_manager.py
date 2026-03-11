@@ -247,8 +247,8 @@ class TestSelfCollisionExpressionManager:
         self_collisions.register_groups_of_body_combination(root, r_tip)
         # insert a variable between the collision entries to possibly mess with the internal indexing
         v = FloatVariable("muh2")
-        index = float_variable_data.register_expression(v)
-        float_variable_data.set_value(index, 23)
+        float_variable_data.register_expression(v)
+        float_variable_data.set_value(v, 23)
         self_collisions.register_groups_of_body_combination(l_tip, r_tip)
 
         self_collisions.reset_collision_data()
