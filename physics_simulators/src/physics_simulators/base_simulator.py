@@ -68,6 +68,10 @@ class SimulatorRenderer:
 
 @dataclass
 class SimulatorCallbackResult:
+    """
+    Container for callback result, including its type, info, and result.
+    """
+
     class OutputType(str, Enum):
         """
         Output type for SimulatorCallbackResult
@@ -110,12 +114,12 @@ class SimulatorCallback:
         """
         Initialize the function with the callback
 
-        :param callback: callback function, must return SimulatorCallbackResult
+        :param callback: callback function
         """
         self._call = callback
         self.__name__ = callback.__name__
 
-    def __call__(self, *args, render: bool = True, **kwargs):
+    def __call__(self, *args, render: bool = True, **kwargs) -> SimulatorCallbackResult:
         result = self._call(*args, **kwargs)
         if not isinstance(result, SimulatorCallbackResult):
             raise TypeError("Callback function must return SimulatorCallbackResult")
@@ -128,7 +132,12 @@ class SimulatorCallback:
 
 @dataclass
 class BaseSimulator:
-    """Base class for Base Simulator"""
+    """
+    Base class for Base Simulator
+
+    This class is intended as an abstract foundation for all specific simulators in your project.
+    You do not use BaseSimulator directly to run a concrete physics engine; instead, you subclass it and implement engine-specific logic.
+    """
 
     _headless: bool = field(repr=False)
 
