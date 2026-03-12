@@ -68,10 +68,6 @@ from semantic_digital_twin.world_description.shape_collection import BoundingBox
 from semantic_digital_twin.world_description.world_entity import Body
 
 
-# ---------------------------------------------------------------------------
-# Configuration constants
-# ---------------------------------------------------------------------------
-
 NUMBER_OF_ITERATIONS: int = 5000
 
 DATABASE_URI: str = os.environ.get(
@@ -89,10 +85,6 @@ COUNTER_APPROACH_Y: float = 2.5
 TABLE_APPROACH_X: float = 4.2
 TABLE_APPROACH_Y: float = 4.0
 
-# Place target on the apartment dining table — fixed, never sampled.
-# PLACE_Y must equal TABLE_APPROACH_Y so the target stays directly ahead of
-# the robot; even small lateral deviations push it outside the right arm's
-# reachable workspace.
 PLACE_X: float = 5.0
 PLACE_Y: float = 4.0
 PLACE_Z: float = 0.80
@@ -128,10 +120,6 @@ JPT_MODEL_PATH:          str = os.path.join(os.path.dirname(__file__), "pick_and
 JPT_MIN_SAMPLES_PER_LEAF: int = 25
 
 
-# ---------------------------------------------------------------------------
-# JPT variable definitions — must match fit_jpt.py (open-world) exactly
-# ---------------------------------------------------------------------------
-
 ArmChoiceDomain = type(
     "ArmChoiceDomain",
     (Multinomial,),
@@ -153,10 +141,6 @@ JPT_VARIABLES: list = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Data types
-# ---------------------------------------------------------------------------
-
 @dataclass
 class PlanParameters:
     """Sampled parameters for one pick-and-place iteration."""
@@ -166,10 +150,6 @@ class PlanParameters:
     table_approach_y:   float
     pick_arm:           Arms
 
-
-# ---------------------------------------------------------------------------
-# Runtime patches
-# ---------------------------------------------------------------------------
 
 def _header_deepcopy(self, memo: Any) -> Header:
     if isinstance(self, type):
@@ -239,10 +219,6 @@ def _patch_orm_numpy_array_type() -> None:
 
 _patch_orm_numpy_array_type()
 
-
-# ---------------------------------------------------------------------------
-# World construction
-# ---------------------------------------------------------------------------
 
 def _build_world(apartment_urdf_path: Path) -> tuple[World, PR2]:
     world     = URDFParser.from_file(str(apartment_urdf_path)).parse()
@@ -318,9 +294,6 @@ def _respawn_milk(world: World, milk_body: Body) -> None:
     print(f"  [respawn] Milk reset to ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
 
 
-# ---------------------------------------------------------------------------
-# Database
-# ---------------------------------------------------------------------------
 
 def _create_database_session(database_uri: str) -> Session:
     print(f"  [db] Connecting to {database_uri} ...")
@@ -385,9 +358,6 @@ def _persist_plan(session: Session, plan: SequentialPlan) -> None:
     print("  [db] Plan committed.")
 
 
-# ---------------------------------------------------------------------------
-# GCS navigation
-# ---------------------------------------------------------------------------
 
 def _build_navigation_map(world: World) -> GraphOfConvexSets:
     search_space = BoundingBoxCollection(
@@ -533,10 +503,6 @@ def _navigate_via_gcs(
     return navigate_actions
 
 
-# ---------------------------------------------------------------------------
-# JPT loading and sampling
-# ---------------------------------------------------------------------------
-
 def _load_joint_probability_tree(model_path: str) -> JointProbabilityTree:
     print(f"  [jpt] Loading model from {model_path} ...")
     joint_probability_tree = JointProbabilityTree(
@@ -568,10 +534,6 @@ def _sample_plan_parameters(joint_probability_tree: JointProbabilityTree) -> Pla
         pick_arm           = pick_arm,
     )
 
-
-# ---------------------------------------------------------------------------
-# Plan construction
-# ---------------------------------------------------------------------------
 
 def _build_fixed_plan(
     context:        Context,
@@ -676,10 +638,6 @@ def _build_sampled_plan(
     )
 
 
-# ---------------------------------------------------------------------------
-# Return navigation
-# ---------------------------------------------------------------------------
-
 def _navigate_back_to_start(
     context:            Context,
     navigation_map:     GraphOfConvexSets,
@@ -719,9 +677,6 @@ def _navigate_back_to_start(
             print(f"  [return] WARNING: return navigation failed: {return_error}")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def pick_and_place_demo_apartment_jpt() -> None:
     """Apartment world Batch 2: 5000 iterations of JPT-guided pick-and-place."""
