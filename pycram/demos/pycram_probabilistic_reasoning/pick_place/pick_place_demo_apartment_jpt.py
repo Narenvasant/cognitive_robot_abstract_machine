@@ -1,35 +1,25 @@
 """
-pick_and_place_demo_apartment_jpt.py
-=====================================
-Batch 2 for the apartment pick-and-place world.
+Apartment world Batch 2: JPT-guided pick-and-place with GCS navigation.
 
-Uses the open-world JPT (pick_and_place_jpt.json, trained on 1742 successful
-Batch 1 open-world plans) to guide approach-position and arm sampling in the
-apartment world.
+Uses the open-world JPT (pick_and_place_jpt.json), trained on 1742 successful
+open-world Batch 1 plans, to guide approach-position and arm sampling in the
+apartment world. Apartment Batch 1 achieved 0% success under uniform sampling,
+so no apartment-specific training data exists. The open-world JPT transfers
+directly because pick/place mechanics are identical between the two worlds;
+only navigation geometry differs, which GCS handles transparently.
 
-The apartment Batch 1 produced 0% success with uniform sampling, so there is
-no apartment-specific training data.  The open-world JPT is valid here because
-the pick/place mechanics — approach position, arm choice, grasp — are identical
-between the two worlds.  Only the navigation geometry differs (GCS in the
-apartment vs direct navigation in the open world), and GCS handles that
-transparently after sampling.
-
-Variable mapping between the two worlds:
-    open-world JPT variable     apartment demo name
-    ─────────────────────────────────────────────────
-    pick_approach_x/y       →   counter_approach_x/y
-    place_approach_x/y      →   table_approach_x/y
-    milk_end_x/y/z          →   milk_end_x/y/z  (unchanged)
-    pick_arm                →   pick_arm         (unchanged)
-
-PLACE_X, PLACE_Y, PLACE_Z are fixed constants identical to the open-world
-demo — the same table surface height applies.
+JPT variable mapping (open-world → apartment):
+    pick_approach_x/y   →  counter_approach_x/y
+    place_approach_x/y  →  table_approach_x/y
+    milk_end_x/y/z      →  unchanged
+    pick_arm            →  unchanged
 """
 
 from __future__ import annotations
 
 import copy
 import datetime
+import hashlib
 import inspect
 import os
 import sys
@@ -38,11 +28,12 @@ import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, List
+from typing import Any, List, Optional
 
 import numpy as np
 import rclpy
 import sqlalchemy.types as sqlalchemy_types
+from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
 from pycram.datastructures.dataclasses import Context
@@ -57,10 +48,10 @@ from pycram.robot_plans import NavigateAction, ParkArmsAction, PickUpAction, Pla
 from krrood.ormatic.dao import to_dao
 from krrood.ormatic.utils import create_engine
 
-from jpt.distributions.univariate.multinomial import OrderedDictProxy
 from jpt.distributions.univariate import Multinomial
-from jpt.variables import NumericVariable, SymbolicVariable
+from jpt.distributions.univariate.multinomial import OrderedDictProxy
 from jpt.trees import JPT as JointProbabilityTree
+from jpt.variables import NumericVariable, SymbolicVariable
 
 from semantic_digital_twin.adapters.ros.tf_publisher import TFPublisher
 from semantic_digital_twin.adapters.ros.visualization.viz_marker import VizMarkerPublisher
@@ -70,19 +61,15 @@ from semantic_digital_twin.robots.pr2 import PR2
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Milk, Table
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix, Point3
 from semantic_digital_twin.world import World
-from semantic_digital_twin.world_description.connections import (
-    Connection6DoF,
-    FixedConnection,
-    OmniDrive,
-)
-from semantic_digital_twin.world_description.geometry import FileMesh, BoundingBox
+from semantic_digital_twin.world_description.connections import Connection6DoF, FixedConnection, OmniDrive
+from semantic_digital_twin.world_description.geometry import BoundingBox, FileMesh
 from semantic_digital_twin.world_description.graph_of_convex_sets import GraphOfConvexSets
-from semantic_digital_twin.world_description.shape_collection import ShapeCollection, BoundingBoxCollection
+from semantic_digital_twin.world_description.shape_collection import BoundingBoxCollection, ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
 
 
 # ---------------------------------------------------------------------------
-# Constants
+# Configuration constants
 # ---------------------------------------------------------------------------
 
 NUMBER_OF_ITERATIONS: int = 5000
@@ -92,52 +79,57 @@ DATABASE_URI: str = os.environ.get(
     "postgresql://semantic_digital_twin:naren@localhost:5432/demo_robot_plans",
 )
 
-MILK_X: float = 2.4
-MILK_Y: float = 2.5
-MILK_Z: float = 1.01
+MILK_SPAWN_X: float = 2.4
+MILK_SPAWN_Y: float = 2.5
+MILK_SPAWN_Z: float = 1.01
 
-# Fixed seed approach positions used on iteration 1.
-# These match the known-good values from the original apartment demo.
 COUNTER_APPROACH_X: float = 1.6
 COUNTER_APPROACH_Y: float = 2.5
-TABLE_APPROACH_X:   float = 4.2
-TABLE_APPROACH_Y:   float = 4.0
 
-# Place target on the apartment table surface — fixed, never sampled.
-# Must match the table geometry in the apartment URDF.
+TABLE_APPROACH_X: float = 4.2
+TABLE_APPROACH_Y: float = 4.0
+
+# Place target on the apartment dining table — fixed, never sampled.
+# PLACE_Y must equal TABLE_APPROACH_Y so the target stays directly ahead of
+# the robot; even small lateral deviations push it outside the right arm's
+# reachable workspace.
 PLACE_X: float = 5.0
 PLACE_Y: float = 4.0
 PLACE_Z: float = 0.80
 
-# Safety clip bounds applied after JPT sampling.
-# These match the apartment approach zones from the original demo
-# (_COUNTER_APPROACH_BOUNDS and _TABLE_APPROACH_BOUNDS) so that the
-# robot always navigates to a reachable position inside the apartment.
-COUNTER_APPROACH_SAMPLING_BOUNDS: tuple[float, float, float, float] = (1.2, 1.8, 2.3, 2.7)
-TABLE_APPROACH_SAMPLING_BOUNDS:   tuple[float, float, float, float] = (4.1, 4.5, 3.95, 4.05)
+COUNTER_APPROACH_MIN_X: float = 1.2
+COUNTER_APPROACH_MAX_X: float = 1.8
+COUNTER_APPROACH_MIN_Y: float = 2.3
+COUNTER_APPROACH_MAX_Y: float = 2.7
 
-GRAPH_OF_CONVEX_SETS_MIN_X: float = -1.0
-GRAPH_OF_CONVEX_SETS_MAX_X: float = 7.0
-GRAPH_OF_CONVEX_SETS_MIN_Y: float = -1.0
-GRAPH_OF_CONVEX_SETS_MAX_Y: float = 7.0
-GRAPH_OF_CONVEX_SETS_MIN_Z: float = 0.0
-GRAPH_OF_CONVEX_SETS_MAX_Z: float = 0.1
-GRAPH_OF_CONVEX_SETS_BLOAT_OBSTACLES: float = 0.3
+TABLE_APPROACH_MIN_X: float = 4.1
+TABLE_APPROACH_MAX_X: float = 4.5
+TABLE_APPROACH_MIN_Y: float = 3.95
+TABLE_APPROACH_MAX_Y: float = 4.05
 
-_RESOURCE_PATH = Path(__file__).resolve().parents[3] / "resources"
-APARTMENT_URDF: Path = _RESOURCE_PATH / "worlds" / "apartment.urdf"
-MILK_STL:       Path = _RESOURCE_PATH / "objects" / "milk.stl"
+GCS_SEARCH_MIN_X: float = -1.0
+GCS_SEARCH_MAX_X: float =  7.0
+GCS_SEARCH_MIN_Y: float = -1.0
+GCS_SEARCH_MAX_Y: float =  7.0
+GCS_SEARCH_MIN_Z: float =  0.0
+GCS_SEARCH_MAX_Z: float =  0.1
+GCS_OBSTACLE_BLOAT: float = 0.3
 
-# Reuse the open-world JPT directly — no new training data required.
-JPT_MODEL_PATH: str = os.path.join(os.path.dirname(__file__), "pick_and_place_jpt.json")
+ROBOT_INIT_X: float = 1.4
+ROBOT_INIT_Y: float = 1.5
+
+GRASP_MANIPULATION_OFFSET: float = 0.06
+
+_RESOURCE_PATH: Path   = Path(__file__).resolve().parents[3] / "resources"
+APARTMENT_URDF_PATH: Path = _RESOURCE_PATH / "worlds" / "apartment.urdf"
+MILK_STL_PATH:       Path = _RESOURCE_PATH / "objects" / "milk.stl"
+
+JPT_MODEL_PATH:          str = os.path.join(os.path.dirname(__file__), "pick_and_place_jpt.json")
 JPT_MIN_SAMPLES_PER_LEAF: int = 25
 
 
 # ---------------------------------------------------------------------------
-# JPT variable definitions
-# Must match fit_jpt.py (open-world) exactly — same variable names as the
-# JSON model file.  The mapping to apartment terminology is done in
-# _sample_plan_parameters_from_jpt when building PlanParameters.
+# JPT variable definitions — must match fit_jpt.py (open-world) exactly
 # ---------------------------------------------------------------------------
 
 ArmChoiceDomain = type(
@@ -150,10 +142,10 @@ ArmChoiceDomain = type(
 )
 
 JPT_VARIABLES: list = [
-    NumericVariable("pick_approach_x",  precision=0.005),  # → counter_approach_x
-    NumericVariable("pick_approach_y",  precision=0.005),  # → counter_approach_y
-    NumericVariable("place_approach_x", precision=0.005),  # → table_approach_x
-    NumericVariable("place_approach_y", precision=0.005),  # → table_approach_y
+    NumericVariable("pick_approach_x",  precision=0.005),
+    NumericVariable("pick_approach_y",  precision=0.005),
+    NumericVariable("place_approach_x", precision=0.005),
+    NumericVariable("place_approach_y", precision=0.005),
     NumericVariable("milk_end_x",       precision=0.001),
     NumericVariable("milk_end_y",       precision=0.001),
     NumericVariable("milk_end_z",       precision=0.0005),
@@ -162,21 +154,12 @@ JPT_VARIABLES: list = [
 
 
 # ---------------------------------------------------------------------------
-# Plan parameters
+# Data types
 # ---------------------------------------------------------------------------
 
 @dataclass
 class PlanParameters:
-    """
-    One complete set of plan parameters sampled from the open-world JPT,
-    expressed in apartment terminology.
-
-    counter_approach_x/y : robot navigation goal before picking up milk
-                           (maps from JPT pick_approach_x/y).
-    table_approach_x/y   : robot navigation goal before placing milk
-                           (maps from JPT place_approach_x/y).
-    pick_arm             : arm used to pick and place the milk.
-    """
+    """Sampled parameters for one pick-and-place iteration."""
     counter_approach_x: float
     counter_approach_y: float
     table_approach_x:   float
@@ -185,7 +168,7 @@ class PlanParameters:
 
 
 # ---------------------------------------------------------------------------
-# Monkey-patches
+# Runtime patches
 # ---------------------------------------------------------------------------
 
 def _header_deepcopy(self, memo: Any) -> Header:
@@ -227,6 +210,7 @@ PoseStamped.__deepcopy__ = _pose_stamped_deepcopy
 
 
 def _patch_orm_numpy_array_type() -> None:
+    """Patch the PyCRAM ORM numpy TypeDecorator to handle None values gracefully."""
     target_class = None
     for module_name in list(sys.modules):
         if "pycram" not in module_name and "orm" not in module_name:
@@ -243,15 +227,15 @@ def _patch_orm_numpy_array_type() -> None:
         if target_class is not None:
             break
     if target_class is None:
-        print("  [patch] WARNING: ORM numpy TypeDecorator not found; None-guard patch skipped.")
+        print("  [patch] WARNING: ORM numpy TypeDecorator not found; None-guard skipped.")
         return
-    original = target_class.process_bind_param
-    def _none_guarded(self, value, dialect):
+    original_bind = target_class.process_bind_param
+    def _none_guarded_bind(self, value, dialect):
         if value is None:
             return None
-        return original(self, value, dialect)
-    target_class.process_bind_param = _none_guarded
-    print(f"  [patch] Patched {target_class.__name__}.process_bind_param to handle None.")
+        return original_bind(self, value, dialect)
+    target_class.process_bind_param = _none_guarded_bind
+    print(f"  [patch] Patched {target_class.__name__}.process_bind_param.")
 
 _patch_orm_numpy_array_type()
 
@@ -260,18 +244,19 @@ _patch_orm_numpy_array_type()
 # World construction
 # ---------------------------------------------------------------------------
 
-def _initialize_world(apartment_urdf: Path) -> tuple[World, PR2]:
-    world = URDFParser.from_file(str(apartment_urdf)).parse()
+def _build_world(apartment_urdf_path: Path) -> tuple[World, PR2]:
+    world     = URDFParser.from_file(str(apartment_urdf_path)).parse()
     pr2_world = URDFParser.from_file(
         "package://iai_pr2_description/robots/pr2_with_ft2_cableguide.xacro"
     ).parse()
     robot = PR2.from_world(pr2_world)
-    robot_pose = HomogeneousTransformationMatrix.from_xyz_rpy(1.4, 1.5, 0.0, 0, 0, 0)
     with world.modify_world():
-        world.merge_world_at_pose(pr2_world, robot_pose)
-    table_body = world.get_body_by_name("table_area_main")
+        world.merge_world_at_pose(
+            pr2_world,
+            HomogeneousTransformationMatrix.from_xyz_rpy(ROBOT_INIT_X, ROBOT_INIT_Y, 0.0, 0, 0, 0),
+        )
     with world.modify_world():
-        world.add_semantic_annotation(Table(root=table_body))
+        world.add_semantic_annotation(Table(root=world.get_body_by_name("table_area_main")))
     return world, robot
 
 
@@ -283,63 +268,54 @@ def _add_localization_frames(world: World, robot: PR2) -> None:
         world.add_body(odom_body)
         world.add_connection(FixedConnection(parent=world.root, child=map_body))
         world.add_connection(Connection6DoF.create_with_dofs(world, map_body, odom_body))
-        existing = robot.root.parent_connection
-        if existing is not None:
-            world.remove_connection(existing)
+        existing_connection = robot.root.parent_connection
+        if existing_connection is not None:
+            world.remove_connection(existing_connection)
         world.add_connection(
             OmniDrive.create_with_dofs(
                 parent=odom_body,
                 child=robot.root,
                 world=world,
                 parent_T_connection_expression=HomogeneousTransformationMatrix.from_xyz_rpy(
-                    1.4, 1.5, 0.0, 0, 0, 0
+                    ROBOT_INIT_X, ROBOT_INIT_Y, 0.0, 0, 0, 0
                 ),
             )
         )
 
 
-def _add_milk_object(world: World, stl_path: Path) -> Body:
-    mesh = FileMesh.from_file(str(stl_path))
-    body = Body(
+def _spawn_milk(world: World, milk_stl_path: Path) -> Body:
+    mesh      = FileMesh.from_file(str(milk_stl_path))
+    milk_body = Body(
         name=PrefixedName("milk_1"),
         visual=ShapeCollection([mesh]),
         collision=ShapeCollection([mesh]),
     )
-    pose = HomogeneousTransformationMatrix.from_xyz_rpy(MILK_X, MILK_Y, MILK_Z, 0, 0, 0)
+    spawn_pose = HomogeneousTransformationMatrix.from_xyz_rpy(MILK_SPAWN_X, MILK_SPAWN_Y, MILK_SPAWN_Z, 0, 0, 0)
     with world.modify_world():
-        world.add_body(body)
-        connection = Connection6DoF.create_with_dofs(
-            parent=world.root, child=body, world=world
-        )
+        world.add_body(milk_body)
+        connection = Connection6DoF.create_with_dofs(parent=world.root, child=milk_body, world=world)
         world.add_connection(connection)
-        connection.origin = pose
-        world.add_semantic_annotation(Milk(root=body))
-    return body
+        connection.origin = spawn_pose
+        world.add_semantic_annotation(Milk(root=milk_body))
+    return milk_body
 
 
-def _respawn_milk_object(world: World, milk_body: Body) -> None:
-    spawn_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
-        MILK_X, MILK_Y, MILK_Z, 0, 0, 0
-    )
+def _respawn_milk(world: World, milk_body: Body) -> None:
+    spawn_pose = HomogeneousTransformationMatrix.from_xyz_rpy(MILK_SPAWN_X, MILK_SPAWN_Y, MILK_SPAWN_Z, 0, 0, 0)
     with world.modify_world():
         connection = milk_body.parent_connection
-        if connection is not None:
-            if connection.parent is not world.root:
-                world.remove_connection(connection)
-                new_connection = Connection6DoF.create_with_dofs(
-                    parent=world.root, child=milk_body, world=world
-                )
-                world.add_connection(new_connection)
-                new_connection.origin = spawn_pose
-            else:
-                connection.origin = spawn_pose
-        else:
-            new_connection = Connection6DoF.create_with_dofs(
-                parent=world.root, child=milk_body, world=world
-            )
+        if connection is not None and connection.parent is not world.root:
+            world.remove_connection(connection)
+            new_connection = Connection6DoF.create_with_dofs(parent=world.root, child=milk_body, world=world)
             world.add_connection(new_connection)
             new_connection.origin = spawn_pose
-    print(f"  [respawn] Milk reset to ({MILK_X}, {MILK_Y}, {MILK_Z})")
+        elif connection is not None:
+            connection.origin = spawn_pose
+        else:
+            new_connection = Connection6DoF.create_with_dofs(parent=world.root, child=milk_body, world=world)
+            world.add_connection(new_connection)
+            new_connection.origin = spawn_pose
+    print(f"  [respawn] Milk reset to ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
 
 
 # ---------------------------------------------------------------------------
@@ -367,110 +343,91 @@ def _disable_postgresql_identifier_length_validation(engine: Any) -> None:
 
 
 def _shorten_long_postgresql_table_names() -> None:
-    import hashlib
-    def shorten(name: str, limit: int = 63) -> str:
+    def _shorten(name: str, limit: int = 63) -> str:
         if len(name) <= limit:
             return name
         digest = hashlib.sha256(name.encode()).hexdigest()[:8]
         return f"{name[:limit - 9]}_{digest}"
     for table in Base.metadata.tables.values():
-        short = shorten(table.name)
-        if short != table.name:
-            table.name     = short
-            table.fullname = short
+        shortened = _shorten(table.name)
+        if shortened != table.name:
+            table.name     = shortened
+            table.fullname = shortened
 
 
 def _register_postgresql_numpy_scalar_coercion(engine: Any) -> None:
     import numpy
-    from sqlalchemy import event
 
-    def _coerce(value: Any) -> Any:
+    def _coerce_scalar(value: Any) -> Any:
         if isinstance(value, numpy.floating): return float(value)
         if isinstance(value, numpy.integer):  return int(value)
         if isinstance(value, numpy.bool_):    return bool(value)
         return value
 
-    def _coerce_params(params: Any) -> Any:
-        if isinstance(params, dict):
-            return {k: _coerce(v) for k, v in params.items()}
-        return params
+    def _coerce_parameters(parameters: Any) -> Any:
+        if isinstance(parameters, dict):
+            return {key: _coerce_scalar(value) for key, value in parameters.items()}
+        return parameters
 
     @event.listens_for(engine, "before_cursor_execute", retval=True)
-    def _before_execute(connection, cursor, statement, parameters, context, executemany):
+    def _before_cursor_execute(connection, cursor, statement, parameters, context, executemany):
         if isinstance(parameters, dict):
-            parameters = _coerce_params(parameters)
+            parameters = _coerce_parameters(parameters)
         elif isinstance(parameters, (list, tuple)):
-            parameters = type(parameters)(_coerce_params(p) for p in parameters)
+            parameters = type(parameters)(_coerce_parameters(p) for p in parameters)
         return statement, parameters
 
 
-def _persist_plan_to_database(session: Session, plan: SequentialPlan) -> None:
+def _persist_plan(session: Session, plan: SequentialPlan) -> None:
     print("  [db] Persisting plan ...")
     session.add(to_dao(plan))
     session.commit()
-    print("  [db] Plan committed OK.")
+    print("  [db] Plan committed.")
 
 
 # ---------------------------------------------------------------------------
-# Navigation helpers
+# GCS navigation
 # ---------------------------------------------------------------------------
 
 def _build_navigation_map(world: World) -> GraphOfConvexSets:
     search_space = BoundingBoxCollection(
         [
             BoundingBox(
-                min_x=GRAPH_OF_CONVEX_SETS_MIN_X,
-                max_x=GRAPH_OF_CONVEX_SETS_MAX_X,
-                min_y=GRAPH_OF_CONVEX_SETS_MIN_Y,
-                max_y=GRAPH_OF_CONVEX_SETS_MAX_Y,
-                min_z=GRAPH_OF_CONVEX_SETS_MIN_Z,
-                max_z=GRAPH_OF_CONVEX_SETS_MAX_Z,
+                min_x=GCS_SEARCH_MIN_X, max_x=GCS_SEARCH_MAX_X,
+                min_y=GCS_SEARCH_MIN_Y, max_y=GCS_SEARCH_MAX_Y,
+                min_z=GCS_SEARCH_MIN_Z, max_z=GCS_SEARCH_MAX_Z,
                 origin=HomogeneousTransformationMatrix(reference_frame=world.root),
             )
         ],
         world.root,
     )
-    print("  Building GraphOfConvexSets navigation map ...")
-    start_time = time.time()
-    gcs = GraphOfConvexSets.navigation_map_from_world(
+    print("  Building GCS navigation map ...")
+    build_start    = time.time()
+    navigation_map = GraphOfConvexSets.navigation_map_from_world(
         world=world,
         search_space=search_space,
-        bloat_obstacles=GRAPH_OF_CONVEX_SETS_BLOAT_OBSTACLES,
+        bloat_obstacles=GCS_OBSTACLE_BLOAT,
     )
-    elapsed = time.time() - start_time
-    n_nodes = len(list(gcs.graph.nodes()))
-    print(f"  GraphOfConvexSets built in {elapsed:.2f} s  ({n_nodes} nodes)")
-    return gcs
+    print(f"  GCS built in {time.time() - build_start:.2f}s  ({len(list(navigation_map.graph.nodes()))} nodes)")
+    return navigation_map
 
 
-def _build_gcs_index(gcs: GraphOfConvexSets) -> np.ndarray:
-    """Build the node bbox array immediately after GCS construction."""
-    arr = _build_gcs_node_array(gcs)
-    print(f"  GCS node index built: {len(arr)} bounding boxes")
-    return arr
-
-
-def _build_gcs_node_array(gcs: GraphOfConvexSets) -> np.ndarray:
+def _build_gcs_node_array(navigation_map: GraphOfConvexSets) -> np.ndarray:
     """
-    Build a (N, 6) numpy array of [min_x, min_y, min_z, max_x, max_y, max_z]
-    for all GCS nodes. Called once after GCS is constructed so that
-    _point_in_free_space can use fast vectorised bbox checks instead of
-    the O(N) Python loop inside gcs.node_of_point.
+    Pre-compute a (N, 6) array of [min_x, min_y, min_z, max_x, max_y, max_z]
+    for all GCS nodes. Enables vectorised free-space checks that are ~100x
+    faster than the O(N) Python loop in GraphOfConvexSets.node_of_point.
     """
-    nodes = list(gcs.graph.nodes())
-    arr = np.array(
+    nodes      = list(navigation_map.graph.nodes())
+    node_array = np.array(
         [[n.min_x, n.min_y, n.min_z, n.max_x, n.max_y, n.max_z] for n in nodes],
         dtype=np.float64,
     )
-    return arr
+    print(f"  GCS node index: {len(node_array)} bounding boxes")
+    return node_array
 
 
-def _point_in_free_space(node_array: np.ndarray, x: float, y: float, z: float) -> bool:
-    """
-    Return True if (x, y, z) is inside at least one GCS bounding box.
-    Uses vectorised numpy comparisons — O(N) but fully in C, ~100x faster
-    than the Python loop in gcs.node_of_point for large node counts.
-    """
+def _is_in_free_space(node_array: np.ndarray, x: float, y: float, z: float) -> bool:
     inside = (
         (node_array[:, 0] <= x) & (x <= node_array[:, 3]) &
         (node_array[:, 1] <= y) & (y <= node_array[:, 4]) &
@@ -480,89 +437,31 @@ def _point_in_free_space(node_array: np.ndarray, x: float, y: float, z: float) -
 
 
 def _find_nearest_free_point(
-    gcs: GraphOfConvexSets,
-    node_array: np.ndarray,
-    x: float,
-    y: float,
-    z: float,
-    world: World,
-    search_radius: float = 0.6,
-    step: float = 0.05,
-    steps: int = 16,
+    navigation_map: GraphOfConvexSets,
+    node_array:     np.ndarray,
+    x:              float,
+    y:              float,
+    z:              float,
+    world:          World,
+    search_radius:  float = 0.6,
+    radial_step:    float = 0.05,
+    angular_steps:  int   = 16,
 ) -> Optional[Point3]:
-    """
-    If (x, y, z) is inside an obstacle, spiral outward to find the nearest
-    free point. Uses the pre-built node_array for fast vectorised checks.
-    """
-    if _point_in_free_space(node_array, x, y, z):
+    """Spiral outward from (x, y, z) until a GCS free-space cell is found."""
+    if _is_in_free_space(node_array, x, y, z):
         return Point3(x, y, z, reference_frame=world.root)
-
-    print(f"    [GCS] ({x:.3f},{y:.3f}) occupied — finding nearest free point ...")
-    for radius in np.arange(step, search_radius + step, step):
-        angles = np.linspace(0, 2 * np.pi, steps, endpoint=False)
-        cxs = x + radius * np.cos(angles)
-        cys = y + radius * np.sin(angles)
-        for cx, cy in zip(cxs, cys):
-            if _point_in_free_space(node_array, cx, cy, z):
-                print(f"    [GCS] free point at ({cx:.3f},{cy:.3f}) r={radius:.2f}")
-                return Point3(cx, cy, z, reference_frame=world.root)
-    print(f"    [GCS] no free point within r={search_radius}")
+    print(f"    [GCS] ({x:.3f},{y:.3f}) is occupied — searching for free point ...")
+    for radius in np.arange(radial_step, search_radius + radial_step, radial_step):
+        angles = np.linspace(0, 2 * np.pi, angular_steps, endpoint=False)
+        for candidate_x, candidate_y in zip(x + radius * np.cos(angles), y + radius * np.sin(angles)):
+            if _is_in_free_space(node_array, candidate_x, candidate_y, z):
+                print(f"    [GCS] Free point at ({candidate_x:.3f},{candidate_y:.3f}) r={radius:.2f}")
+                return Point3(candidate_x, candidate_y, z, reference_frame=world.root)
+    print(f"    [GCS] No free point found within r={search_radius}")
     return None
 
 
-def _gcs_collision_free_path(
-    gcs: GraphOfConvexSets,
-    node_array: np.ndarray,
-    start_x: float,
-    start_y: float,
-    goal_x: float,
-    goal_y: float,
-    world: World,
-    snap_to_free: bool = False,
-) -> Optional[List[Point3]]:
-    z_nav = (GRAPH_OF_CONVEX_SETS_MIN_Z + GRAPH_OF_CONVEX_SETS_MAX_Z) / 2.0
-
-    if snap_to_free:
-        start = _find_nearest_free_point(gcs, node_array, start_x, start_y, z_nav, world)
-        goal  = _find_nearest_free_point(gcs, node_array, goal_x,  goal_y,  z_nav, world)
-        if start is None:
-            print(f"    [GCS] start ({start_x:.3f},{start_y:.3f}) has no free neighbour")
-            return None
-        if goal is None:
-            print(f"    [GCS] goal ({goal_x:.3f},{goal_y:.3f}) has no free neighbour")
-            return None
-    else:
-        start = Point3(start_x, start_y, z_nav, reference_frame=world.root)
-        goal  = Point3(goal_x,  goal_y,  z_nav, reference_frame=world.root)
-
-    try:
-        path = gcs.path_from_to(start, goal)
-        print(f"    [GCS] path found: {len(path)} points")
-        return path
-    except Exception as exc:
-        print(f"    [GCS] path_from_to raised: {exc}")
-        return None
-
-
-def _gcs_path_to_pose_stamped_list(
-    path: List[Point3],
-    world_frame: Any,
-) -> List[PoseStamped]:
-    poses = []
-    for point in path[1:]:
-        poses.append(
-            PoseStamped(
-                pose=PyCramPose(
-                    position=PyCramVector3(x=float(point.x), y=float(point.y), z=0.0),
-                    orientation=PyCramQuaternion(x=0, y=0, z=0, w=1),
-                ),
-                header=Header(frame_id=world_frame),
-            )
-        )
-    return poses
-
-
-def _create_pose_stamped(x: float, y: float, z: float, frame_id: Any) -> PoseStamped:
+def _make_pose_stamped(x: float, y: float, z: float, frame_id: Any) -> PoseStamped:
     return PoseStamped(
         pose=PyCramPose(
             position=PyCramVector3(x=x, y=y, z=z),
@@ -572,78 +471,66 @@ def _create_pose_stamped(x: float, y: float, z: float, frame_id: Any) -> PoseSta
     )
 
 
-def _navigate_via_gcs(
-    context: Context,
-    gcs: GraphOfConvexSets,
-    node_array: np.ndarray,
-    start_x: float,
-    start_y: float,
-    goal_x: float,
-    goal_y: float,
-    world: World,
-    keep_joint_states: bool = False,
-    snap_to_free: bool = False,
+def _path_to_navigate_actions(
+    path:              List[Point3],
+    world_frame:       Any,
+    keep_joint_states: bool,
 ) -> List[NavigateAction]:
-    """
-    Produce NavigateActions following a GCS collision-free path.
-    Falls back to direct navigation if no path is found.
-    snap_to_free=True only for the return trip.
-    node_array is the pre-built numpy bbox array for fast free-space checks.
-    """
-    path = _gcs_collision_free_path(gcs, node_array, start_x, start_y, goal_x, goal_y, world, snap_to_free=snap_to_free)
-    if path is None or len(path) < 2:
-        print(
-            f"    [GCS] No path ({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}). "
-            f"Falling back to direct navigation."
-        )
-        return [
-            NavigateAction(
-                target_location=_create_pose_stamped(goal_x, goal_y, 0.0, world.root),
-                keep_joint_states=keep_joint_states,
-            )
-        ]
-    waypoints = _gcs_path_to_pose_stamped_list(path, world.root)
-    print(
-        f"    [GCS] Path ({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}): "
-        f"{len(waypoints)} waypoint(s)"
-    )
-    for i, wp in enumerate(waypoints):
-        pos = wp.pose.position
-        print(f"           waypoint {i+1}: ({pos.x:.3f}, {pos.y:.3f})")
     return [
-        NavigateAction(target_location=wp, keep_joint_states=keep_joint_states)
-        for wp in waypoints
+        NavigateAction(
+            target_location=PoseStamped(
+                pose=PyCramPose(
+                    position=PyCramVector3(x=float(point.x), y=float(point.y), z=0.0),
+                    orientation=PyCramQuaternion(x=0, y=0, z=0, w=1),
+                ),
+                header=Header(frame_id=world_frame),
+            ),
+            keep_joint_states=keep_joint_states,
+        )
+        for point in path[1:]
     ]
 
 
-
-def _get_robot_current_position(
-    robot: PR2,
-    world: World,
-    fallback_x: float = 1.4,
-    fallback_y: float = 1.5,
-) -> tuple[float, float]:
+def _navigate_via_gcs(
+    context:           Context,
+    navigation_map:    GraphOfConvexSets,
+    node_array:        np.ndarray,
+    start_x:           float,
+    start_y:           float,
+    goal_x:            float,
+    goal_y:            float,
+    world:             World,
+    keep_joint_states: bool = False,
+) -> List[NavigateAction]:
     """
-    Read the robot base position by reading the OmniDrive connection origin.
-
-    _add_localization_frames creates an OmniDrive connecting odom_body -> robot.root.
-    NavigateAction updates this connection's origin as the robot moves, exactly the
-    same way _respawn_milk_object updates the milk connection's origin.
-
-    A HomogeneousTransformationMatrix is a 4x4 matrix; to_np()[0,3] = x, [1,3] = y.
+    Plan a collision-free path from (start_x, start_y) to (goal_x, goal_y)
+    via GCS and return it as NavigateActions. Falls back to a single direct
+    NavigateAction if GCS cannot find a path.
     """
+    z_navigation    = (GCS_SEARCH_MIN_Z + GCS_SEARCH_MAX_Z) / 2.0
+    start_point     = Point3(start_x, start_y, z_navigation, reference_frame=world.root)
+    goal_point      = Point3(goal_x,  goal_y,  z_navigation, reference_frame=world.root)
+    direct_fallback = [NavigateAction(
+        target_location=_make_pose_stamped(goal_x, goal_y, 0.0, world.root),
+        keep_joint_states=keep_joint_states,
+    )]
+
     try:
-        conn = robot.root.parent_connection
-        if conn is not None and hasattr(conn, "origin") and conn.origin is not None:
-            mat = conn.origin.to_np()          # 4x4 numpy array
-            x, y = float(mat[0, 3]), float(mat[1, 3])
-            print(f"  [robot_pos] OmniDrive origin.to_np() -> ({x:.3f}, {y:.3f})")
-            return x, y
-    except Exception as e:
-        print(f"  [robot_pos] OmniDrive origin read failed: {e}")
+        path = navigation_map.path_from_to(start_point, goal_point)
+    except Exception as path_error:
+        print(f"    [GCS] path_from_to failed: {path_error} — direct navigation.")
+        return direct_fallback
 
-    print(f"  [robot_pos] using fallback ({fallback_x}, {fallback_y})")
-    return fallback_x, fallback_y
+    if path is None or len(path) < 2:
+        print(f"    [GCS] No path found — direct navigation.")
+        return direct_fallback
+
+    navigate_actions = _path_to_navigate_actions(path, world.root, keep_joint_states)
+    print(f"    [GCS] ({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}): {len(navigate_actions)} waypoint(s)")
+    for index, action in enumerate(navigate_actions):
+        position = action.target_location.pose.position
+        print(f"           waypoint {index + 1}: ({position.x:.3f}, {position.y:.3f})")
+    return navigate_actions
 
 
 # ---------------------------------------------------------------------------
@@ -651,57 +538,33 @@ def _get_robot_current_position(
 # ---------------------------------------------------------------------------
 
 def _load_joint_probability_tree(model_path: str) -> JointProbabilityTree:
-    """
-    Load the open-world JPT from disk.
-
-    Variable names in the JSON (pick_approach_x/y, place_approach_x/y) are
-    mapped to apartment names (counter_approach_x/y, table_approach_x/y)
-    inside _sample_plan_parameters_from_jpt.
-    """
-    print(f"  [jpt] Loading JPT from {model_path} ...")
+    print(f"  [jpt] Loading model from {model_path} ...")
     joint_probability_tree = JointProbabilityTree(
         variables=JPT_VARIABLES,
         min_samples_leaf=JPT_MIN_SAMPLES_PER_LEAF,
-    )
-    joint_probability_tree = joint_probability_tree.load(model_path)
-    print(f"  [jpt] JPT loaded.  Leaves: {len(joint_probability_tree.leaves)}")
+    ).load(model_path)
+    print(f"  [jpt] Loaded — {len(joint_probability_tree.leaves)} leaves")
     return joint_probability_tree
 
 
-def _sample_plan_parameters_from_jpt(
-    joint_probability_tree: JointProbabilityTree,
-) -> PlanParameters:
+def _sample_plan_parameters(joint_probability_tree: JointProbabilityTree) -> PlanParameters:
     """
-    Draw one joint sample from the open-world JPT and return it as
-    apartment PlanParameters.
-
-    Variable mapping:
-        pick_approach_x/y  →  counter_approach_x/y
-        place_approach_x/y →  table_approach_x/y
-
-    Safety clipping uses the apartment approach zone bounds.  The open-world
-    JPT was trained with Y in (-0.4, 0.4), so Y samples will frequently be
-    clipped to the apartment zones (2.3–2.7 for counter, 3.8–4.2 for table).
-    This is intentional — it constrains the robot to reachable apartment positions.
+    Draw one joint sample from the open-world JPT and map it to apartment
+    PlanParameters, clipping both approach positions to the apartment zones.
     """
-    sample_array   = joint_probability_tree.sample(1)
-    sample_row     = sample_array[0]
-    variable_names = [v.name for v in JPT_VARIABLES]
-    sample_by_name = dict(zip(variable_names, sample_row))
+    sample_row     = joint_probability_tree.sample(1)[0]
+    sample_by_name = dict(zip([variable.name for variable in JPT_VARIABLES], sample_row))
 
     arm_label = sample_by_name["pick_arm"]
     if isinstance(arm_label, (int, float)):
         arm_label = ArmChoiceDomain.labels[int(arm_label)]
     pick_arm = Arms.LEFT if arm_label == "LEFT" else Arms.RIGHT
 
-    cx_min, cx_max, cy_min, cy_max = COUNTER_APPROACH_SAMPLING_BOUNDS
-    tx_min, tx_max, ty_min, ty_max = TABLE_APPROACH_SAMPLING_BOUNDS
-
     return PlanParameters(
-        counter_approach_x = float(max(cx_min, min(cx_max, sample_by_name["pick_approach_x"]))),
-        counter_approach_y = float(max(cy_min, min(cy_max, sample_by_name["pick_approach_y"]))),
-        table_approach_x   = float(max(tx_min, min(tx_max, sample_by_name["place_approach_x"]))),
-        table_approach_y   = float(max(ty_min, min(ty_max, sample_by_name["place_approach_y"]))),
+        counter_approach_x = float(np.clip(sample_by_name["pick_approach_x"],  COUNTER_APPROACH_MIN_X, COUNTER_APPROACH_MAX_X)),
+        counter_approach_y = float(np.clip(sample_by_name["pick_approach_y"],  COUNTER_APPROACH_MIN_Y, COUNTER_APPROACH_MAX_Y)),
+        table_approach_x   = float(np.clip(sample_by_name["place_approach_x"], TABLE_APPROACH_MIN_X,   TABLE_APPROACH_MAX_X)),
+        table_approach_y   = float(np.clip(sample_by_name["place_approach_y"], TABLE_APPROACH_MIN_Y,   TABLE_APPROACH_MAX_Y)),
         pick_arm           = pick_arm,
     )
 
@@ -711,151 +574,149 @@ def _sample_plan_parameters_from_jpt(
 # ---------------------------------------------------------------------------
 
 def _build_fixed_plan(
-    context:       Context,
-    world:         World,
-    robot:         PR2,
-    milk_body:     Body,
-    gcs:           GraphOfConvexSets,
-    gcs_node_array: np.ndarray,
-    robot_start_x: float = 1.4,
-    robot_start_y: float = 1.5,
+    context:        Context,
+    world:          World,
+    robot:          PR2,
+    milk_body:      Body,
+    navigation_map: GraphOfConvexSets,
+    node_array:     np.ndarray,
+    robot_start_x:  float,
+    robot_start_y:  float,
 ) -> SequentialPlan:
-    """Build the deterministic seed plan used on iteration 1."""
-    seed_arm = Arms.RIGHT
+    """Deterministic seed plan for iteration 1 using the right arm and fixed approach positions."""
+    arm = Arms.RIGHT
 
-    nav_to_counter = _navigate_via_gcs(
-        context, gcs, gcs_node_array,
-        start_x=robot_start_x, start_y=robot_start_y,
+    navigate_to_counter = _navigate_via_gcs(
+        context, navigation_map, node_array,
+        start_x=robot_start_x,    start_y=robot_start_y,
         goal_x=COUNTER_APPROACH_X, goal_y=COUNTER_APPROACH_Y,
         world=world,
     )
-    nav_to_table = _navigate_via_gcs(
-        context, gcs, gcs_node_array,
+    navigate_to_table = _navigate_via_gcs(
+        context, navigation_map, node_array,
         start_x=COUNTER_APPROACH_X, start_y=COUNTER_APPROACH_Y,
-        goal_x=TABLE_APPROACH_X, goal_y=TABLE_APPROACH_Y,
+        goal_x=TABLE_APPROACH_X,    goal_y=TABLE_APPROACH_Y,
         world=world,
         keep_joint_states=True,
     )
-    place_target_pose = _create_pose_stamped(PLACE_X, PLACE_Y, PLACE_Z, world.root)
+    place_pose = _make_pose_stamped(PLACE_X, PLACE_Y, PLACE_Z, world.root)
 
-    print(f"  [plan] Fixed seed parameters:")
-    print(f"         counter approach : ({COUNTER_APPROACH_X}, {COUNTER_APPROACH_Y})")
-    print(f"         table   approach : ({TABLE_APPROACH_X}, {TABLE_APPROACH_Y})")
-    print(f"         place   target   : ({PLACE_X}, {PLACE_Y}, {PLACE_Z})  [fixed]")
-    print(f"         arm              : {seed_arm}")
+    print(f"  [plan] seed — counter:({COUNTER_APPROACH_X},{COUNTER_APPROACH_Y})  table:({TABLE_APPROACH_X},{TABLE_APPROACH_Y})  place:({PLACE_X},{PLACE_Y},{PLACE_Z})  arm:{arm}")
 
-    actions = (
-        [ParkArmsAction(arm=Arms.BOTH)]
-        + nav_to_counter
-        + [
-            PickUpAction(
-                object_designator=milk_body,
-                arm=seed_arm,
-                grasp_description=GraspDescription(
-                    approach_direction=ApproachDirection.FRONT,
-                    vertical_alignment=VerticalAlignment.NoAlignment,
-                    rotate_gripper=False,
-                    manipulation_offset=0.06,
-                    manipulator=robot.right_arm.manipulator,
-                ),
-            )
-        ]
-        + nav_to_table
-        + [
-            PlaceAction(
-                object_designator=milk_body,
-                target_location=place_target_pose,
-                arm=seed_arm,
+    return SequentialPlan(context,
+        ParkArmsAction(arm=Arms.BOTH),
+        *navigate_to_counter,
+        PickUpAction(
+            object_designator=milk_body,
+            arm=arm,
+            grasp_description=GraspDescription(
+                approach_direction=ApproachDirection.FRONT,
+                vertical_alignment=VerticalAlignment.NoAlignment,
+                rotate_gripper=False,
+                manipulation_offset=GRASP_MANIPULATION_OFFSET,
+                manipulator=robot.right_arm.manipulator,
             ),
-            ParkArmsAction(arm=Arms.BOTH),
-        ]
+        ),
+        *navigate_to_table,
+        PlaceAction(object_designator=milk_body, target_location=place_pose, arm=arm),
+        ParkArmsAction(arm=Arms.BOTH),
     )
-    return SequentialPlan(context, *actions)
 
 
-def _build_jpt_sampled_plan(
-    context:         Context,
-    plan_parameters: PlanParameters,
-    world:           World,
-    robot:           PR2,
-    milk_body:       Body,
-    gcs:             GraphOfConvexSets,
-    gcs_node_array:  np.ndarray,
-    robot_start_x:   float,
-    robot_start_y:   float,
+def _build_sampled_plan(
+    context:        Context,
+    parameters:     PlanParameters,
+    world:          World,
+    robot:          PR2,
+    milk_body:      Body,
+    navigation_map: GraphOfConvexSets,
+    node_array:     np.ndarray,
+    robot_start_x:  float,
+    robot_start_y:  float,
 ) -> SequentialPlan:
-    """
-    Build a plan from JPT-sampled approach positions.
-
-    Place target is always fixed to PLACE_X/Y/Z.
-    GCS handles collision-free navigation regardless of sampled positions.
-    """
+    """Build a plan from JPT-sampled approach positions."""
     manipulator = (
-        robot.right_arm.manipulator
-        if plan_parameters.pick_arm == Arms.RIGHT
+        robot.right_arm.manipulator if parameters.pick_arm == Arms.RIGHT
         else robot.left_arm.manipulator
     )
-
-    nav_to_counter = _navigate_via_gcs(
-        context, gcs, gcs_node_array,
-        start_x=robot_start_x,
-        start_y=robot_start_y,
-        goal_x=plan_parameters.counter_approach_x,
-        goal_y=plan_parameters.counter_approach_y,
+    navigate_to_counter = _navigate_via_gcs(
+        context, navigation_map, node_array,
+        start_x=robot_start_x,               start_y=robot_start_y,
+        goal_x=parameters.counter_approach_x, goal_y=parameters.counter_approach_y,
         world=world,
     )
-    nav_to_table = _navigate_via_gcs(
-        context, gcs, gcs_node_array,
-        start_x=plan_parameters.counter_approach_x,
-        start_y=plan_parameters.counter_approach_y,
-        goal_x=plan_parameters.table_approach_x,
-        goal_y=plan_parameters.table_approach_y,
+    navigate_to_table = _navigate_via_gcs(
+        context, navigation_map, node_array,
+        start_x=parameters.counter_approach_x, start_y=parameters.counter_approach_y,
+        goal_x=parameters.table_approach_x,    goal_y=parameters.table_approach_y,
         world=world,
         keep_joint_states=True,
     )
-    # Place Y is fixed to PLACE_Y (= TABLE_APPROACH_Y = 4.0), matching the
-    # fixed plan exactly.  The fixed plan works with RIGHT arm because the
-    # robot navigates to TABLE_APPROACH_Y=4.0 and places at PLACE_Y=4.0 —
-    # the target is directly ahead.  Sampled iterations must reproduce the
-    # same geometry, so we clip table_approach_y to TABLE_APPROACH_Y via the
-    # sampling bounds and use PLACE_Y here.  DO NOT use plan_parameters.table_approach_y
-    # as the place Y — even small Y deviations rotate the target sideways out
-    # of the right arm's reachable workspace.
-    place_target_pose = _create_pose_stamped(PLACE_X, PLACE_Y, PLACE_Z, world.root)
+    place_pose = _make_pose_stamped(PLACE_X, PLACE_Y, PLACE_Z, world.root)
 
-    print(f"  [plan] JPT-sampled parameters:")
-    print(f"         counter approach : ({plan_parameters.counter_approach_x:.3f}, {plan_parameters.counter_approach_y:.3f})")
-    print(f"         table   approach : ({plan_parameters.table_approach_x:.3f}, {plan_parameters.table_approach_y:.3f})")
-    print(f"         place   target   : ({PLACE_X}, {PLACE_Y}, {PLACE_Z})  [fixed — matches fixed plan geometry]")
-    print(f"         arm              : {plan_parameters.pick_arm}")
+    print(f"  [plan] sampled — counter:({parameters.counter_approach_x:.3f},{parameters.counter_approach_y:.3f})  table:({parameters.table_approach_x:.3f},{parameters.table_approach_y:.3f})  place:({PLACE_X},{PLACE_Y},{PLACE_Z})  arm:{parameters.pick_arm}")
 
-    actions = (
-        [ParkArmsAction(arm=Arms.BOTH)]
-        + nav_to_counter
-        + [
-            PickUpAction(
-                object_designator=milk_body,
-                arm=plan_parameters.pick_arm,
-                grasp_description=GraspDescription(
-                    approach_direction=ApproachDirection.FRONT,
-                    vertical_alignment=VerticalAlignment.NoAlignment,
-                    rotate_gripper=False,
-                    manipulation_offset=0.06,
-                    manipulator=manipulator,
-                ),
-            )
-        ]
-        + nav_to_table
-        + [
-            PlaceAction(
-                object_designator=milk_body,
-                target_location=place_target_pose,
-                arm=plan_parameters.pick_arm,
+    return SequentialPlan(context,
+        ParkArmsAction(arm=Arms.BOTH),
+        *navigate_to_counter,
+        PickUpAction(
+            object_designator=milk_body,
+            arm=parameters.pick_arm,
+            grasp_description=GraspDescription(
+                approach_direction=ApproachDirection.FRONT,
+                vertical_alignment=VerticalAlignment.NoAlignment,
+                rotate_gripper=False,
+                manipulation_offset=GRASP_MANIPULATION_OFFSET,
+                manipulator=manipulator,
             ),
-            ParkArmsAction(arm=Arms.BOTH),
-        ]
+        ),
+        *navigate_to_table,
+        PlaceAction(object_designator=milk_body, target_location=place_pose, arm=parameters.pick_arm),
+        ParkArmsAction(arm=Arms.BOTH),
     )
-    return SequentialPlan(context, *actions)
+
+
+# ---------------------------------------------------------------------------
+# Return navigation
+# ---------------------------------------------------------------------------
+
+def _navigate_back_to_start(
+    context:            Context,
+    navigation_map:     GraphOfConvexSets,
+    node_array:         np.ndarray,
+    world:              World,
+    table_approach_x:   float,
+    table_approach_y:   float,
+    counter_approach_x: float,
+    counter_approach_y: float,
+) -> None:
+    """
+    Return the robot to the start zone by retracing the forward path in reverse:
+        table_approach -> counter_approach -> COUNTER_APPROACH (fixed start zone)
+
+    Both waypoints are GCS-free positions already validated on the forward legs.
+    """
+    print(f"  [return] table({table_approach_x:.2f},{table_approach_y:.2f}) -> counter({counter_approach_x:.2f},{counter_approach_y:.2f}) -> start({COUNTER_APPROACH_X},{COUNTER_APPROACH_Y})")
+
+    leg_table_to_counter = _navigate_via_gcs(
+        context, navigation_map, node_array,
+        start_x=table_approach_x,  start_y=table_approach_y,
+        goal_x=counter_approach_x, goal_y=counter_approach_y,
+        world=world,
+    )
+    leg_counter_to_start = _navigate_via_gcs(
+        context, navigation_map, node_array,
+        start_x=counter_approach_x, start_y=counter_approach_y,
+        goal_x=COUNTER_APPROACH_X,  goal_y=COUNTER_APPROACH_Y,
+        world=world,
+    )
+    return_plan = SequentialPlan(context, *(leg_table_to_counter + leg_counter_to_start))
+    with simulated_robot:
+        try:
+            return_plan.perform()
+            print("  [return] Robot at start position.")
+        except Exception as return_error:
+            print(f"  [return] WARNING: return navigation failed: {return_error}")
 
 
 # ---------------------------------------------------------------------------
@@ -863,31 +724,22 @@ def _build_jpt_sampled_plan(
 # ---------------------------------------------------------------------------
 
 def pick_and_place_demo_apartment_jpt() -> None:
-    """
-    Apartment world Batch 2: JPT-guided sampling with GCS navigation.
-
-    Reuses the open-world JPT (pick_and_place_jpt.json) because the apartment
-    Batch 1 produced 0% success — no apartment-specific training data exists.
-    The open-world JPT is valid because pick/place mechanics are identical;
-    GCS handles the apartment geometry transparently.
-    """
+    """Apartment world Batch 2: 5000 iterations of JPT-guided pick-and-place."""
     print("=" * 64)
-    print("  pick_and_place_demo_apartment_jpt  (Batch 2)")
-    print(f"  NUMBER_OF_ITERATIONS = {NUMBER_OF_ITERATIONS}")
-    print(f"  PLACE_Z (fixed)      = {PLACE_Z}")
-    print(f"  DATABASE_URI         = {DATABASE_URI}")
-    print(f"  JPT_MODEL_PATH       = {JPT_MODEL_PATH}")
+    print("  pick_and_place_demo_apartment_jpt  (Batch 2 / JPT-guided)")
+    print(f"  Iterations   : {NUMBER_OF_ITERATIONS}")
+    print(f"  Place target : ({PLACE_X}, {PLACE_Y}, {PLACE_Z})")
+    print(f"  JPT model    : {JPT_MODEL_PATH}")
+    print(f"  Database     : {DATABASE_URI}")
     print("=" * 64)
 
     print("\n[1/5] Building world ...")
-    world, robot = _initialize_world(APARTMENT_URDF)
+    world, robot = _build_world(APARTMENT_URDF_PATH)
     _add_localization_frames(world, robot)
-    milk_body = _add_milk_object(world, MILK_STL)
-    print(f"  Milk spawned at  x={MILK_X:.3f},  y={MILK_Y:.3f},  z={MILK_Z:.3f}")
-    print(f"  Place target at  x={PLACE_X:.3f}, y={PLACE_Y:.3f}, z={PLACE_Z:.3f}  [fixed]")
-
-    gcs = _build_navigation_map(world)
-    gcs_node_array = _build_gcs_index(gcs)
+    milk_body = _spawn_milk(world, MILK_STL_PATH)
+    print(f"  Milk at ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
+    navigation_map = _build_navigation_map(world)
+    node_array     = _build_gcs_node_array(navigation_map)
 
     print("\n[2/5] Connecting to database ...")
     database_session = _create_database_session(DATABASE_URI)
@@ -895,32 +747,12 @@ def pick_and_place_demo_apartment_jpt() -> None:
     print("\n[3/5] Loading JPT model ...")
     joint_probability_tree = _load_joint_probability_tree(JPT_MODEL_PATH)
 
-    print("\n[4/5] Initialising ROS ...")
+    print("\n[4/5] Starting ROS ...")
     rclpy.init()
     ros_node        = rclpy.create_node("pick_and_place_apartment_jpt_node")
     ros_spin_thread = threading.Thread(target=rclpy.spin, args=(ros_node,), daemon=True)
     ros_spin_thread.start()
     print("  [ros] Node started.")
-
-    robot_init_x: float = 1.4
-    robot_init_y: float = 1.5
-
-    # Snap robot_init to free space once — (1.4, 1.5) may be inside a
-    # bloated obstacle region in GCS. All return trips navigate to this
-    # snapped position so GCS can always route to it.
-    z_nav = (GRAPH_OF_CONVEX_SETS_MIN_Z + GRAPH_OF_CONVEX_SETS_MAX_Z) / 2.0
-    _snapped = _find_nearest_free_point(
-        gcs, gcs_node_array, robot_init_x, robot_init_y, z_nav, world
-    )
-    if _snapped is not None:
-        robot_return_x = float(_snapped.x)
-        robot_return_y = float(_snapped.y)
-        print(f"  [init] return goal snapped to free space: ({robot_return_x:.3f}, {robot_return_y:.3f})")
-    else:
-        robot_return_x = robot_init_x
-        robot_return_y = robot_init_y
-        print(f"  [init] WARNING: could not snap return goal — using ({robot_return_x}, {robot_return_y})")
-
 
     try:
         TFPublisher(_world=world, node=ros_node)
@@ -934,27 +766,28 @@ def pick_and_place_demo_apartment_jpt() -> None:
 
         for iteration in range(1, NUMBER_OF_ITERATIONS + 1):
             print(f"\n{'=' * 64}")
-            print(
-                f"  Iteration {iteration} / {NUMBER_OF_ITERATIONS}  "
-                f"(success={successful_count}  failed={failed_count})"
-            )
+            print(f"  Iteration {iteration}/{NUMBER_OF_ITERATIONS}  (success={successful_count}  failed={failed_count})")
             print(f"{'=' * 64}")
 
             if iteration == 1:
-                print("  Mode: FIXED (deterministic seed)")
+                print("  Mode: FIXED")
                 plan = _build_fixed_plan(
-                    planning_context, world, robot, milk_body, gcs, gcs_node_array,
-                    robot_start_x=robot_init_x,
-                    robot_start_y=robot_init_y,
+                    planning_context, world, robot, milk_body, navigation_map, node_array,
+                    robot_start_x=ROBOT_INIT_X,
+                    robot_start_y=ROBOT_INIT_Y,
                 )
+                return_table_approach_x,   return_table_approach_y   = TABLE_APPROACH_X,   TABLE_APPROACH_Y
+                return_counter_approach_x, return_counter_approach_y = COUNTER_APPROACH_X, COUNTER_APPROACH_Y
             else:
                 print("  Mode: JPT-SAMPLED")
-                plan_parameters = _sample_plan_parameters_from_jpt(joint_probability_tree)
-                plan = _build_jpt_sampled_plan(
-                    planning_context, plan_parameters, world, robot, milk_body, gcs, gcs_node_array,
-                    robot_start_x=robot_init_x,
-                    robot_start_y=robot_init_y,
+                parameters = _sample_plan_parameters(joint_probability_tree)
+                plan = _build_sampled_plan(
+                    planning_context, parameters, world, robot, milk_body, navigation_map, node_array,
+                    robot_start_x=ROBOT_INIT_X,
+                    robot_start_y=ROBOT_INIT_Y,
                 )
+                return_table_approach_x,   return_table_approach_y   = parameters.table_approach_x,   parameters.table_approach_y
+                return_counter_approach_x, return_counter_approach_y = parameters.counter_approach_x, parameters.counter_approach_y
 
             print("\n  Executing plan ...")
             execution_succeeded = False
@@ -962,87 +795,42 @@ def pick_and_place_demo_apartment_jpt() -> None:
                 try:
                     plan.perform()
                     execution_succeeded = True
-                    print("  plan.perform() completed without exception.")
-
+                    print("  Execution complete.")
                 except Exception as execution_error:
                     failed_count += 1
-                    print(f"\n  RESULT: FAILED  (iteration {iteration})")
-                    print(f"  Exception type : {type(execution_error).__name__}")
-                    print(f"  Exception msg  : {execution_error}")
-                    print("  Traceback (last 3 lines):")
+                    print(f"  RESULT: FAILED — {type(execution_error).__name__}: {execution_error}")
                     for line in traceback.format_exc().strip().splitlines()[-3:]:
                         print(f"    {line}")
 
             if execution_succeeded:
                 try:
-                    _persist_plan_to_database(database_session, plan)
+                    _persist_plan(database_session, plan)
                     successful_count += 1
-                    print(
-                        f"  RESULT: SUCCESS  "
-                        f"({successful_count} stored / "
-                        f"{iteration} attempted / "
-                        f"{NUMBER_OF_ITERATIONS - iteration} remaining)"
-                    )
-                except Exception as db_error:
-                    print(f"  [db] ERROR persisting plan: {db_error}")
+                    print(f"  RESULT: SUCCESS  ({successful_count}/{iteration} stored,  {NUMBER_OF_ITERATIONS - iteration} remaining)")
+                except Exception as database_error:
+                    print(f"  [db] ERROR: {database_error}")
                     traceback.print_exc()
 
-            print("\n  Resetting world state ...")
-            _respawn_milk_object(world, milk_body)
-
-            # Return robot via the same waypoints as the forward path, reversed:
-            #   table_approach -> counter_approach -> start
-            # Both intermediate positions are known-free GCS nodes (used in
-            # forward navigation). No snapping needed.
-            if iteration == 1:
-                table_x,   table_y   = TABLE_APPROACH_X,   TABLE_APPROACH_Y
-                counter_x, counter_y = COUNTER_APPROACH_X, COUNTER_APPROACH_Y
-            else:
-                table_x,   table_y   = plan_parameters.table_approach_x,   plan_parameters.table_approach_y
-                counter_x, counter_y = plan_parameters.counter_approach_x, plan_parameters.counter_approach_y
-
-            print(f"  [reset] return: table({table_x:.2f},{table_y:.2f}) -> counter({counter_x:.2f},{counter_y:.2f}) -> start({COUNTER_APPROACH_X},{COUNTER_APPROACH_Y})")
-
-            leg1 = _navigate_via_gcs(
-                planning_context, gcs, gcs_node_array,
-                start_x=table_x,   start_y=table_y,
-                goal_x=counter_x,  goal_y=counter_y,
-                world=world,
+            print("\n  Resetting ...")
+            _respawn_milk(world, milk_body)
+            _navigate_back_to_start(
+                planning_context, navigation_map, node_array, world,
+                table_approach_x=return_table_approach_x,     table_approach_y=return_table_approach_y,
+                counter_approach_x=return_counter_approach_x, counter_approach_y=return_counter_approach_y,
             )
-            leg2 = _navigate_via_gcs(
-                planning_context, gcs, gcs_node_array,
-                start_x=counter_x,        start_y=counter_y,
-                goal_x=COUNTER_APPROACH_X, goal_y=COUNTER_APPROACH_Y,
-                world=world,
-            )
-            return_plan = SequentialPlan(planning_context, *(leg1 + leg2))
-            with simulated_robot:
-                try:
-                    return_plan.perform()
-                    print("  [reset] Robot returned to start position.")
-                except Exception as return_error:
-                    print(f"  [reset] WARNING: return navigation failed: {return_error}")
 
-
-        batch_two_rate = 100 * successful_count // NUMBER_OF_ITERATIONS
+        success_rate = 100 * successful_count // NUMBER_OF_ITERATIONS
         print(f"\n{'=' * 64}")
         print(f"  Run complete.")
-        print(f"  Total iterations         : {NUMBER_OF_ITERATIONS}")
-        print(f"  Successful plans         : {successful_count}  ({batch_two_rate}%)")
-        print(f"  Failed                   : {failed_count}")
-        print(f"  Open-world Batch 1       : 1742 / 5000 = 34%")
-        print(f"  Open-world Batch 2 (JPT) : 4462 / 5000 = 89%")
-        print(f"  Database                 : {DATABASE_URI}")
+        print(f"  Successful : {successful_count} / {NUMBER_OF_ITERATIONS}  ({success_rate}%)")
+        print(f"  Failed     : {failed_count}")
         print(f"{'=' * 64}")
 
         try:
-            from sqlalchemy import text
-            db_count = database_session.execute(
-                text('SELECT COUNT(*) FROM "SequentialPlanDAO"')
-            ).scalar()
-            print(f"  DB row count (SequentialPlanDAO) : {db_count}")
+            row_count = database_session.execute(text('SELECT COUNT(*) FROM "SequentialPlanDAO"')).scalar()
+            print(f"  DB rows (SequentialPlanDAO): {row_count}")
         except Exception as count_error:
-            print(f"  [db] Could not verify row count: {count_error}")
+            print(f"  [db] Could not read row count: {count_error}")
 
     finally:
         database_session.close()
