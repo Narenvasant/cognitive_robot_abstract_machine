@@ -1367,6 +1367,47 @@ class TestCartesianPositionTrajectory:
             cart_traj.tip_link,
         )
 
+    def test_cartesian_position_trajectory_circle(self, cylinder_bot_world: World):
+        points = []
+        a = 0.1
+
+        for i in range(5000):
+            t = (
+                i * np.pi / 500.0
+            )  # angle parameter; adjust divisor for tighter/looser turns
+            points.append(
+                Point3(
+                    a * np.cos(t),
+                    a * np.sin(t),
+                    0,
+                    reference_frame=cylinder_bot_world.root,
+                )
+            )
+        msc = MotionStatechart()
+        cart_traj = CartesianPositionTrajectory(
+            root_link=cylinder_bot_world.root,
+            tip_link=cylinder_bot_world.get_kinematic_structure_entity_by_name("bot"),
+            goal_points=points,
+            maximum_skip_ahead=20,
+        )
+        msc.add_node(cart_traj)
+        msc.add_node(EndMotion.when_true(cart_traj))
+
+        kin_sim = Executor(
+            context=MotionStatechartContext(
+                world=cylinder_bot_world,
+            ),
+            trajectory_plotter=WorldStateTrajectoryPlotter(),
+        )
+        kin_sim.compile(motion_statechart=msc)
+        kin_sim.tick_until_end()
+        self.compare_trajectories(
+            points,
+            kin_sim.trajectory_plotter.world_state_trajectory,
+            cart_traj.root_link,
+            cart_traj.tip_link,
+        )
+
     def test_cartesian_position_trajectory_spiral_pr2(
         self, pr2_world_state_reset: World, better_pr2_pose
     ):

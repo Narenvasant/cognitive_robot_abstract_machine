@@ -165,6 +165,12 @@ class CartesianPositionTrajectory(CartesianTask):
     """Target 3D point to reach."""
     _goal_points_np: np.ndarray = field(init=False, repr=False)
     """Goal points in numpy format."""
+    maximum_skip_ahead: int | None = field(default=None, kw_only=True)
+    """
+    This limits how many points can be skipped in very dense trajectories.
+    Setting this number is required if your trajectory contains loops.
+    """
+
     threshold: float = field(default=0.01, kw_only=True)
     """Distance threshold for goal achievement in meters."""
 
@@ -226,10 +232,6 @@ class CartesianPositionTrajectory(CartesianTask):
             weight=self.weight,
         )
 
-        final_point = self.root_T_goal_reference_frame @ self.goal_points[-1]
-
-        distance_to_goal = final_point.euclidean_distance(root_P_current)
-        artifacts.observation = distance_to_goal < self.threshold
         self.compile_current_point_for_on_tick(context)
         return artifacts
 
@@ -263,7 +265,12 @@ class CartesianPositionTrajectory(CartesianTask):
         """
         Search for the closest point in the trajectory to the current position, without going backwards.
         """
-        remaining_points = self._goal_points_np[self.current_index :]
+        if self.maximum_skip_ahead is None:
+            remaining_points = self._goal_points_np[self.current_index :]
+        else:
+            remaining_points = self._goal_points_np[
+                self.current_index : self.current_index + self.maximum_skip_ahead
+            ]
         distances = np.linalg.norm(
             remaining_points - goal_reference_frame_P_tip_np, axis=1
         )
@@ -312,6 +319,13 @@ class CartesianPositionTrajectory(CartesianTask):
         context.float_variable_data.set_value(
             self.goal_reference_frame_P_current_target_point, target_point
         )
+        if (
+            np.linalg.norm(target_point - goal_reference_frame_P_tip_np)
+            < self.threshold
+            and self.current_index == len(self._goal_points_np) - 1
+        ):
+            return ObservationStateValues.TRUE
+        return ObservationStateValues.FALSE
 
     def _init_goal_reference_frame_P_current_target_point(
         self, float_variable_data: FloatVariableData
