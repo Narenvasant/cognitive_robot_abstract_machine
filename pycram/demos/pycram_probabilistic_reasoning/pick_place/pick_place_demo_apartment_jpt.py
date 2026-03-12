@@ -1,11 +1,9 @@
 """
-Apartment world Batch 2: JPT-guided pick-and-place with GCS navigation.
+Apartment world: JPT-guided pick-and-place with GCS navigation.
 
 Uses the open-world JPT (pick_and_place_jpt.json), trained on 1742 successful
 open-world Batch 1 plans, to guide approach-position and arm sampling in the
-apartment world. Apartment Batch 1 achieved 0% success under uniform sampling,
-so no apartment-specific training data exists. The open-world JPT transfers
-directly because pick/place mechanics are identical between the two worlds;
+apartment world. The open-world JPT transfers directly because pick/place mechanics are identical between the two worlds;
 only navigation geometry differs, which GCS handles transparently.
 
 JPT variable mapping (open-world → apartment):
