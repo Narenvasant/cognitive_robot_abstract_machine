@@ -58,18 +58,14 @@ from pycram.robot_plans import ParkArmsAction, NavigateAction, PickUpAction, Pla
 from pycram.orm.ormatic_interface import *
 
 from krrood.entity_query_language.factories import (
-    probable,
-    probable_variable,
+    underspecified,
     variable,
     variable_from,
 )
 from krrood.ormatic.dao import to_dao
 from krrood.ormatic.utils import create_engine
-from krrood.probabilistic_knowledge.parameterizer import (
-    MatchParameterizer,
-    Parameterization,
-)
-from krrood.probabilistic_knowledge.probable_variable import MatchToInstanceTranslator
+from krrood.parametrization.parameterizer import UnderspecifiedParameters
+from probabilistic_model.probabilistic_circuit.rx.helper import fully_factorized
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit,
 )
@@ -144,7 +140,7 @@ GRAPH_OF_CONVEX_SETS_MAX_Z: float = 0.1
 GRAPH_OF_CONVEX_SETS_BLOAT_OBSTACLES: float = 0.3
 GRAPH_OF_CONVEX_SETS_BLOAT_WALLS: float = 0.05
 
-_RESOURCE_PATH = Path(__file__).resolve().parents[2] / "resources"
+_RESOURCE_PATH = Path(__file__).resolve().parents[3] / "resources"
 APARTMENT_URDF: Path = _RESOURCE_PATH / "worlds" / "apartment.urdf"
 MILK_STL:       Path = _RESOURCE_PATH / "objects" / "milk.stl"
 
@@ -161,13 +157,12 @@ _ACTION_LABELS = [
 @dataclass
 class ActionEntry:
     """
-    Groups a concrete action instance with its Parameterization and the
-    pre-built ProbabilisticCircuit so that all three travel together.
+    Groups an underspecified action description with its UnderspecifiedParameters
+    and the pre-built ProbabilisticCircuit so that all three travel together.
     """
-    instance: Any
-    parameterization: Parameterization
+    description: Any
+    parameters: UnderspecifiedParameters
     distribution: ProbabilisticCircuit
-
 
 
 def _build_navigation_map(world: World) -> GraphOfConvexSets:
@@ -393,7 +388,6 @@ def _respawn_milk_object(world: World, milk_body: Body) -> None:
     print(f"  Milk respawned at  x={MILK_X}, y={MILK_Y}, z={MILK_Z}")
 
 
-
 def _create_database_session(database_uri: str) -> Session:
     """
     Create a SQLAlchemy session and initialize the database.
@@ -462,7 +456,6 @@ def _persist_plan(session: Session, plan: SequentialPlan) -> None:
     plan_dao = to_dao(plan)
     session.add(plan_dao)
     session.commit()
-
 
 
 def _navigate_via_graph_of_convex_sets(
@@ -595,38 +588,33 @@ def _build_fixed_plan(
 
 def _navigable_pose_description(robot: PR2) -> Any:
     """
-    Build a probable PoseStamped description for a navigation target.
-
-    This creates a description with free x/y position components for
-    probabilistic sampling.
+    Build an underspecified PoseStamped description for a navigation target.
 
     :param robot: The PR2 robot instance.
-    :return: A probable PoseStamped description.
+    :return: An underspecified PoseStamped description.
     """
-    return probable(PoseStamped)(
-        pose=probable(PyCramPose)(
-            position=probable(PyCramVector3)(x=..., y=..., z=0),
-            orientation=probable(PyCramQuaternion)(x=0, y=0, z=0, w=1),
+    return underspecified(PoseStamped)(
+        pose=underspecified(PyCramPose)(
+            position=underspecified(PyCramVector3)(x=..., y=..., z=0),
+            orientation=underspecified(PyCramQuaternion)(x=0, y=0, z=0, w=1),
         ),
-        header=probable(Header)(frame_id=variable_from([robot._world.root])),
+        header=underspecified(Header)(frame_id=variable_from([robot._world.root])),
     )
 
 
 def _place_pose_description(robot: PR2) -> Any:
     """
-    Build a probable PoseStamped for the place target.
-
-    Uses free x/y and fixed z (table surface height) for probabilistic sampling.
+    Build an underspecified PoseStamped for the place target.
 
     :param robot: The PR2 robot instance.
-    :return: A probable PoseStamped description.
+    :return: An underspecified PoseStamped description.
     """
-    return probable(PoseStamped)(
-        pose=probable(PyCramPose)(
-            position=probable(PyCramVector3)(x=..., y=..., z=PLACE_Z),
-            orientation=probable(PyCramQuaternion)(x=0, y=0, z=0, w=1),
+    return underspecified(PoseStamped)(
+        pose=underspecified(PyCramPose)(
+            position=underspecified(PyCramVector3)(x=..., y=..., z=PLACE_Z),
+            orientation=underspecified(PyCramQuaternion)(x=0, y=0, z=0, w=1),
         ),
-        header=probable(Header)(frame_id=variable_from([robot._world.root])),
+        header=underspecified(Header)(frame_id=variable_from([robot._world.root])),
     )
 
 
@@ -634,31 +622,30 @@ def _build_action_descriptions(
     world: World, robot: PR2, milk_variable: Any
 ) -> list:
     """
-    Construct the sequence of action descriptions used for probabilistic reasoning.
+    Construct the sequence of underspecified action descriptions used for
+    probabilistic reasoning.
 
     :param world: The world instance.
     :param robot: The PR2 robot instance.
     :param milk_variable: The variable representing the milk object.
-    :return: A list of action descriptions.
+    :return: A list of underspecified action descriptions.
     """
     manipulators = world.get_semantic_annotations_by_type(Manipulator)
     return [
-        probable_variable(ParkArmsAction)(
+        underspecified(ParkArmsAction)(
             arm=variable(Arms, [Arms.BOTH]),
         ),
-        probable_variable(NavigateAction)(
+        underspecified(NavigateAction)(
             target_location=_navigable_pose_description(robot),
             keep_joint_states=False,
         ),
-        probable_variable(PickUpAction)(
+        underspecified(PickUpAction)(
             object_designator=milk_variable,
             arm=variable(Arms, [Arms.LEFT, Arms.RIGHT]),
-            grasp_description=probable(GraspDescription)(
+            grasp_description=underspecified(GraspDescription)(
                 approach_direction=variable(
                     ApproachDirection,
-                    [
-                        ApproachDirection.FRONT,
-                    ],
+                    [ApproachDirection.FRONT],
                 ),
                 vertical_alignment=variable(
                     VerticalAlignment,
@@ -669,16 +656,16 @@ def _build_action_descriptions(
                 manipulator=variable(Manipulator, manipulators),
             ),
         ),
-        probable_variable(NavigateAction)(
+        underspecified(NavigateAction)(
             target_location=_navigable_pose_description(robot),
             keep_joint_states=False,
         ),
-        probable_variable(PlaceAction)(
+        underspecified(PlaceAction)(
             object_designator=milk_variable,
             target_location=_place_pose_description(robot),
             arm=variable(Arms, [Arms.LEFT, Arms.RIGHT]),
         ),
-        probable_variable(ParkArmsAction)(
+        underspecified(ParkArmsAction)(
             arm=variable(Arms, [Arms.BOTH]),
         ),
     ]
@@ -700,8 +687,6 @@ def _truncate_navigate_distribution(
 ) -> ProbabilisticCircuit:
     """
     Truncate a NavigateAction distribution within the given x and y bounds.
-
-    This ensures that sampled navigation targets stay within the specified area.
 
     :param distribution: The fully-factorised circuit for a NavigateAction.
     :param x_min: World-frame x minimum bound.
@@ -763,18 +748,18 @@ def _build_action_entry(
     description: Any, approach_bounds: tuple = None
 ) -> ActionEntry:
     """
-    Translate a match description into a concrete action entry.
+    Translate an underspecified description into a concrete ActionEntry.
 
-    This includes creating the action instance, its parameterization, and
-    its pre-built fully-factorized distribution.
+    Replaces the old MatchParameterizer / MatchToInstanceTranslator pipeline
+    with the new UnderspecifiedParameters API.
 
-    :param description: The probable_variable match description.
+    :param description: The underspecified action description.
     :param approach_bounds: Optional (x_min, x_max, y_min, y_max) tuple.
     :return: An ActionEntry instance.
     """
-    instance = MatchToInstanceTranslator(description).translate()
-    parameterization = MatchParameterizer(instance).parameterize()
-    distribution = parameterization.create_fully_factorized_distribution()
+    description.resolve()
+    parameters = UnderspecifiedParameters(description)
+    distribution = fully_factorized(parameters.variables.values())
 
     if approach_bounds is not None:
         x_min, x_max, y_min, y_max = approach_bounds
@@ -782,20 +767,23 @@ def _build_action_entry(
             distribution, x_min, x_max, y_min, y_max
         )
 
-    return ActionEntry(instance, parameterization, distribution)
+    return ActionEntry(description, parameters, distribution)
 
 
-def _apply_sample(entry: ActionEntry) -> None:
+def _apply_sample(entry: ActionEntry) -> Any:
     """
-    Sample parameters from the entry's distribution and apply them to the instance.
+    Sample parameters from the entry's distribution and construct a concrete
+    action instance using the new UnderspecifiedParameters API.
 
-    :param entry: The action entry to sample and parameterize.
+    Replaces the old _apply_sample / parameterize_object_with_sample pattern.
+
+    :param entry: The action entry to sample from.
+    :return: A concrete action instance with sampled parameter values applied.
     """
     raw_sample = entry.distribution.sample(1)[0]
-    named_sample = entry.parameterization.create_assignment_from_variables_and_sample(
+    return entry.parameters.create_instance_from_variables_and_sample(
         entry.distribution.variables, raw_sample
     )
-    entry.parameterization.parameterize_object_with_sample(entry.instance, named_sample)
 
 
 def _build_sampled_plan_with_graph_of_convex_sets(
@@ -825,15 +813,17 @@ def _build_sampled_plan_with_graph_of_convex_sets(
     :param robot_start_y: Start y.
     :return: A SequentialPlan instance.
     """
+    sampled_instances = []
     for label, entry in zip(_ACTION_LABELS, entries):
-        _apply_sample(entry)
+        instance = _apply_sample(entry)
+        sampled_instances.append(instance)
         print(f"    Sampled  {label}")
 
-    nav_to_counter_entry: NavigateAction = entries[1].instance
-    nav_to_table_entry: NavigateAction = entries[3].instance
+    nav_to_counter_instance: NavigateAction = sampled_instances[1]
+    nav_to_table_instance: NavigateAction = sampled_instances[3]
 
-    sampled_counter_pos = nav_to_counter_entry.target_location.pose.position
-    sampled_table_pos = nav_to_table_entry.target_location.pose.position
+    sampled_counter_pos = nav_to_counter_instance.target_location.pose.position
+    sampled_table_pos = nav_to_table_instance.target_location.pose.position
 
     counter_goal_x = float(sampled_counter_pos.x)
     counter_goal_y = float(sampled_counter_pos.y)
@@ -865,12 +855,12 @@ def _build_sampled_plan_with_graph_of_convex_sets(
     )
 
     actions = (
-        [entries[0].instance]
+        [sampled_instances[0]]
         + nav_to_counter_actions
-        + [entries[2].instance]
+        + [sampled_instances[2]]
         + nav_to_table_actions
-        + [entries[4].instance]
-        + [entries[5].instance]
+        + [sampled_instances[4]]
+        + [sampled_instances[5]]
     )
     return SequentialPlan(context, *actions)
 
@@ -912,19 +902,15 @@ def sequential_plan_with_apartment() -> None:
 
         entries: list[ActionEntry] = [
             _build_action_entry(descriptions[0]),
-            _build_action_entry(
-                descriptions[1], _COUNTER_APPROACH_BOUNDS
-            ),
+            _build_action_entry(descriptions[1], _COUNTER_APPROACH_BOUNDS),
             _build_action_entry(descriptions[2]),
-            _build_action_entry(
-                descriptions[3], _TABLE_APPROACH_BOUNDS
-            ),
+            _build_action_entry(descriptions[3], _TABLE_APPROACH_BOUNDS),
             _build_action_entry(descriptions[4]),
             _build_action_entry(descriptions[5]),
         ]
 
         for label, entry in zip(_ACTION_LABELS, entries):
-            n_vars = len(entry.parameterization.variables)
+            n_vars = len(entry.parameters.variables)
             n_dist = len(entry.distribution.variables)
             print(
                 f"  {label:<25}  {n_vars:>2} param vars  /  {n_dist:>2} distribution vars"
@@ -974,7 +960,6 @@ def sequential_plan_with_apartment() -> None:
                     )
                 except Exception as exception:
                     import traceback
-
                     traceback.print_exc()
                     print(
                         f"\n  x  Iteration {iteration} failed -- plan not stored.  "

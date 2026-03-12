@@ -25,11 +25,11 @@ from pycram.motion_executor import simulated_robot
 from pycram.orm.ormatic_interface import Base
 from pycram.robot_plans import NavigateAction, ParkArmsAction, PickUpAction, PlaceAction
 
-from krrood.entity_query_language.factories import probable, probable_variable, variable, variable_from
+from krrood.entity_query_language.factories import underspecified, variable, variable_from
 from krrood.ormatic.dao import to_dao
 from krrood.ormatic.utils import create_engine
-from krrood.probabilistic_knowledge.parameterizer import MatchParameterizer, Parameterization
-from krrood.probabilistic_knowledge.probable_variable import MatchToInstanceTranslator
+from krrood.parametrization.parameterizer import UnderspecifiedParameters
+from probabilistic_model.probabilistic_circuit.rx.helper import fully_factorized
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import ProbabilisticCircuit
 
 from semantic_digital_twin.adapters.ros.tf_publisher import TFPublisher
@@ -52,8 +52,6 @@ from semantic_digital_twin.world_description.world_entity import Body
 # ---------------------------------------------------------------------------
 
 NUMBER_OF_ITERATIONS: int = 5000
-# At ~67% success rate this yields ~134 successful plans.
-# For a stronger PC increase to 750 (~500 plans) or 1500 (~1000 plans).
 
 DATABASE_URI: str = os.environ.get(
     "SEMANTIC_DIGITAL_TWIN_DATABASE_URI",
@@ -81,7 +79,7 @@ PICK_APPROACH_SAMPLING_BOUNDS:  tuple[float, float, float, float] = (1.2, 1.8, -
 PLACE_APPROACH_SAMPLING_BOUNDS: tuple[float, float, float, float] = (3.2, 3.8, -0.4, 0.4)
 
 PR2_URDF_PATH: str  = "package://iai_pr2_description/robots/pr2_with_ft2_cableguide.xacro"
-MILK_STL_PATH: Path = Path(__file__).resolve().parents[2] / "resources" / "objects" / "milk.stl"
+MILK_STL_PATH: Path = Path(__file__).resolve().parents[3] / "resources" / "objects" / "milk.stl"
 
 
 # ---------------------------------------------------------------------------
@@ -168,8 +166,8 @@ _patch_orm_numpy_array_type()
 
 @dataclass
 class ActionEntry:
-    instance:          Any
-    parameterization:  Parameterization
+    description:       Any
+    parameters:        UnderspecifiedParameters
     distribution:      ProbabilisticCircuit
     base_distribution: ProbabilisticCircuit = None
 
@@ -385,12 +383,12 @@ def _create_pose_stamped(x: float, y: float, z: float, frame_id: Any) -> PoseSta
 # ---------------------------------------------------------------------------
 
 def _build_navigable_pose_description(robot: PR2) -> Any:
-    return probable(PoseStamped)(
-        pose=probable(PyCramPose)(
-            position=probable(PyCramVector3)(x=..., y=..., z=0),
-            orientation=probable(PyCramQuaternion)(x=0, y=0, z=0, w=1),
+    return underspecified(PoseStamped)(
+        pose=underspecified(PyCramPose)(
+            position=underspecified(PyCramVector3)(x=..., y=..., z=0),
+            orientation=underspecified(PyCramQuaternion)(x=0, y=0, z=0, w=1),
         ),
-        header=probable(Header)(frame_id=variable_from([robot._world.root]), sequence=0),
+        header=underspecified(Header)(frame_id=variable_from([robot._world.root]), sequence=0),
     )
 
 
@@ -399,13 +397,13 @@ def _build_navigate_entry(
     keep_joint_states: bool,
     sampling_bounds: tuple[float, float, float, float],
 ) -> ActionEntry:
-    description = probable_variable(NavigateAction)(
+    description = underspecified(NavigateAction)(
         target_location=_build_navigable_pose_description(robot),
         keep_joint_states=keep_joint_states,
     )
-    instance         = MatchToInstanceTranslator(description).translate()
-    parameterization = MatchParameterizer(instance).parameterize()
-    distribution     = parameterization.create_fully_factorized_distribution()
+    description.resolve()
+    parameters   = UnderspecifiedParameters(description)
+    distribution = fully_factorized(parameters.variables.values())
 
     x_min, x_max, y_min, y_max = sampling_bounds
     distribution = _truncate_distribution_to_position_bounds(
@@ -413,8 +411,8 @@ def _build_navigate_entry(
     )
 
     return ActionEntry(
-        instance=instance,
-        parameterization=parameterization,
+        description=description,
+        parameters=parameters,
         distribution=distribution,
         base_distribution=copy.deepcopy(distribution),
     )
@@ -423,10 +421,10 @@ def _build_navigate_entry(
 def _build_pickup_entry(robot: PR2, milk_variable: Any) -> ActionEntry:
     available_manipulators = robot._world.get_semantic_annotations_by_type(Manipulator)
 
-    description = probable_variable(PickUpAction)(
+    description = underspecified(PickUpAction)(
         object_designator=milk_variable,
         arm=variable(Arms, [Arms.LEFT, Arms.RIGHT]),
-        grasp_description=probable(GraspDescription)(
+        grasp_description=underspecified(GraspDescription)(
             approach_direction=variable(ApproachDirection, [ApproachDirection.FRONT]),
             vertical_alignment=variable(VerticalAlignment, [VerticalAlignment.NoAlignment]),
             rotate_gripper=variable(bool, [False]),
@@ -434,13 +432,13 @@ def _build_pickup_entry(robot: PR2, milk_variable: Any) -> ActionEntry:
             manipulator=variable(Manipulator, available_manipulators),
         ),
     )
-    instance         = MatchToInstanceTranslator(description).translate()
-    parameterization = MatchParameterizer(instance).parameterize()
-    distribution     = parameterization.create_fully_factorized_distribution()
+    description.resolve()
+    parameters   = UnderspecifiedParameters(description)
+    distribution = fully_factorized(parameters.variables.values())
 
     return ActionEntry(
-        instance=instance,
-        parameterization=parameterization,
+        description=description,
+        parameters=parameters,
         distribution=distribution,
         base_distribution=copy.deepcopy(distribution),
     )
@@ -491,12 +489,18 @@ def _truncate_distribution_to_position_bounds(
     return truncated
 
 
-def _sample_parameters_into_action(entry: ActionEntry) -> None:
-    raw_sample   = entry.distribution.sample(1)[0]
-    named_sample = entry.parameterization.create_assignment_from_variables_and_sample(
+def _sample_from_entry(entry: ActionEntry) -> Any:
+    """
+    Sample parameters from the entry's distribution and return a concrete
+    action instance using the new UnderspecifiedParameters API.
+
+    Replaces the old _sample_parameters_into_action / parameterize_object_with_sample
+    in-place mutation pattern with create_instance_from_variables_and_sample.
+    """
+    raw_sample = entry.distribution.sample(1)[0]
+    return entry.parameters.create_instance_from_variables_and_sample(
         entry.distribution.variables, raw_sample
     )
-    entry.parameterization.parameterize_object_with_sample(entry.instance, named_sample)
 
 
 # ---------------------------------------------------------------------------
@@ -551,19 +555,19 @@ def _collect_sampled_parameters(
     place_navigate_entry: ActionEntry,
     pickup_entry:         ActionEntry,
 ) -> SampledParameters:
-    _sample_parameters_into_action(pick_navigate_entry)
-    _sample_parameters_into_action(place_navigate_entry)
-    _sample_parameters_into_action(pickup_entry)
+    pick_nav_instance  = _sample_from_entry(pick_navigate_entry)
+    place_nav_instance = _sample_from_entry(place_navigate_entry)
+    pickup_instance    = _sample_from_entry(pickup_entry)
 
-    pick_pos  = pick_navigate_entry.instance.target_location.pose.position
-    place_pos = place_navigate_entry.instance.target_location.pose.position
+    pick_pos  = pick_nav_instance.target_location.pose.position
+    place_pos = place_nav_instance.target_location.pose.position
 
     return SampledParameters(
         pick_approach_x=pick_pos.x,
         pick_approach_y=pick_pos.y,
         place_approach_x=place_pos.x,
         place_approach_y=place_pos.y,
-        pick_arm=pickup_entry.instance.arm,
+        pick_arm=pickup_instance.arm,
     )
 
 
@@ -685,7 +689,6 @@ def pick_and_place_demo() -> None:
                 success = False
                 try:
                     plan.perform()
-                    # If we reach here the full pick-and-place completed
                     success = True
                     print("  plan.perform() completed without exception.")
 
@@ -700,7 +703,6 @@ def pick_and_place_demo() -> None:
                         print(f"    {line}")
 
                 finally:
-                    # Only persist if the plan fully completed — never store partial plans
                     if success:
                         try:
                             _persist_plan(database_session, plan)
@@ -717,7 +719,6 @@ def pick_and_place_demo() -> None:
                     _respawn_milk(world, milk_body)
                     _respawn_robot(world, robot)
 
-        # ── Final summary ──────────────────────────────────────────────────
         print(f"\n{'=' * 64}")
         print(f"  Run complete.")
         print(f"  Total iterations : {NUMBER_OF_ITERATIONS}")
@@ -727,7 +728,6 @@ def pick_and_place_demo() -> None:
         print(f"  Database         : {DATABASE_URI}")
         print(f"{'=' * 64}")
 
-        # Quick DB count to cross-check the in-memory counter
         try:
             from sqlalchemy import text
             result = database_session.execute(
