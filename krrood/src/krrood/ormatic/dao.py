@@ -32,7 +32,7 @@ from typing_extensions import (
 )
 
 
-@memoize
+@lru_cache
 def _get_type_hints_cached(clazz: Type) -> Dict[str, Any]:
     """
     Get type hints for a class.
@@ -1321,7 +1321,7 @@ def get_dao_class(
     return None
 
 
-@memoize
+@lru_cache
 def get_alternative_mapping(
     original_clazz: Type,
 ) -> Optional[Type[AlternativeMapping]]:
