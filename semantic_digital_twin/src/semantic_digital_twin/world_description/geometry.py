@@ -741,21 +741,36 @@ class BoundingBox:
         """
         :return: The x interval of the bounding box.
         """
-        return SimpleInterval(self.min_x, self.max_x, Bound.CLOSED, Bound.CLOSED)
+        return SimpleInterval(
+            float(self.origin.x + self.min_x),
+            float(self.origin.x + self.max_x),
+            Bound.CLOSED,
+            Bound.CLOSED,
+        )
 
     @property
     def y_interval(self) -> SimpleInterval:
         """
         :return: The y interval of the bounding box.
         """
-        return SimpleInterval(self.min_y, self.max_y, Bound.CLOSED, Bound.CLOSED)
+        return SimpleInterval(
+            float(self.origin.y + self.min_y),
+            float(self.origin.y + self.max_y),
+            Bound.CLOSED,
+            Bound.CLOSED,
+        )
 
     @property
     def z_interval(self) -> SimpleInterval:
         """
         :return: The z interval of the bounding box.
         """
-        return SimpleInterval(self.min_z, self.max_z, Bound.CLOSED, Bound.CLOSED)
+        return SimpleInterval(
+            float(self.origin.z + self.min_z),
+            float(self.origin.z + self.max_z),
+            Bound.CLOSED,
+            Bound.CLOSED,
+        )
 
     @property
     def scale(self) -> Scale:

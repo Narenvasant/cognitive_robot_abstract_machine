@@ -1,13 +1,19 @@
 import numpy as np
 import pytest
+from random_events.interval import closed
 
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.datastructures.variables import SpatialVariables
 from semantic_digital_twin.robots.hsrb import HSRB
-from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix, Point3
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import FixedConnection
 from semantic_digital_twin.world_description.geometry import BoundingBox
+from semantic_digital_twin.world_description.shape_collection import (
+    BoundingBoxCollection,
+)
 from semantic_digital_twin.world_description.world_entity import Body
+from random_events.product_algebra import Event, SimpleEvent
 
 
 def test_bounding_box_transform_same_frame(pr2_apartment_state_reset):
@@ -103,3 +109,36 @@ def test_bounding_box_transform_rotated():
     assert new_bb.max_z == 1
 
     assert sum(bb.dimensions) == sum(new_bb.dimensions)
+
+
+def test_event_casting(pr2_apartment_state_reset):
+    simple_event = SimpleEvent(
+        {
+            SpatialVariables.x.value: closed(0, 2),
+            SpatialVariables.y.value: closed(0, 2),
+            SpatialVariables.z.value: closed(0, 2),
+        }
+    )
+    event = Event(simple_event)
+
+    bbc = BoundingBoxCollection.from_event(pr2_apartment_state_reset.root, event)
+    bb = bbc.bounding_boxes[0]
+    assert len(bbc.bounding_boxes) == 1
+    assert bb.x_interval.lower == 0
+    assert bb.x_interval.upper == 2
+
+    assert bb.y_interval.lower == 0
+    assert bb.y_interval.upper == 2
+    assert bb.z_interval.lower == 0
+    assert bb.z_interval.upper == 2
+
+    assert bb.min_x == -1
+    assert bb.max_x == 1
+
+
+def test_contains(pr2_apartment_state_reset):
+    bb = BoundingBox(-0.5, -1, 0, 0.5, 1, 1, pr2_apartment_state_reset.root.global_pose)
+
+    point = Point3(0, 0, 0, reference_frame=pr2_apartment_state_reset.root)
+
+    assert bb.contains(point)
