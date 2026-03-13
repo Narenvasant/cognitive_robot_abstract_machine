@@ -1,31 +1,63 @@
-# import pytest
-# import numpy as np
-#
-# from pycram.datastructures.grasp import GraspDescription
-# from pycram.datastructures.partial_designator import PartialDesignator
-# from pycram.datastructures.pose import PoseStamped
-# from pycram.language import SequentialPlan
-# from pycram.robot_plans import (
-#     PickUpAction,
-#     PickUpAction,
-#     SetGripperAction,
-#     MoveTorsoAction,
-#     NavigateAction,
-#     MoveTorsoActionDescription,
-#     NavigateActionDescription,
-#     PickUpActionDescription,
-# )
-# from pycram.designators.object_designator import BelieveObject
-# from pycram.datastructures.enums import (
-#     Arms,
-#     Grasp,
-#     ApproachDirection,
-#     VerticalAlignment,
-# )
-# from pycram.utils import is_iterable, lazy_product
-# from pycram.motion_executor import simulated_robot
-# from semantic_digital_twin.datastructures.definitions import GripperState, TorsoState
-#
+import pytest
+import numpy as np
+
+from krrood.entity_query_language.backends import EntityQueryLanguageBackend
+from krrood.entity_query_language.factories import underspecified, variable_from
+from pycram.datastructures.grasp import GraspDescription
+
+from pycram.datastructures.pose import PoseStamped
+
+from pycram.datastructures.enums import (
+    Arms,
+    Grasp,
+    ApproachDirection,
+    VerticalAlignment,
+)
+from pycram.language import SequentialNode
+from pycram.plans.factories import sequential
+from pycram.robot_plans.actions.core.navigation import NavigateAction
+from pycram.robot_plans.actions.core.pick_up import PickUpAction
+from pycram.utils import is_iterable, lazy_product
+from pycram.motion_executor import simulated_robot
+from semantic_digital_twin.datastructures.definitions import GripperState, TorsoState
+
+
+def test_underspecified_plan_constructs(immutable_model_world):
+    """
+    Test that entire plans can be underspecified
+    """
+    world, robot, context = immutable_model_world
+    grasp_description = GraspDescription(
+        ApproachDirection.FRONT,
+        VerticalAlignment.NoAlignment,
+        robot.left_arm.manipulator,
+    )
+    plan_generator = underspecified(sequential, target_type=SequentialNode)(
+        children=[
+            underspecified(NavigateAction)(
+                target_location=(
+                    target_locations := variable_from(
+                        [
+                            PoseStamped.from_list([1, 0, 0], frame=world.root),
+                            PoseStamped.from_list([2, 0, 0], frame=world.root),
+                        ]
+                    )
+                ),
+                keep_joint_states=True,
+            ),
+            underspecified(PickUpAction)(
+                arm=...,
+                grasp_description=grasp_description,
+                object_designator=world.get_body_by_name("milk.stl"),
+            ),
+        ],
+        context=context,
+    )
+    plan_generator.resolve()
+    plans = list(EntityQueryLanguageBackend().evaluate(plan_generator))
+    assert len(plans) == len(list(target_locations._domain_)) * len(list(Arms))
+
+
 #
 # def test_partial_desig_construction():
 #     test_object = BelieveObject(names=["milk"])

@@ -131,9 +131,11 @@ class EntityQueryLanguageBackend(SelectiveBackend):
         expression.variable._update_domain_(
             self._generate_raw_results(expression, variables)
         )
-        filtered_results = an(entity(expression.variable)).where(
-            *expression._where_conditions_
-        )
+
+        filtered_results = an(entity(expression.variable))
+
+        if expression._where_conditions_:
+            filtered_results = filtered_results.where(*expression._where_conditions_)
         yield from filtered_results.evaluate()
 
     def _check_if_attribute_match_is_suitable_for_generation(

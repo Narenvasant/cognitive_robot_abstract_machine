@@ -6,7 +6,14 @@ from typing import List
 
 import numpy as np
 
-from krrood.entity_query_language.factories import an, entity, variable, the
+from krrood.entity_query_language.factories import (
+    an,
+    entity,
+    variable,
+    the,
+    underspecified,
+)
+from pycram.locations.locations import CostmapLocation
 from pycram.plans.factories import sequential, execute_single
 from pycram.robot_plans.actions.composite.facing import FaceAtAction
 from pycram.robot_plans.actions.core.container import OpenAction
@@ -88,11 +95,13 @@ class TransportAction(ActionDescription):
         pickup_loc = CostmapLocation(
             target=PoseStamped.from_spatial_type(self.object_designator.global_pose),
             reachable_arm=self.arm,
-            reachable_for=self.robot,
+            reachable=True,
+            context=self.plan_node.plan.context,
         )
-        pickup_loc.plan_node = self.plan_node
         # Tries to find a pick-up position for the robot that uses the given arm
-        pickup_pose = pickup_loc.resolve()
+
+        pickup_pose = pickup_loc.ground()
+
         if not pickup_pose:
             raise ObjectUnfetchable(
                 f"Found no pose for the robot to grasp the object: {self.object_designator} with arm: {self.arm}"
@@ -109,14 +118,20 @@ class TransportAction(ActionDescription):
                     ),
                     ParkArmsAction(Arms.BOTH),
                     MoveTorsoAction(TorsoState.HIGH),
-                    NavigateAction(
-                        CostmapLocation(
-                            target=self.target_location,
-                            reachable_arm=self.arm,
-                            reachable_for=self.robot,
-                            grasp_descriptions=pickup_pose.grasp_description,
+                    underspecified(NavigateAction)(
+                        target_location=variable(
+                            PoseStamped,
+                            domain=iter(
+                                CostmapLocation(
+                                    target=self.target_location,
+                                    reachable_arm=self.arm,
+                                    reachable=True,
+                                    context=self.context,
+                                    grasp_descriptions=pickup_pose.grasp_description,
+                                ),
+                            ),
                         ),
-                        True,
+                        keep_joint_states=True,
                     ),
                 ]
             )

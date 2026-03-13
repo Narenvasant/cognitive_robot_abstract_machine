@@ -153,7 +153,9 @@ def test_probable_variable_with_concrete_kwarg():
 def test_new_underspecified_with_factory():
 
     prob_q = underspecified(Pose)(
-        position=underspecified(Position.from_abc)(a=..., b=..., c=...),
+        position=underspecified(Position.from_abc, target_type=Position)(
+            a=..., b=..., c=...
+        ),
         orientation=Orientation(x=0.0, y=0.0, z=0.0, w=1.0),
     ).resolve()
     prob_q.where(prob_q.variable.position.x > 0.5)

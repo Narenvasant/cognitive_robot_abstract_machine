@@ -4,7 +4,7 @@ import logging
 from abc import abstractmethod, ABC
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Any, List, Type, TYPE_CHECKING, Iterable
+from typing import Optional, Any, List, Type, TYPE_CHECKING, Iterable, Iterator
 
 import rustworkx as rx
 from typing_extensions import Union
@@ -233,11 +233,18 @@ class UnderspecifiedActionNode(PlanNode):
 
     underspecified_action: Match = field(kw_only=True)
 
+    action_iterator: Iterator[ActionDescription] = field(default_factory=None)
+
     @property
     def designator_type(self) -> Type:
         return self.underspecified_action.type
 
-    def perform(self): ...
+    def perform(self):
+        if self.action_iterator is None:
+            self.action_iterator = self.plan.context.query_backend.evaluate(
+                self.underspecified_action
+            )
+        new_action = ActionNode(designator=next(self.action_iterator))
 
 
 @dataclass

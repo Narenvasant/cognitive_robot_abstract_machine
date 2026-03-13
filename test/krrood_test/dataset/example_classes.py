@@ -39,7 +39,7 @@ class Position(Symbol):
     z: float
 
     @classmethod
-    def from_abc(cls, a: float, b: float, c: float) -> Self:
+    def from_abc(cls, a: float, b: float, c: float) -> Position:
         return Position(a, b, c)
 
 
