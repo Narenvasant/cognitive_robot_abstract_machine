@@ -512,16 +512,8 @@ class FreeVariableBounds(ProblemDataPart):
                         ):
                             continue
                         index = t + self.config.prediction_horizon * (derivative - 1)
-                        if derivative == Derivatives.jerk:
-                            multiplier = 1  # self.config.mpc_dt**2
-                        else:
-                            multiplier = 1
-                        lb[derivative][f"t{t:03}/{v.name}/{derivative}"] = (
-                            lb_[index] * multiplier
-                        )
-                        ub[derivative][f"t{t:03}/{v.name}/{derivative}"] = (
-                            ub_[index] * multiplier
-                        )
+                        lb[derivative][f"t{t:03}/{v.name}/{derivative}"] = lb_[index]
+                        ub[derivative][f"t{t:03}/{v.name}/{derivative}"] = ub_[index]
         lb_params = []
         ub_params = []
         for derivative, name_to_bound_map in sorted(lb.items()):
