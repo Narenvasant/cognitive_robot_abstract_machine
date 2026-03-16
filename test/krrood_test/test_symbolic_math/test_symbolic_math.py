@@ -332,6 +332,19 @@ class TestFloatVariable:
         with pytest.raises(HasFreeVariablesError):
             bool(v)
 
+    def test_free_variables(self):
+        """
+        Use a method to create the variable to test if the weak ref dict cleans them up.
+        """
+
+        def create_variables(name: str) -> sm.FloatVariable:
+            return sm.FloatVariable(name=name)
+
+        expression = create_variables("muh") + create_variables("kikariki")
+        assert len(expression.free_variables()) == 2
+        assert expression.free_variables()[0].name == "muh"
+        assert expression.free_variables()[1].name == "kikariki"
+
     def test_create_with_resolver(self):
         v = sm.FloatVariable.create_with_resolver("v", lambda: 42)
         assert v.evaluate() == 42

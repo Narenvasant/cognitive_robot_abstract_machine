@@ -181,6 +181,7 @@ class HomogeneousTransformationMatrix(
         else:
             casadi_sx = sm.to_sx(data)
         self.casadi_sx = casadi_sx
+        super().__post_init__()
 
     def _verify_type(self):
         if self.shape != (4, 4):
@@ -217,17 +218,18 @@ class HomogeneousTransformationMatrix(
         :param resolver: Callable that returns the actual transformation matrix when called.
         :return: TransformationMatrix object with float variables.
         """
-        transformation_matrix = HomogeneousTransformationMatrix()
-        transformation_matrix.__variables__ = []
+        transformation_matrix = []
         for row in range(3):
+            column_variables = []
             for column in range(4):
                 variable = sm.FloatVariable(
                     name=f"{cls.__name__}_{name}[{row},{column}]",
                 )
-                transformation_matrix[row, column] = variable
+                column_variables.append(variable)
                 variable.resolve = lambda: resolver()[row, column]
-                transformation_matrix.__variables__.append(variable)
-        return transformation_matrix
+            transformation_matrix.append(column_variables)
+        transformation_matrix.append([0, 0, 0, 1])
+        return cls(transformation_matrix)
 
     def to_json(self) -> Dict[str, Any]:
         if not self.is_constant():
@@ -512,6 +514,7 @@ class RotationMatrix(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
         empty_data = to_sx(Matrix.eye(4))
         empty_data[:3, :3] = sm.to_sx(data)[:3, :3]
         self._casadi_sx = empty_data
+        super().__post_init__()
 
     def _verify_type(self):
         if self.shape != (4, 4):
@@ -842,6 +845,7 @@ class Point3(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
         """
         self.casadi_sx = sm.to_sx([x, y, z, 1])
         self.reference_frame = reference_frame
+        super().__post_init__()
 
     def _verify_type(self):
         if self.shape == (3, 1):
@@ -913,7 +917,6 @@ class Point3(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
             z=z,
             reference_frame=None,
         )
-        result.__variables__ = [x, y, z]
         if resolver is not None:
             x.resolve = lambda: resolver()[0]
             y.resolve = lambda: resolver()[1]
@@ -1095,6 +1098,7 @@ class Vector3(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
         self.casadi_sx = sm.to_sx([x, y, z, 0])
         self.reference_frame = reference_frame
         self.visualisation_frame = visualisation_frame
+        super().__post_init__()
 
     def _verify_type(self):
         if self.shape == (3, 1):
@@ -1223,7 +1227,6 @@ class Vector3(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
             z=z,
             reference_frame=None,
         )
-        result.__variables__ = [x, y, z]
         if resolver is not None:
             x.resolve = lambda: resolver()[0]
             y.resolve = lambda: resolver()[1]
@@ -1454,6 +1457,7 @@ class Quaternion(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
         """
         self.casadi_sx = sm.to_sx([x, y, z, w])
         self.reference_frame = reference_frame
+        super().__post_init__()
 
     def _verify_type(self):
         if self.shape != (4, 1):
@@ -1780,6 +1784,7 @@ class Pose(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
         )
         self._casadi_sx = transformation_matrix._casadi_sx
         self.reference_frame = reference_frame
+        super().__post_init__()
 
     def _verify_type(self):
         if self.shape != (4, 4):

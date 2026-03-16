@@ -437,6 +437,10 @@ class SymbolicMathType(ABC):
     Reference to the casadi data structure of type casadi.SX
     """
 
+    def __post_init__(self):
+        self.__FREE_VARIABLES__ = self.free_variables()
+        # save free variables at the instance to prevent them from getting cleaned up.
+
     @classmethod
     def from_casadi_sx(cls, casadi_sx: ca.SX) -> Self:
         result = cls()
@@ -782,6 +786,7 @@ class Scalar(SymbolicMathType):
 
     def __init__(self, data: ScalarData = 0):
         self.casadi_sx = to_sx(data)
+        super().__post_init__()
 
     def _verify_type(self):
         if self.casadi_sx.shape != (1, 1):
@@ -1034,6 +1039,7 @@ class Vector(SymbolicMathType):
         if data is None:
             data = []
         self.casadi_sx = to_sx(data)
+        super().__post_init__()
 
     def _verify_type(self):
         """
@@ -1161,6 +1167,7 @@ class Matrix(SymbolicMathType):
         if data is None:
             data = []
         self.casadi_sx = to_sx(data)
+        super().__post_init__()
 
     @classmethod
     def create_filled_with_variables(cls, shape: Tuple[int, int], name: str) -> Self:
