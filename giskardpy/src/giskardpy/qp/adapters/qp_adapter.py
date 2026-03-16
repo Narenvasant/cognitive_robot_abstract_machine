@@ -686,10 +686,7 @@ class EqualityBounds(ProblemDataPart):
                         derivative_link[name] = 0
             bounds.append(derivative_link)
         else:
-            if self.config.qp_formulation.is_implicit:
-                max_derivative = Derivatives.velocity
-            else:
-                max_derivative = self.config.max_derivative
+            max_derivative = self.config.max_derivative
 
             for derivative in Derivatives.range(
                 Derivatives.velocity, max_derivative - 1
@@ -840,12 +837,6 @@ class InequalityBounds(ProblemDataPart):
     ) -> Tuple[sm.Vector, sm.Vector]:
         lb_params: List[Dict[str, sm.Vector]] = []
         ub_params: List[Dict[str, sm.Vector]] = []
-
-        # derivative model
-        if self.config.qp_formulation.is_implicit:
-            lb, ub = self.implicit_model_limits()
-            lb_params.extend(lb)
-            ub_params.extend(ub)
 
         # neq integral constraints
         lower_inequality_constraint_bounds = self.lower_inequality_constraint_bound()
@@ -1160,10 +1151,7 @@ class EqualityModel(ProblemDataPart):
                 )
                 return model, slack_model
         else:
-            if self.config.qp_formulation.is_implicit:
-                max_derivative = Derivatives.velocity
-            else:
-                max_derivative = self.config.max_derivative
+            max_derivative = self.config.max_derivative
             if len(self.constraint_collection.eq_constraints) > 0:
                 model = sm.Matrix.zeros(
                     len(self.constraint_collection.eq_constraints),
@@ -1179,28 +1167,11 @@ class EqualityModel(ProblemDataPart):
                         * self.config.mpc_dt
                     )
 
-                    if (
-                        self.config.qp_formulation.is_explicit
-                        or not self.config.qp_formulation.is_mpc
-                    ):
-                        J_hstack = sm.hstack(
-                            [J_eq for _ in range(self.config.prediction_horizon)]
-                        )
-                        horizontal_offset = J_hstack.shape[1]
-                        model[
-                            :,
-                            horizontal_offset
-                            * derivative : horizontal_offset
-                            * (derivative + 1),
-                        ] = J_hstack
-                    else:
-                        J_hstack = sm.hstack(
-                            [J_eq for _ in range(self.config.prediction_horizon - 2)]
-                        )
-                        horizontal_offset = J_hstack.shape[1]
-                        model[:, horizontal_offset * 0 : horizontal_offset * 1] = (
-                            J_hstack
-                        )
+                    J_hstack = sm.hstack(
+                        [J_eq for _ in range(self.config.prediction_horizon - 2)]
+                    )
+                    horizontal_offset = J_hstack.shape[1]
+                    model[:, horizontal_offset * 0 : horizontal_offset * 1] = J_hstack
 
                 # slack variable for total error
                 slack_model = sm.Matrix.diag(
@@ -1217,32 +1188,18 @@ class EqualityModel(ProblemDataPart):
     ) -> Tuple[sm.Matrix, sm.Matrix]:
         max_derivative = Derivatives.velocity
         derivative_link_model = sm.Matrix()
-        if self.config.qp_formulation.is_mpc:
-            if self.config.qp_formulation.is_explicit:
-                max_derivative = self.config.max_derivative
-                derivative_link_model = self.derivative_link_model(max_derivative)
-                derivative_link_model = (
-                    self._remove_columns_columns_where_variables_are_zero(
-                        derivative_link_model, max_derivative
-                    )
-                )
-            elif (
-                not self.config.qp_formulation.has_explicit_acc_variables
-                and self.config.qp_formulation.has_explicit_jerk_variables
-            ):
-                max_derivative = Derivatives.velocity
-                derivative_link_model = self.derivative_link_model_no_acc(
-                    self.config.max_derivative
-                )
+        max_derivative = Derivatives.velocity
+        derivative_link_model = self.derivative_link_model_no_acc(
+            self.config.max_derivative
+        )
         equality_constraint_model, equality_constraint_slack_model = (
             self.equality_constraint_model()
         )
-        if self.config.qp_formulation.has_explicit_jerk_variables:
-            equality_constraint_model = (
-                self._remove_columns_columns_where_variables_are_zero(
-                    equality_constraint_model, max_derivative
-                )
+        equality_constraint_model = (
+            self._remove_columns_columns_where_variables_are_zero(
+                equality_constraint_model, max_derivative
             )
+        )
         vel_constr_model, vel_constr_slack_model = self.velocity_constraint_model()
 
         model_parts = []
@@ -1288,26 +1245,9 @@ class InequalityModel(ProblemDataPart):
 
     @property
     def number_of_non_slack_columns(self) -> int:
-        if self.config.qp_formulation.is_explicit:
-            return (
-                self.number_of_free_variables
-                * self.config.prediction_horizon
-                * self.config.max_derivative
-            )
-        elif self.config.qp_formulation.is_implicit:
-            return self.number_of_free_variables * (self.config.prediction_horizon - 2)
-        elif (
-            not self.config.qp_formulation.has_explicit_acc_variables
-            and self.config.qp_formulation.has_explicit_jerk_variables
-        ):
-            return (
-                self.number_of_free_variables * (self.config.prediction_horizon - 2)
-                + self.number_of_free_variables * self.config.prediction_horizon
-            )
         return (
-            self.number_of_free_variables
-            * self.config.prediction_horizon
-            * self.config.max_derivative
+            self.number_of_free_variables * (self.config.prediction_horizon - 2)
+            + self.number_of_free_variables * self.config.prediction_horizon
         )
 
     @memoize
@@ -1522,10 +1462,7 @@ class InequalityModel(ProblemDataPart):
                 )
                 return model, slack_model
         else:
-            if self.config.qp_formulation.is_implicit:
-                max_derivative = Derivatives.velocity
-            else:
-                max_derivative = self.config.max_derivative
+            max_derivative = self.config.max_derivative
         if len(self.constraint_collection.neq_constraints) > 0:
             model = sm.Matrix.zeros(
                 len(self.constraint_collection.neq_constraints),
@@ -1540,26 +1477,11 @@ class InequalityModel(ProblemDataPart):
                     )
                     * self.config.mpc_dt
                 )
-                if (
-                    self.config.qp_formulation.is_explicit
-                    or not self.config.qp_formulation.is_mpc
-                ):
-                    J_hstack = sm.hstack(
-                        [J_neq for _ in range(self.config.prediction_horizon)]
-                    )
-                    horizontal_offset = J_hstack.shape[1]
-                    model[
-                        :,
-                        horizontal_offset
-                        * derivative : horizontal_offset
-                        * (derivative + 1),
-                    ] = J_hstack
-                else:
-                    J_hstack = sm.hstack(
-                        [J_neq for _ in range(self.config.prediction_horizon - 2)]
-                    )
-                    horizontal_offset = J_hstack.shape[1]
-                    model[:, horizontal_offset * 0 : horizontal_offset * 1] = J_hstack
+                J_hstack = sm.hstack(
+                    [J_neq for _ in range(self.config.prediction_horizon - 2)]
+                )
+                horizontal_offset = J_hstack.shape[1]
+                model[:, horizontal_offset * 0 : horizontal_offset * 1] = J_hstack
 
             # slack variable for total error
             slack_model = sm.Matrix.diag(
@@ -1650,17 +1572,11 @@ class InequalityModel(ProblemDataPart):
         model_parts = []
         slack_model_parts = []
 
-        if self.config.qp_formulation.is_implicit:
-            max_derivative = Derivatives.velocity
-            derivative_model, derivative_model_slack = self.implicit_model(
-                self.config.max_derivative
-            )
-        else:
-            max_derivative = self.config.max_derivative
-            derivative_model, derivative_model_slack = (
-                sm.Matrix(),
-                sm.Matrix(),
-            )
+        max_derivative = self.config.max_derivative
+        derivative_model, derivative_model_slack = (
+            sm.Matrix(),
+            sm.Matrix(),
+        )
 
         inequality_model, inequality_slack_model = self.inequality_constraint_model(
             max_derivative

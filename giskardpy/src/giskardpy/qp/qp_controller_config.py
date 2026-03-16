@@ -132,9 +132,6 @@ class QPControllerConfig:
                 f"Hertz ({self.target_frequency}) is below 20Hz. This might cause instability."
             )
         self.mpc_dt = self.control_dt
-        if not self.qp_formulation.is_mpc:
-            self.prediction_horizon = 1
-            self.max_derivative = Derivatives.velocity
 
         if self.prediction_horizon < 4:
             raise ValueError("prediction horizon must be >= 4.")
