@@ -1951,7 +1951,7 @@ class Pose(sm.SymbolicMathType, SpatialType, SubclassJSONSerializer):
         )
 
 
-# @sm.substitution_cache #TODO: Fix me pls
+@sm.substitution_cache
 def rotation_matrix_to_quaternion(r: Matrix):
     """
     This method constructs a quaternion representation of the provided rotation matrix. It is designed to handle

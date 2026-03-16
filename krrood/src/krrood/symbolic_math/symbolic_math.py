@@ -1160,7 +1160,6 @@ class Matrix(SymbolicMathType):
     ):
         if data is None:
             data = []
-        self.__original_data__ = data
         self.casadi_sx = to_sx(data)
 
     @classmethod
