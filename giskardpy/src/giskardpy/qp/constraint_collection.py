@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-from typing_extensions import List, Optional, Union, TYPE_CHECKING
+from typing_extensions import Optional, Union, TYPE_CHECKING
 
 import krrood.symbolic_math.symbolic_math as sm
 from giskardpy.data_types.exceptions import (
@@ -31,29 +31,55 @@ Large_Number = 1e4
 
 @dataclass
 class ConstraintCollection:
-    _constraints: List[BaseConstraint] = field(default_factory=list, init=False)
+    _constraints: list[BaseConstraint] = field(default_factory=list, init=False)
 
     @property
-    def eq_constraints(self) -> List[EqualityConstraint]:
+    def equality_constraints(self) -> list[EqualityConstraint]:
         return [c for c in self._constraints if isinstance(c, EqualityConstraint)]
 
     @property
-    def neq_constraints(self) -> List[InequalityConstraint]:
+    def derivative_equality_constraints(self) -> list[DerivativeEqualityConstraint]:
+        return [
+            c for c in self._constraints if isinstance(c, DerivativeEqualityConstraint)
+        ]
+
+    def get_equality_constraints_by_derivative(
+        self, derivative: Derivatives
+    ) -> list[DerivativeEqualityConstraint]:
+        return [
+            c
+            for c in self.derivative_equality_constraints
+            if c.derivative == derivative
+        ]
+
+    @property
+    def velocity_equality_constraints(self) -> list[DerivativeEqualityConstraint]:
+        return self.get_equality_constraints_by_derivative(Derivatives.velocity)
+
+    @property
+    def inequality_constraints(self) -> list[InequalityConstraint]:
         return [c for c in self._constraints if isinstance(c, InequalityConstraint)]
 
     @property
-    def derivative_constraints(self) -> List[DerivativeInequalityConstraint]:
+    def derivative_inequality_constraints(self) -> list[DerivativeInequalityConstraint]:
         return [
             c
             for c in self._constraints
             if isinstance(c, DerivativeInequalityConstraint)
         ]
 
-    @property
-    def eq_derivative_constraints(self) -> List[DerivativeEqualityConstraint]:
+    def get_inequality_constraints_by_derivative(
+        self, derivative: Derivatives
+    ) -> list[DerivativeInequalityConstraint]:
         return [
-            c for c in self._constraints if isinstance(c, DerivativeEqualityConstraint)
+            c
+            for c in self.derivative_inequality_constraints
+            if c.derivative == derivative
         ]
+
+    @property
+    def velocity_inequality_constraints(self) -> list[DerivativeInequalityConstraint]:
+        return self.get_inequality_constraints_by_derivative(Derivatives.velocity)
 
     def merge(self, name_prefix: str, other: ConstraintCollection):
         for constraint in other._constraints:
@@ -339,14 +365,14 @@ class ConstraintCollection:
 
     def add_velocity_constraint(
         self,
-        lower_velocity_limit: Union[sm.ScalarData, List[sm.ScalarData]],
-        upper_velocity_limit: Union[sm.ScalarData, List[sm.ScalarData]],
+        lower_velocity_limit: Union[sm.ScalarData, list[sm.ScalarData]],
+        upper_velocity_limit: Union[sm.ScalarData, list[sm.ScalarData]],
         quadratic_weight: sm.ScalarData,
         task_expression: sm.SymbolicScalar,
         velocity_limit: sm.ScalarData,
         name: Optional[str] = None,
-        lower_slack_limit: Union[sm.ScalarData, List[sm.ScalarData]] = -Large_Number,
-        upper_slack_limit: Union[sm.ScalarData, List[sm.ScalarData]] = Large_Number,
+        lower_slack_limit: Union[sm.ScalarData, list[sm.ScalarData]] = -Large_Number,
+        upper_slack_limit: Union[sm.ScalarData, list[sm.ScalarData]] = Large_Number,
     ):
         """
         Add a velocity constraint. Internally, this will be converted into multiple constraints, to ensure that the
@@ -377,13 +403,13 @@ class ConstraintCollection:
 
     def add_velocity_eq_constraint(
         self,
-        velocity_goal: Union[sm.ScalarData, List[sm.ScalarData]],
+        velocity_goal: Union[sm.ScalarData, list[sm.ScalarData]],
         quadratic_weight: sm.ScalarData,
         task_expression: sm.SymbolicScalar,
         velocity_limit: sm.ScalarData,
         name: Optional[str] = None,
-        lower_slack_limit: Union[sm.ScalarData, List[sm.ScalarData]] = -Large_Number,
-        upper_slack_limit: Union[sm.ScalarData, List[sm.ScalarData]] = Large_Number,
+        lower_slack_limit: Union[sm.ScalarData, list[sm.ScalarData]] = -Large_Number,
+        upper_slack_limit: Union[sm.ScalarData, list[sm.ScalarData]] = Large_Number,
     ):
         """
         Add a velocity constraint. Internally, this will be converted into multiple constraints, to ensure that the
@@ -412,11 +438,11 @@ class ConstraintCollection:
 
     def add_velocity_eq_constraint_vector(
         self,
-        velocity_goals: Union[sm.Scalar, Vector3, Point3, List[sm.ScalarData]],
-        reference_velocities: Union[sm.Scalar, Vector3, Point3, List[sm.ScalarData]],
-        quadratic_weight: Union[sm.Scalar, Vector3, Point3, List[sm.ScalarData]],
-        task_expression: Union[sm.Scalar, Vector3, Point3, List[sm.SymbolicScalar]],
-        names: List[str],
+        velocity_goals: Union[sm.Scalar, Vector3, Point3, list[sm.ScalarData]],
+        reference_velocities: Union[sm.Scalar, Vector3, Point3, list[sm.ScalarData]],
+        quadratic_weight: Union[sm.Scalar, Vector3, Point3, list[sm.ScalarData]],
+        task_expression: Union[sm.Scalar, Vector3, Point3, list[sm.SymbolicScalar]],
+        names: list[str],
     ):
         for i in range(len(velocity_goals)):
             name_suffix = names[i] if names else None

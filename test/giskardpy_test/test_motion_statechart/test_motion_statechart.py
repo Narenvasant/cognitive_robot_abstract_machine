@@ -3824,7 +3824,7 @@ def test_constraint_collection(pr2_world_state_reset: World):
         reference_velocity=0.1,
         quadratic_weight=DefaultWeights.WEIGHT_BELOW_CA,
     )
-    assert len(col.eq_constraints) >= 3
+    assert len(col.equality_constraints) >= 3
 
     for i in range(3):
         col.add_equality_constraint(

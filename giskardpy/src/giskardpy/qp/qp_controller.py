@@ -235,13 +235,17 @@ class QPControllerDebugger:
             return
 
         num_vel_constr = len(
-            self.qp_controller.constraint_collection.derivative_constraints
+            self.qp_controller.constraint_collection.derivative_inequality_constraints
         ) * (self.qp_controller.config.prediction_horizon - 2)
         num_eq_vel_constr = len(
-            self.qp_controller.constraint_collection.eq_derivative_constraints
+            self.qp_controller.constraint_collection.derivative_equality_constraints
         ) * (self.qp_controller.config.prediction_horizon - 2)
-        num_neq_constr = len(self.qp_controller.constraint_collection.neq_constraints)
-        num_eq_constr = len(self.qp_controller.constraint_collection.eq_constraints)
+        num_neq_constr = len(
+            self.qp_controller.constraint_collection.inequality_constraints
+        )
+        num_eq_constr = len(
+            self.qp_controller.constraint_collection.equality_constraints
+        )
         num_constr = num_vel_constr + num_neq_constr + num_eq_constr + num_eq_vel_constr
 
         xdot_full = np.ones(qp_data.quadratic_weights.shape) * np.nan
