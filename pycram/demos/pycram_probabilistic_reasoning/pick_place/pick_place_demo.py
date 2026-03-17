@@ -388,7 +388,7 @@ def _build_navigable_pose_description(robot: PR2) -> Any:
             position=underspecified(PyCramVector3)(x=..., y=..., z=0),
             orientation=underspecified(PyCramQuaternion)(x=0, y=0, z=0, w=1),
         ),
-        header=underspecified(Header)(frame_id=variable_from([robot._world.root]), sequence=0),
+        header=Header(frame_id=robot._world.root, sequence=0),
     )
 
 
