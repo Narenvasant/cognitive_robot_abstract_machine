@@ -60,8 +60,7 @@ def link_pose_for_joint_config(obj: Body, joint_config: Dict[str, float]) -> Pos
             reasoning_world.get_degree_of_freedom_by_name(joint_name).id
         ].position = joint_pose
     reasoning_world.notify_state_change()
-    pose = reasoning_world.get_body_by_name(obj.name).global_pose
-    return pose.to_pose()
+    return reasoning_world.get_body_by_name(obj.name).global_transform.to_pose()
 
 
 def get_rays_from_min_max(
@@ -463,7 +462,7 @@ def translate_pose_along_local_axis(
     """
     normalized_translation_vector = np.array(axis) / np.linalg.norm(axis)
 
-    rot_matrix = pose.to_rotation_matrix().to_np()[:3, :3]
+    rot_matrix = pose.to_rotation_matrix()[:3, :3]
     translation_in_world = rot_matrix @ normalized_translation_vector
     scaled_translation_vector = (
         np.array(pose.to_position().to_list()[:3]) + translation_in_world * distance

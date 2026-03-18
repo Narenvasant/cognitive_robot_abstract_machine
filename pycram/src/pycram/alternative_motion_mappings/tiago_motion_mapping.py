@@ -19,5 +19,5 @@ class StretchMoveSim(MoveMotion, AlternativeMotion[Tiago]):
     def _motion_chart(self):
 
         return DifferentialDriveBaseGoal(
-            goal_pose=self.target.to_homogeneous_matrix(),
+            goal_pose=self.target,
         )

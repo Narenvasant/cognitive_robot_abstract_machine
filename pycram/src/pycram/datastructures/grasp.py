@@ -64,13 +64,13 @@ class GraspDescription:
         :param reverse: If the sequence should be reversed.
         :return: The pose sequence.
         """
-        pose_frame = target_T_grasp_pose.reference_frame
+        target = target_T_grasp_pose.reference_frame
 
-        world = pose_frame._world
+        world = target._world
 
         grasp_pose_R_gripper = self.grasp_orientation()
         target_R_gripper = target_T_grasp_pose.to_rotation_matrix() @ grasp_pose_R_gripper.to_rotation_matrix()
-        target_T_gripper: Pose = Pose(position=target_T_grasp_pose.to_position(), orientation=target_R_gripper.to_quaternion(), reference_frame=pose_frame)
+        target_T_gripper: Pose = Pose(position=target_T_grasp_pose.to_position(), orientation=target_R_gripper.to_quaternion(), reference_frame=target)
 
         if body:
             bb_in_frame = body.collision.as_bounding_box_collection_in_frame(
@@ -94,13 +94,18 @@ class GraspDescription:
 
         target_T_gripper_copy = deepcopy(target_T_gripper)
 
-        # Lift pose calculation
+        # Lift pose calculation. We want the lift pose to be moved along the global z-axis, but the final pose should be in the target frame.
         map_T_grasp = world.transform(target_T_grasp_pose.to_homogeneous_matrix(), world.root)
         grasp_T_lift = HomogeneousTransformationMatrix.from_xyz_rpy(z=self.manipulation_offset)
-        map_T_lift = (map_T_grasp @ grasp_T_lift).to_position()
-        pose_frame_P_lift = world.transform(map_T_lift, pose_frame)
 
-        lift_pose = Pose(pose_frame_P_lift, target_T_gripper.to_quaternion(), reference_frame=pose_frame)
+        # the grasp pose, not adjusted for the gripper orientation, used to calculate the lift pose
+        map_T_lift = (map_T_grasp @ grasp_T_lift).to_position()
+
+        # the result is transformed to the target frame
+        target_P_lift = world.transform(map_T_lift, target)
+
+        # the lift pose is adjusted for the gripper orientation, but without rotating the point we want to grasp
+        lift_pose = Pose(target_P_lift, target_T_gripper.to_quaternion(), reference_frame=target)
 
         sequence = [pre_pose, target_T_gripper_copy, lift_pose]
 
@@ -116,7 +121,7 @@ class GraspDescription:
         :param body: The body of the grasp.
         :return: The pose sequence.
         """
-        return self._pose_sequence(Pose.from_xyz_rpy(reference_frame=body), body)
+        return self._pose_sequence(Pose(reference_frame=body), body)
 
     def place_pose_sequence(self, pose: Pose) -> List[Pose]:
         """
@@ -251,7 +256,7 @@ class GraspDescription:
         world = manipulator._world
         map_T_object = world.transform(pose.to_homogeneous_matrix(), world.root).to_pose()
 
-        map_T_robot = manipulator._robot.root.global_pose.to_pose()
+        map_T_robot = manipulator._robot.root.global_transform.to_pose()
 
         if grasp_alignment:
             side_axis = grasp_alignment.preferred_axis

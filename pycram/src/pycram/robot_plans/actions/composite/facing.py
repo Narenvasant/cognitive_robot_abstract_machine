@@ -38,7 +38,7 @@ class FaceAtAction(ActionDescription):
 
     def execute(self) -> None:
         # get the robot position
-        robot_position = self.robot_view.root.global_pose
+        robot_position = self.robot_view.root.global_transform
 
         # calculate orientation for robot to face the object
         angle = (

@@ -39,7 +39,10 @@ from krrood.symbolic_math.symbolic_math import Matrix
 from krrood.utils import get_full_class_name
 from semantic_digital_twin.world_description.geometry import TriangleMesh
 from semantic_digital_twin.world_description.inertial_properties import Inertial
-from semantic_digital_twin.world_description.shape_collection import ShapeCollection, BoundingBoxCollection
+from semantic_digital_twin.world_description.shape_collection import (
+    ShapeCollection,
+    BoundingBoxCollection,
+)
 from semantic_digital_twin.mixin import HasSimulatorProperties
 from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
     WorldEntityWithIDKwargsTracker,
@@ -304,10 +307,10 @@ class KinematicStructureEntity(WorldEntityWithSimulatorProperties, ABC):
         return world.transform(com, world.root)
 
     @property
-    def global_pose(self) -> HomogeneousTransformationMatrix:
+    def global_transform(self) -> HomogeneousTransformationMatrix:
         """
-        Computes the pose of the KinematicStructureEntity in the world frame.
-        :return: TransformationMatrix representing the global pose.
+        Computes the transform of the KinematicStructureEntity in the world frame.
+        :return: TransformationMatrix representing the global transform.
         """
         return self._world.compute_forward_kinematics(self._world.root, self)
 

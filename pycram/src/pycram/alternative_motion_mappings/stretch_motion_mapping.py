@@ -14,6 +14,7 @@ from pycram.robot_plans.motions.base import AlternativeMotion
 from pycram.view_manager import ViewManager
 from semantic_digital_twin.robots.stretch import Stretch
 from semantic_digital_twin.spatial_types import Vector3, HomogeneousTransformationMatrix
+from semantic_digital_twin.spatial_types.spatial_types import Pose
 
 
 class StretchMoveTCP(MoveTCPMotion, AlternativeMotion[Stretch]):
@@ -48,7 +49,7 @@ class StretchMoveTCP(MoveTCPMotion, AlternativeMotion[Stretch]):
                 CartesianPose(
                     root_link=self.world.root,
                     tip_link=tip,
-                    goal_pose=self.target.to_homogeneous_matrix(),
+                    goal_pose=self.target,
                 ),
             ]
         )
@@ -68,7 +69,7 @@ class StretchMoveSim(MoveMotion, AlternativeMotion[Stretch]):
     def _motion_chart(self):
 
         return DifferentialDriveBaseGoal(
-            goal_pose=self.target.to_homogeneous_matrix(),
+            goal_pose=self.target,
         )
 
 
@@ -90,9 +91,7 @@ class StretchClose(ClosingMotion, AlternativeMotion[Stretch]):
             name="Keep holding handle",
             root_link=self.object_part,
             tip_link=tip,
-            goal_pose=HomogeneousTransformationMatrix(
-                reference_frame=tip, child_frame=tip
-            ),
+            goal_pose=Pose(reference_frame=tip),
         )
         align = AlignPlanes(
             root_link=self.world.root,

@@ -158,7 +158,7 @@ def test_partial_navigate_action_perform(immutable_model_world):
         )
         move1.perform()
         np.testing.assert_almost_equal(
-            list(robot_view.root.global_pose.to_np()[:3, 3]),
+            list(robot_view.root.global_transform.to_np()[:3, 3]),
             [1, 0, 0],
             decimal=1,
         )
@@ -178,7 +178,7 @@ def test_partial_navigate_action_multiple(immutable_model_world):
         with simulated_robot:
             SequentialPlan(context, action).perform()
             np.testing.assert_almost_equal(
-                robot_view.root.global_pose.to_np()[:3, 3],
+                robot_view.root.global_transform.to_np()[:3, 3],
                 nav_goals[i],
                 decimal=2,
             )

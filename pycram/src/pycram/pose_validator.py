@@ -69,8 +69,8 @@ def visibility_validator(
     r_t = world.ray_tracer
     camera = list(robot.neck.sensors)[0]
     ray = r_t.ray_test(
-        camera.bodies[0].global_pose.to_position().to_np()[:3],
-        gen_body.global_pose.to_position().to_np()[:3],
+        camera.bodies[0].global_transform.to_position().to_np()[:3],
+        gen_body.global_transform.to_position().to_np()[:3],
         multiple_hits=True,
     )
 

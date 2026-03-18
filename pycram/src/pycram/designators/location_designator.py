@@ -186,11 +186,11 @@ class CostmapLocation(LocationDesignatorDescription):
 
 
         """
-        ground_pose = HomogeneousTransformationMatrix.from_point_rotation_matrix(
-            Point3(target.x, target.y, 0),
-            target.to_rotation_matrix(),
+        ground_pose = Pose(
+            position=Point3(target.x, target.y, 0),
+            orientation=target.to_quaternion(),
             reference_frame=target.reference_frame,
-        ).to_pose()
+        )
 
         base_bb = self.robot_view.base.bounding_box
 
@@ -254,7 +254,7 @@ class CostmapLocation(LocationDesignatorDescription):
             target = (
                 deepcopy(params_box.target)
                 if isinstance(params_box.target, Pose)
-                else params_box.target.global_pose.to_pose()
+                else params_box.target.global_transform.to_pose()
             )
 
             if params_box.visible_for or params_box.reachable_for:
@@ -295,7 +295,9 @@ class CostmapLocation(LocationDesignatorDescription):
                     pose_candidate.to_quaternion(),
                     reference_frame=target.reference_frame,
                 )
-                test_robot.root.parent_connection.origin = pose_candidate
+                test_robot.root.parent_connection.origin = (
+                    pose_candidate.to_homogeneous_matrix()
+                )
 
                 collisions = collision_check(
                     robot=test_robot,
@@ -453,13 +455,9 @@ class AccessingLocation(LocationDesignatorDescription):
         """
         Sets up the costmaps for the given handle and robot. The costmaps are merged and stored in the final_map.
         """
-        ground_pose = handle.global_pose
+        ground_pose = handle.global_transform
 
-        ground_pose = Pose(
-            Point3.from_iterable([ground_pose.x, ground_pose.y, 0]),
-            ground_pose.to_quaternion(),
-            reference_frame=ground_pose.reference_frame,
-        )
+        ground_pose.z = 0
 
         base_bb = self.robot_view.base.bounding_box
         occupancy = OccupancyCostmap(
@@ -468,7 +466,7 @@ class AccessingLocation(LocationDesignatorDescription):
             width=200,
             height=200,
             resolution=0.02,
-            origin=ground_pose,
+            origin=ground_pose.to_pose(),
             world=handle._world,
         )
         final_map = occupancy
@@ -551,13 +549,12 @@ class AccessingLocation(LocationDesignatorDescription):
             final_map.number_of_samples = 600
             final_map.orientation_generator = orientation_generator
             for pose_candidate in final_map:
-                pose_candidate = Pose(
-                    Point3(pose_candidate.x, pose_candidate.y, 0),
-                    pose_candidate.to_quaternion(),
-                    reference_frame=params_box.handle,
-                )
+                pose_candidate.z = 0
 
-                test_robot.root.parent_connection.origin = pose_candidate
+                test_robot.root.parent_connection.origin = test_world.transform(
+                    pose_candidate.to_homogeneous_matrix(),
+                    test_robot.root.parent_kinematic_structure_entity.parent_kinematic_structure_entity,
+                )
                 try:
                     collision_check(test_robot, test_world)
                 except RobotInCollision:
@@ -573,9 +570,9 @@ class AccessingLocation(LocationDesignatorDescription):
                     current_target_sequence = [
                         deepcopy(pose) for pose in target_sequence
                     ]
+                    grasp_rotation = grasp.to_rotation_matrix()
                     current_target_sequence = [
-                        grasp.to_rotation_matrix() @ pose
-                        for pose in current_target_sequence
+                        grasp_rotation @ pose for pose in current_target_sequence
                     ]
 
                     is_reachable = pose_sequence_reachability_validator(
@@ -670,11 +667,7 @@ class SemanticCostmapLocation(LocationDesignatorDescription):
                 max_z = max(np_points, key=lambda p: p[2])[2]
                 height_offset = (max_z - min_z) / 2
             for maybe_pose in self.sem_costmap:
-                maybe_pose = Pose(
-                    Point3(maybe_pose.x, maybe_pose.y, maybe_pose.z + height_offset),
-                    maybe_pose.to_quaternion(),
-                    reference_frame=params_box.body,
-                )
+                maybe_pose.z += height_offset
                 yield maybe_pose
 
 
@@ -884,7 +877,7 @@ class ProbabilisticSemanticLocation(LocationDesignatorDescription):
             if self.link_is_center_link
             else 0.1
         )
-        target_point = body.global_pose.to_position().to_np()[:3]
+        target_point = body.global_transform.to_position().to_np()[:3]
         target_point[2] += z_offset
         target_node = free_space.node_of_point(
             Point3(*target_point, reference_frame=body._world.root)
@@ -985,22 +978,22 @@ class ProbabilisticSemanticLocation(LocationDesignatorDescription):
 
     @staticmethod
     def _calculate_surface_z_coord(
-        test_robot: AbstractRobot, surface_coords: Tuple[float, float]
+        test_robot: AbstractRobot, surface_coordinates: Tuple[float, float]
     ) -> Optional[float]:
         """
         Calculates the z-coordinate of the surface at the given surface coordinates on the link.
 
         :param test_robot: The robot that is used to test the surface coordinates.
-        :param surface_coords: The coordinates on the surface where the z-coordinate should be calculated.
+        :param surface_coordinates: The coordinates on the surface where the z-coordinate should be calculated.
 
         :return: The z-coordinate of the surface at the given surface coordinates, or None if the link is not hit.
         """
         # Use a raytest to check if the sampled point is on the target link. This is necessary because the
         # bounding boxes are not perfect, so the sampled point may be slightly off the link.
         # Furthermore, we can use the ray test to get the correct height of the link at the sampled point.
-        surface_x_coord, surface_y_coord = surface_coords
-        ray_start = [surface_x_coord, surface_y_coord, 2]
-        ray_end = [surface_x_coord, surface_y_coord, -2.0]
+        surface_x_coordinates, surface_y_coordinates = surface_coordinates
+        ray_start = [surface_x_coordinates, surface_y_coordinates, 2]
+        ray_end = [surface_x_coordinates, surface_y_coordinates, -2.0]
         result = test_robot._world.ray_tracer.ray_test(
             np.array(ray_start), np.array(ray_end)
         )
@@ -1082,21 +1075,25 @@ class ProbabilisticSemanticLocation(LocationDesignatorDescription):
                         world_distribution.probabilistic_circuit.variables, sample
                     )
                 }
-                surface_x_coord = sample_dict[self.surface_x.name]
-                surface_y_coord = sample_dict[self.surface_y.name]
+                surface_x_coordinate = sample_dict[self.surface_x.name]
+                surface_y_coordinate = sample_dict[self.surface_y.name]
                 nav_x = sample_dict[SpatialVariables.x.name]
                 nav_y = sample_dict[SpatialVariables.y.name]
 
-                surface_z_coord = self._calculate_surface_z_coord(
-                    test_robot, (surface_x_coord, surface_y_coord)
+                surface_z_coordinate = self._calculate_surface_z_coord(
+                    test_robot, (surface_x_coordinate, surface_y_coordinate)
                 )
-                if surface_z_coord is None:
+                if surface_z_coordinate is None:
                     continue
 
                 target_quat = OrientationGenerator.generate_random_orientation()
                 target_pose = Pose(
                     Point3.from_iterable(
-                        [surface_x_coord, surface_y_coord, surface_z_coord]
+                        [
+                            surface_x_coordinate,
+                            surface_y_coordinate,
+                            surface_z_coordinate,
+                        ]
                     ),
                     Quaternion.from_iterable(target_quat),
                     reference_frame=self.world.root,
@@ -1113,7 +1110,9 @@ class ProbabilisticSemanticLocation(LocationDesignatorDescription):
 
                 # Reject samples in which the robot is in collision with the environment despite the bloated obstacles,
                 # for example with the arms
-                test_robot.root.parent_connection.origin = nav_pose
+                test_robot.root.parent_connection.origin = (
+                    nav_pose.to_homogeneous_matrix()
+                )
                 try:
                     collision_check(test_robot, test_world)
                 except RobotInCollision:
@@ -1127,15 +1126,8 @@ class ProbabilisticSemanticLocation(LocationDesignatorDescription):
                         ).bounding_box()
                     )
                     final_height_offset = (bounding_box.max_z - bounding_box.min_z) / 2
-                    target_pose = Pose(
-                        Point3(
-                            target_pose.x,
-                            target_pose.y,
-                            target_pose.z + final_height_offset,
-                        ),
-                        target_pose.to_quaternion(),
-                        reference_frame=target_pose.reference_frame,
-                    )
+
+                    target_pose.z += final_height_offset
 
                 yield target_pose
 
@@ -1263,7 +1255,7 @@ class ProbabilisticCostmapLocation(LocationDesignatorDescription):
         )
 
         robot = self.robot_view
-        robot_pose = robot.root.global_pose
+        robot_pose = robot.root.global_transform
         robot.root.parent_connection.origin = (
             HomogeneousTransformationMatrix.from_xyz_quaternion(100, 100, 0)
         )
@@ -1325,7 +1317,7 @@ class ProbabilisticCostmapLocation(LocationDesignatorDescription):
                     float(target_position.x + search_distance),
                     float(target_position.y + search_distance),
                     float(target_position.z + 0.35),
-                    origin=world.root.global_pose,
+                    origin=world.root.global_transform,
                 )
             ],
             reference_frame=world.root,
@@ -1423,7 +1415,9 @@ class ProbabilisticCostmapLocation(LocationDesignatorDescription):
                 else params_box.target
             )
             target_pose: Pose = (
-                target if isinstance(target, Pose) else target.global_pose.to_pose()
+                target
+                if isinstance(target, Pose)
+                else target.global_transform.to_pose()
             )
             target_position: Vector3 = target_pose.to_position()
 
@@ -1505,7 +1499,9 @@ class ProbabilisticCostmapLocation(LocationDesignatorDescription):
                     nav_quat,
                     reference_frame=self.world.root,
                 )
-                test_robot.root.parent_connection.origin = pose_candidate
+                test_robot.root.parent_connection.origin = (
+                    pose_candidate.to_homogeneous_matrix()
+                )
 
                 try:
                     collision_check(test_robot, self.test_world)
@@ -1609,11 +1605,7 @@ class GiskardLocation(LocationDesignatorDescription):
         """
         Setup the reachability costmap for initial pose estimation.
         """
-        ground_pose = Pose(
-            Point3(pose.x, pose.y, 0),
-            pose.to_quaternion(),
-            reference_frame=pose.reference_frame,
-        )
+        pose.z = 0
 
         base_bb = self.robot_view.base.bounding_box
 
@@ -1623,12 +1615,12 @@ class GiskardLocation(LocationDesignatorDescription):
             width=200,
             world=self.world,
             robot_view=self.robot_view,
-            origin=ground_pose,
+            origin=pose,
             distance_to_obstacle=(base_bb.width / 2 + base_bb.depth / 2) / 2,
         )
         gaussian_map = GaussianCostmap(
             resolution=0.02,
-            origin=ground_pose,
+            origin=pose,
             mean=200,
             sigma=15,
             world=self.world,
@@ -1738,7 +1730,7 @@ class GiskardLocation(LocationDesignatorDescription):
                     except (TimeoutError, InfeasibleException) as e:
                         pass
 
-                    dist = test_ee.global_pose.to_position().euclidean_distance(
+                    dist = test_ee.global_transform.to_position().euclidean_distance(
                         target_sequence[-1].to_position()
                     )
 
@@ -1746,7 +1738,7 @@ class GiskardLocation(LocationDesignatorDescription):
                         continue
 
                     ret = GraspPose.from_pose(
-                        test_robot.root.global_pose.to_pose(),
+                        test_robot.root.global_transform.to_pose(),
                         arm=params["arm"],
                         grasp_description=grasp_desc,
                     )

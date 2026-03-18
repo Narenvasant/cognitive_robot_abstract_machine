@@ -64,9 +64,7 @@ class ReachMotion(BaseMotion):
             -0.05,  # TODO: Maybe put these values in the semantic annotates
         )
 
-        pose = self.world.transform(
-            target_pre_pose.to_homogeneous_matrix(), self.world.root
-        ).to_pose()
+        pose = self.world.transform(target_pre_pose, self.world.root)
 
         sequence = [target_pre_pose, pose]
         return sequence.reverse() if self.reverse_pose_sequence else sequence

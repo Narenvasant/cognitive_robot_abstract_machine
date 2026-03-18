@@ -162,7 +162,7 @@ def test_navigate_multi(immutable_multiple_robot_apartment):
     with simulated_robot:
         plan.perform()
 
-    robot_base_pose = view.root.global_pose
+    robot_base_pose = view.root.global_transform
     robot_base_position = robot_base_pose.to_position().to_np()
     robot_base_orientation = robot_base_pose.to_quaternion().to_np()
 
@@ -257,7 +257,7 @@ def test_reach_action_multi(immutable_multiple_robot_apartment):
     with simulated_robot:
         plan.perform()
 
-    manipulator_pose = left_arm.manipulator.tool_frame.global_pose
+    manipulator_pose = left_arm.manipulator.tool_frame.global_transform
     manipulator_position = manipulator_pose.to_position().to_np()
     manipulator_orientation = manipulator_pose.to_quaternion().to_np()
 
@@ -297,7 +297,7 @@ def test_follow_tcp_path_multi(immutable_multiple_robot_apartment):
     )
     grasp_axis = AxisIdentifier.from_tuple(front_axis)
 
-    pose_T = world.get_body_by_name("milk.stl").global_pose
+    pose_T = world.get_body_by_name("milk.stl").global_transform
     pose = pose_T.to_pose()
     if grasp_axis == AxisIdentifier.X:
         target_pose = pose
@@ -321,7 +321,7 @@ def test_follow_tcp_path_multi(immutable_multiple_robot_apartment):
     with simulated_robot:
         plan.perform()
 
-    tip_pose = left_arm.manipulator.tool_frame.global_pose
+    tip_pose = left_arm.manipulator.tool_frame.global_transform
     dist = np.linalg.norm(tip_pose.to_position() - np.array(target_pose.to_position()))
     assert dist < 0.01
 
@@ -357,7 +357,9 @@ def test_grasping(immutable_multiple_robot_apartment):
     )
     with simulated_robot:
         plan.perform()
-    dist = np.linalg.norm(world.get_body_by_name("milk.stl").global_pose.to_np()[3, :3])
+    dist = np.linalg.norm(
+        world.get_body_by_name("milk.stl").global_transform.to_np()[3, :3]
+    )
     assert dist < 0.01
 
 
@@ -444,7 +446,7 @@ def test_place_multi(mutable_multiple_robot_apartment):
             world.get_body_by_name("milk.stl"),
         )
 
-    milk_position = milk_body.global_pose.to_position().to_np()
+    milk_position = milk_body.global_transform.to_position().to_np()
 
     assert milk_position[:3] == pytest.approx([1, -2.2, 0.6], abs=0.01)
 
@@ -546,11 +548,11 @@ def test_facing(immutable_multiple_robot_apartment):
     world, robot_view, context = immutable_multiple_robot_apartment
 
     with simulated_robot:
-        milk_pose = world.get_body_by_name("milk.stl").global_pose.to_pose()
+        milk_pose = world.get_body_by_name("milk.stl").global_transform.to_pose()
         plan = SequentialPlan(context, FaceAtActionDescription(milk_pose, True))
         plan.perform()
         milk_in_robot_frame = world.transform(
-            world.get_body_by_name("milk.stl").global_pose,
+            world.get_body_by_name("milk.stl").global_transform,
             robot_view.root,
         )
         assert float(milk_in_robot_frame.to_position().y) == pytest.approx(
@@ -577,7 +579,7 @@ def test_transport(mutable_multiple_robot_apartment):
     )
     with simulated_robot:
         plan.perform()
-    milk_position = world.get_body_by_name("milk.stl").global_pose.to_np()[:3, 3]
+    milk_position = world.get_body_by_name("milk.stl").global_transform.to_np()[:3, 3]
     dist = np.linalg.norm(milk_position - np.array([3.1, 2.2, 0.95]))
     assert dist <= 0.02
 

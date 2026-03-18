@@ -433,7 +433,7 @@ def test_specifies_left_right_arm_mixin(pr2_world_state_reset):
     assert LeftOf(
         left_arm_chain[1].center_of_mass,
         right_arm_chain[1].center_of_mass,
-        pr2.root.global_pose,
+        pr2.root.global_transform,
     )()
 
 

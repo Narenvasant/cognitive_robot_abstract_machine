@@ -148,7 +148,7 @@ class Costmap:
     """
     Width of the costmap.
     """
-    origin: Pose = field(kw_only=True, default_factory=lambda: Pose())
+    origin: Pose = field(kw_only=True, default_factory=Pose)
     """
     Origin pose of the costmap.
     """
@@ -341,14 +341,10 @@ class Costmap:
         if self.width != other_cm.width or self.height != other_cm.height:
             raise ValueError("You can only merge costmaps of the same size.")
         elif (
-            not np.allclose(
-                self.origin.to_position().x, other_cm.origin.to_position().x
-            )
+            not np.allclose(self.origin.x, other_cm.origin.x)
+            or not np.allclose(self.origin.y, other_cm.origin.y)
             or not np.allclose(
-                self.origin.to_position().y, other_cm.origin.to_position().y
-            )
-            or not np.allclose(
-                self.origin.to_quaternion(), other_cm.origin.to_quaternion()
+                self.origin.to_rotation_matrix(), other_cm.origin.to_rotation_matrix()
             )
         ):
             raise ValueError(
@@ -643,9 +639,7 @@ class VisibilityCostmap(Costmap):
 
     def __post_init__(self):
         self.origin: Pose = (
-            Pose.from_xyz_quaternion(reference_frame=self.world.root)
-            if not self.origin
-            else self.origin
+            Pose(reference_frame=self.world.root) if not self.origin else self.origin
         )
         self._generate_map()
 
@@ -667,17 +661,13 @@ class VisibilityCostmap(Costmap):
         for _ in range(4):
             rotated_origin_copy = (
                 HomogeneousTransformationMatrix.from_point_rotation_matrix(
-                    rotation_matrix=Quaternion(0, 0, 1, 1).to_rotation_matrix()
+                    rotation_matrix=RotationMatrix.from_rpy(yaw=np.pi / 2),
                 )
-                @ origin_copy.to_homogeneous_matrix()
+                @ origin_copy
             )
             images.append(
                 r_t.create_depth_map(
-                    Pose(
-                        rotated_origin_copy.to_position(),
-                        rotated_origin_copy.to_quaternion(),
-                        origin_copy.reference_frame,
-                    ),
+                    rotated_origin_copy,
                     resolution=self.width,
                 )
             )
@@ -786,12 +776,10 @@ class VisibilityCostmap(Costmap):
         # of the range for every coordinate and r_max contains the end for each
         # coordinate
         r_min = (
-            np.arctan((self.min_height - self.origin.to_position().z) / distances)
-            * self.width
+            np.arctan((self.min_height - self.origin.z) / distances) * self.width
         ) + self.width / 2
         r_max = (
-            np.arctan((self.max_height - self.origin.to_position().z) / distances)
-            * self.width
+            np.arctan((self.max_height - self.origin.z) / distances) * self.width
         ) + self.width / 2
 
         r_min = np.minimum(np.around(r_min), self.width - 1).astype("int16")
@@ -878,9 +866,7 @@ class GaussianCostmap(Costmap):
         self.resolution: float = resolution
         self.world = world
         self.origin: Pose = (
-            Pose.from_xyz_quaternion(reference_frame=self.world.root)
-            if not origin
-            else origin
+            Pose(reference_frame=self.world.root) if not origin else origin
         )
 
     def _gaussian_window(self, mean: int, std: float) -> np.ndarray:
@@ -947,12 +933,8 @@ class SemanticCostmap(Costmap):
         self.world: World = body._world
         self.body: Body = body
         self.resolution: float = resolution
-        global_transform = self.body.global_pose
-        self.origin: Pose = Pose(
-            global_transform.to_position(),
-            global_transform.to_quaternion(),
-            global_transform.reference_frame,
-        )
+        global_transform = self.body.global_transform
+        self.origin: Pose = global_transform.to_pose()
         self.height: int = 0
         self.width: int = 0
         self.map: np.ndarray = np.zeros((self.height, self.width))
@@ -1100,7 +1082,7 @@ class AlgebraicSemanticCostmap(SemanticCostmap):
         :return: The left event.
         """
         self.check_valid_area_exists()
-        y_origin = float(self.origin.to_position().y)
+        y_origin = float(self.origin.y)
         left = self.original_valid_area[self.y].simple_sets[0].lower
         left += margin
         event = SimpleEvent(
@@ -1115,7 +1097,7 @@ class AlgebraicSemanticCostmap(SemanticCostmap):
         :return: The right event.
         """
         self.check_valid_area_exists()
-        y_origin = float(self.origin.to_position().y)
+        y_origin = float(self.origin.y)
         right = self.original_valid_area[self.y].simple_sets[0].upper
         right -= margin
         event = SimpleEvent(
@@ -1130,7 +1112,7 @@ class AlgebraicSemanticCostmap(SemanticCostmap):
         :return: The top event.
         """
         self.check_valid_area_exists()
-        x_origin = float(self.origin.to_position().x)
+        x_origin = float(self.origin.x)
         top = self.original_valid_area[self.x].simple_sets[0].upper
         top -= margin
         event = SimpleEvent(
@@ -1145,7 +1127,7 @@ class AlgebraicSemanticCostmap(SemanticCostmap):
         :return: The bottom event.
         """
         self.check_valid_area_exists()
-        x_origin = float(self.origin.to_position().x)
+        x_origin = float(self.origin.x)
         lower = self.original_valid_area[self.x].simple_sets[0].lower
         lower += margin
         event = SimpleEvent(
@@ -1178,8 +1160,8 @@ class AlgebraicSemanticCostmap(SemanticCostmap):
         for rectangle in self.partitioning_rectangles():
             # rectangle.scale(1/self.resolution, 1/self.resolution)
             rectangle.translate(
-                float(self.origin.to_position().x),
-                float(self.origin.to_position().y),
+                float(self.origin.x),
+                float(self.origin.y),
             )
             rectangle_event = SimpleEvent(
                 {
@@ -1212,11 +1194,11 @@ class AlgebraicSemanticCostmap(SemanticCostmap):
         """
         x = sample[0]
         y = sample[1]
-        position = [x, y, self.origin.to_position().z]
+        position = [x, y, self.origin.z]
         angle = (
             np.arctan2(
-                position[1] - self.origin.to_position().y,
-                position[0] - self.origin.to_position().x,
+                position[1] - self.origin.y,
+                position[0] - self.origin.x,
             )
             + np.pi
         )

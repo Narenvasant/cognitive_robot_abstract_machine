@@ -1587,7 +1587,9 @@ class TestCartesianTasks:
                     CartesianPosition(
                         root_link=hsr_world_setup.root,
                         tip_link=hand.tool_frame,
-                        goal_point=hsr_world_setup.bodies[-1].global_pose.to_position(),
+                        goal_point=hsr_world_setup.bodies[
+                            -1
+                        ].global_transform.to_position(),
                     ),
                 ]
             )

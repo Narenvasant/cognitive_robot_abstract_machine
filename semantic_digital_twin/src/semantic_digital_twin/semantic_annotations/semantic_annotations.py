@@ -281,7 +281,7 @@ class Door(HasHandle, HasHinge):
         connection = self.handle.root.parent_connection
         door_P_handle = connection.origin_expression.to_position()
         scale = self.root.collision.scale
-        world_T_door = self.root.global_pose
+        world_T_door = self.root.global_transform
 
         match opening_axis.to_np().tolist():
             case [0, 1, 0, 0]:
@@ -337,9 +337,9 @@ class DoubleDoor(SemanticAnnotation):
 
         :return: A tuple containing the left and right door. the first door is the left door, the second door is the right door.
         """
-        world_T_door_0 = self.door_0.root.global_pose
+        world_T_door_0 = self.door_0.root.global_transform
         view_point_T_door_0 = world_T_view_point.inverse() @ world_T_door_0
-        world_T_door_1 = self.door_1.root.global_pose
+        world_T_door_1 = self.door_1.root.global_transform
         view_point_T_door_1 = world_T_view_point.inverse() @ world_T_door_1
         if view_point_T_door_0.y > view_point_T_door_1.y:
             return self.door_0, self.door_1

@@ -242,7 +242,7 @@ def test_perform_desig(immutable_model_world):
     with simulated_robot:
         plan.perform()
     np.testing.assert_almost_equal(
-        robot_view.root.global_pose.to_np()[:3, 3], [0.3, 0.3, 0], decimal=1
+        robot_view.root.global_transform.to_np()[:3, 3], [0.3, 0.3, 0], decimal=1
     )
     assert world.state[
         world.get_degree_of_freedom_by_name("torso_lift_joint").id

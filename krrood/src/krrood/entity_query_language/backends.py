@@ -14,7 +14,7 @@ from krrood.entity_query_language.core.variable import Variable
 from krrood.entity_query_language.exceptions import (
     NoSolutionFound,
     GenerativeBackendQueryIsNotUnderspecifiedVariable,
-    UnderspecifiedStatementInfeasibleForEQLGeneration,
+    UnderspecifiedStatementInfeasibleForEntityQueryLanguageGeneration,
 )
 from krrood.entity_query_language.factories import (
     set_of,
@@ -149,7 +149,9 @@ class EntityQueryLanguageBackend(SelectiveBackend):
         if isinstance(
             attribute_match.assigned_value, type(Ellipsis)
         ) and not issubclass(attribute_match.assigned_variable._type_, enum.Enum):
-            raise UnderspecifiedStatementInfeasibleForEQLGeneration(attribute_match)
+            raise UnderspecifiedStatementInfeasibleForEntityQueryLanguageGeneration(
+                attribute_match
+            )
 
     def _convert_attribute_match_to_variable(self, attribute_match: AttributeMatch):
         """

@@ -145,8 +145,8 @@ class ProbabilisticCostmap:
         area = Event()
         for rectangle in self.costmap.partitioning_rectangles():
             rectangle.translate(
-                float(self.origin.to_position().x),
-                float(self.origin.to_position().y),
+                float(self.origin.x),
+                float(self.origin.y),
             )
             area.simple_sets.add(
                 SimpleEvent(
@@ -173,11 +173,11 @@ class ProbabilisticCostmap:
         """
         x = sample[0]
         y = sample[1]
-        position = [x, y, float(self.origin.to_position().z)]
+        position = [x, y, float(self.origin.z)]
         angle = (
             np.arctan2(
-                position[1] - self.origin.to_position().y,
-                position[0] - self.origin.to_position().x,
+                position[1] - self.origin.y,
+                position[0] - self.origin.x,
             )
             + np.pi
         )

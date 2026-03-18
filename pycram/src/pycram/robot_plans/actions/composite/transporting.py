@@ -92,7 +92,7 @@ class TransportAction(ActionDescription):
                 ).perform()
         SequentialPlan(self.context, ParkArmsActionDescription(Arms.BOTH)).perform()
         pickup_loc = CostmapLocation(
-            target=self.object_designator.global_pose.to_pose(),
+            target=self.object_designator.global_transform.to_pose(),
             reachable_arm=self.arm,
             reachable_for=self.robot_view,
         )
@@ -354,7 +354,7 @@ class MoveAndPickUpAction(ActionDescription):
         super().__post_init__()
 
     def execute(self):
-        obj_pose = Pose.from_spatial_type(self.object_designator.global_pose)
+        obj_pose = Pose.from_spatial_type(self.object_designator.global_transform)
         SequentialPlan(
             self.context,
             NavigateActionDescription(self.standing_position, self.keep_joint_states),

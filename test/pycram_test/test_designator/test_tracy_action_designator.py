@@ -143,7 +143,7 @@ def test_reach_action_multi(immutable_tracy_block_world):
     with simulated_robot:
         plan.perform()
 
-    manipulator_pose = left_arm.manipulator.tool_frame.global_pose
+    manipulator_pose = left_arm.manipulator.tool_frame.global_transform
     manipulator_position = manipulator_pose.to_position().to_np()
     manipulator_orientation = manipulator_pose.to_quaternion().to_np()
 
@@ -200,7 +200,9 @@ def test_grasping(immutable_tracy_block_world):
     )
     with simulated_robot:
         plan.perform()
-    dist = np.linalg.norm(world.get_body_by_name("box1").global_pose.to_np()[3, :3])
+    dist = np.linalg.norm(
+        world.get_body_by_name("box1").global_transform.to_np()[3, :3]
+    )
     assert dist < 0.01
 
 
@@ -268,7 +270,7 @@ def test_place_multi(mutable_tracy_block_world):
             world.get_body_by_name("box1"),
         )
     box_body = world.get_body_by_name("box1")
-    milk_position = box_body.global_pose.to_position().to_np()
+    milk_position = box_body.global_transform.to_position().to_np()
 
     assert milk_position[:3] == pytest.approx([0.9, 0, 0.93], abs=0.01)
 
@@ -297,7 +299,7 @@ def test_move_tcp_follows_sine_waypoints(immutable_tracy_block_world):
     with simulated_robot:
         plan.perform()
 
-    tip_pose = right_arm.manipulator.tool_frame.global_pose
+    tip_pose = right_arm.manipulator.tool_frame.global_transform
     expected = waypoints.poses[-1]
 
     assert np.allclose(tip_pose.to_position(), expected.to_position(), atol=0.01)

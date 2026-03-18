@@ -644,7 +644,9 @@ class CalledMatchMultipleTimes(DataclassException):
 
 
 @dataclass
-class UnderspecifiedStatementInfeasibleForEQLGeneration(DataclassException):
+class UnderspecifiedStatementInfeasibleForEntityQueryLanguageGeneration(
+    DataclassException
+):
     attribute_match: AttributeMatch
 
     def __post_init__(self):
