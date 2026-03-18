@@ -933,8 +933,7 @@ class SemanticCostmap(Costmap):
         self.world: World = body._world
         self.body: Body = body
         self.resolution: float = resolution
-        global_transform = self.body.global_transform
-        self.origin: Pose = global_transform.to_pose()
+        self.origin: Pose = self.body.global_pose
         self.height: int = 0
         self.width: int = 0
         self.map: np.ndarray = np.zeros((self.height, self.width))

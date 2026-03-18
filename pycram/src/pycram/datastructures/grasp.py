@@ -256,7 +256,7 @@ class GraspDescription:
         world = manipulator._world
         map_T_object = world.transform(pose.to_homogeneous_matrix(), world.root).to_pose()
 
-        map_T_robot = manipulator._robot.root.global_transform.to_pose()
+        map_T_robot = manipulator._robot.root.global_pose
 
         if grasp_alignment:
             side_axis = grasp_alignment.preferred_axis

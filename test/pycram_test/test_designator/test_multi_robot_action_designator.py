@@ -548,7 +548,7 @@ def test_facing(immutable_multiple_robot_apartment):
     world, robot_view, context = immutable_multiple_robot_apartment
 
     with simulated_robot:
-        milk_pose = world.get_body_by_name("milk.stl").global_transform.to_pose()
+        milk_pose = world.get_body_by_name("milk.stl").global_pose
         plan = SequentialPlan(context, FaceAtActionDescription(milk_pose, True))
         plan.perform()
         milk_in_robot_frame = world.transform(

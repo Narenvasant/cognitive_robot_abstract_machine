@@ -254,7 +254,7 @@ class CostmapLocation(LocationDesignatorDescription):
             target = (
                 deepcopy(params_box.target)
                 if isinstance(params_box.target, Pose)
-                else params_box.target.global_transform.to_pose()
+                else params_box.target.global_pose
             )
 
             if params_box.visible_for or params_box.reachable_for:
@@ -1415,9 +1415,7 @@ class ProbabilisticCostmapLocation(LocationDesignatorDescription):
                 else params_box.target
             )
             target_pose: Pose = (
-                target
-                if isinstance(target, Pose)
-                else target.global_transform.to_pose()
+                target if isinstance(target, Pose) else target.global_pose
             )
             target_position: Vector3 = target_pose.to_position()
 
@@ -1738,7 +1736,7 @@ class GiskardLocation(LocationDesignatorDescription):
                         continue
 
                     ret = GraspPose.from_pose(
-                        test_robot.root.global_transform.to_pose(),
+                        test_robot.root.global_pose,
                         arm=params["arm"],
                         grasp_description=grasp_desc,
                     )

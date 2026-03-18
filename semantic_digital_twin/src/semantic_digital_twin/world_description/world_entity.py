@@ -55,6 +55,7 @@ from semantic_digital_twin.exceptions import (
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
     Point3,
+    Pose,
 )
 from semantic_digital_twin.utils import IDGenerator, camel_case_split
 
@@ -313,6 +314,14 @@ class KinematicStructureEntity(WorldEntityWithSimulatorProperties, ABC):
         :return: TransformationMatrix representing the global transform.
         """
         return self._world.compute_forward_kinematics(self._world.root, self)
+
+    @property
+    def global_pose(self) -> Pose:
+        """
+        Computes the Pose of the KinematicStructureEntity in the world frame.
+        :return: Pose representing the global pose.
+        """
+        return self._world.compute_forward_kinematics(self._world.root, self).to_pose()
 
     @property
     def parent_connection(self) -> Connection:

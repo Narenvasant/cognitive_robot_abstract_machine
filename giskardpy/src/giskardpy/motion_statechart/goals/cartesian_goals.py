@@ -72,6 +72,7 @@ class DifferentialDriveBaseGoal(Sequence):
         root_T_goal2 = Pose(
             position=root_T_goal.to_position(),
             orientation=root_R_first_orientation.to_quaternion(),
+            reference_frame=map,
         )
 
         self.nodes = [

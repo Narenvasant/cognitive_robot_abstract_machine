@@ -1025,7 +1025,7 @@ class ActionNode(BaseActionNode, Generic[ActionType]):
             self.execution_data.manipulated_body = manipulated_body
             self.execution_data.manipulated_body_pose_start = deepcopy(
                 manipulated_body.global_pose
-            ).to_pose()
+            )
             self.execution_data.manipulated_body_name = str(manipulated_body.name)
 
     def log_execution_data_post_perform(self):

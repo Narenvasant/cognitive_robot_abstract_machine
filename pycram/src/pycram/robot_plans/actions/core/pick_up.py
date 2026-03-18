@@ -154,7 +154,7 @@ class PickUpAction(ActionDescription):
             self.context,
             MoveGripperMotion(motion=GripperState.OPEN, gripper=self.arm),
             ReachActionDescription(
-                target_pose=self.object_designator.global_transform.to_pose(),
+                target_pose=self.object_designator.global_pose,
                 object_designator=self.object_designator,
                 arm=self.arm,
                 grasp_description=self.grasp_description,
