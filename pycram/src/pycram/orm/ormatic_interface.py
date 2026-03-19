@@ -9160,7 +9160,7 @@ class CameraDAO(
 class WorldModelModificationDAO(
     Base,
     DataAccessObject[
-        semantic_digital_twin.world_description.world_modification.WorldModelModification
+        semantic_digital_twin.world_description.world_modification.WorldModification
     ],
 ):
 
