@@ -1,12 +1,7 @@
 from copy import deepcopy
 
 import numpy as np
-import rclpy
 
-from semantic_digital_twin.adapters.ros.tf_publisher import TFPublisher
-from semantic_digital_twin.adapters.ros.visualization.viz_marker import (
-    VizMarkerPublisher,
-)
 from semantic_digital_twin.reasoning.predicates import (
     contact,
     visible,
