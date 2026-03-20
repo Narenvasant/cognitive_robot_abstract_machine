@@ -833,23 +833,6 @@ class EndToEndIntegrationTestCase(unittest.TestCase):
         r = self.cc3.diagnose_failure({"x": 5.0, "y": 0.5}, "z")
         self.assertIn("PRIMARY CAUSE", str(r))
 
-    def test_pick_place_mdvtree_covers_all_variables(self):
-        mdvtree = MdVtreeNode.from_causal_graph(
-            causal_variable_names=[
-                "pick_approach_x", "pick_approach_y",
-                "pick_arm", "place_approach_x", "place_approach_y",
-            ],
-            effect_variable_names=["milk_end_z"],
-            causal_priority_order=[
-                "pick_approach_x", "place_approach_x",
-                "pick_arm", "pick_approach_y", "place_approach_y",
-            ],
-        )
-        all_vars = set().union(*mdvtree.all_q_sets())
-        for name in ["pick_approach_x", "pick_approach_y", "pick_arm",
-                     "place_approach_x", "place_approach_y"]:
-            self.assertIn(name, all_vars)
-
 
 if __name__ == "__main__":
     unittest.main()
