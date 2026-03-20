@@ -94,6 +94,12 @@ class WorldModelModification(WorldModification, ABC):
         """
         return cls(object_json=domain_object.to_json())
 
+    @abstractmethod
+    def to_domain_object(self, world: World) -> WorldEntityWithID:
+        """
+        Reconstructs the domain object from the JSON representation of the modification.
+        """
+
     def to_json(self):
         return {**super().to_json(), "object_json": self.object_json}
 
@@ -181,13 +187,13 @@ class AddKinematicStructureEntityModification(WorldModelModification):
     def from_kwargs(cls, kwargs: Dict[str, Any]):
         return cls(object_json=kwargs["kinematic_structure_entity"].to_json())
 
-    def apply(self, world: World):
+    def to_domain_object(self, world: World) -> KinematicStructureEntity:
         tracker = WorldEntityWithIDKwargsTracker.from_world(world)
         kwargs = tracker.create_kwargs()
-        kinematic_structure_entity = KinematicStructureEntity.from_json(
-            self.object_json, **kwargs
-        )
-        world.add_kinematic_structure_entity(kinematic_structure_entity)
+        return KinematicStructureEntity.from_json(self.object_json, **kwargs)
+
+    def apply(self, world: World):
+        world.add_kinematic_structure_entity(self.to_domain_object(world))
 
 
 @dataclass
@@ -200,10 +206,11 @@ class RemoveBodyModification(WorldModelModification):
     def from_kwargs(cls, kwargs: Dict[str, Any]):
         return cls(object_json=to_json(kwargs["kinematic_structure_entity"].id))
 
+    def to_domain_object(self, world: World) -> KinematicStructureEntity:
+        return world.get_kinematic_structure_entity_by_id(from_json(self.object_json))
+
     def apply(self, world: World):
-        body_id = from_json(self.object_json)
-        body = world.get_kinematic_structure_entity_by_id(body_id)
-        world.remove_kinematic_structure_entity(body)
+        world.remove_kinematic_structure_entity(self.to_domain_object(world))
 
 
 @dataclass
@@ -216,10 +223,13 @@ class AddConnectionModification(WorldModelModification):
     def from_kwargs(cls, kwargs: Dict[str, Any]):
         return cls(object_json=kwargs["connection"].to_json())
 
-    def apply(self, world: World):
+    def to_domain_object(self, world: World) -> Connection:
         tracker = WorldEntityWithIDKwargsTracker.from_world(world)
         kwargs = tracker.create_kwargs()
-        world.add_connection(Connection.from_json(self.object_json, **kwargs))
+        return Connection.from_json(self.object_json, **kwargs)
+
+    def apply(self, world: World):
+        world.add_connection(self.to_domain_object(world))
 
 
 @dataclass
@@ -235,15 +245,17 @@ class RemoveConnectionModification(WorldModelModification):
         object_json = {"parent": parent_json, "child": child_json}
         return cls(object_json=object_json)
 
-    def apply(self, world: World):
+    def to_domain_object(self, world: World) -> Connection:
         tracker = WorldEntityWithIDKwargsTracker.from_world(world)
         kwargs = tracker.create_kwargs()
         parent_id = from_json(self.object_json["parent"], **kwargs)
         child_id = from_json(self.object_json["child"], **kwargs)
         parent = world.get_kinematic_structure_entity_by_id(parent_id)
         child = world.get_kinematic_structure_entity_by_id(child_id)
-        connection = world.get_connection(parent, child)
-        world.remove_connection(connection)
+        return world.get_connection(parent, child)
+
+    def apply(self, world: World):
+        world.remove_connection(self.to_domain_object(world))
 
     def to_json(self):
         return {
@@ -271,11 +283,13 @@ class AddDegreeOfFreedomModification(WorldModelModification):
     def from_kwargs(cls, kwargs: Dict[str, Any]):
         return cls(object_json=kwargs["dof"].to_json())
 
-    def apply(self, world: World):
+    def to_domain_object(self, world: World) -> DegreeOfFreedom:
         tracker = WorldEntityWithIDKwargsTracker.from_world(world)
         kwargs = tracker.create_kwargs()
-        dof = DegreeOfFreedom.from_json(self.object_json, **kwargs)
-        world.add_degree_of_freedom(dof)
+        return DegreeOfFreedom.from_json(self.object_json, **kwargs)
+
+    def apply(self, world: World):
+        world.add_degree_of_freedom(self.to_domain_object(world))
 
 
 @dataclass
@@ -285,10 +299,11 @@ class RemoveDegreeOfFreedomModification(WorldModelModification):
     def from_kwargs(cls, kwargs: Dict[str, Any]):
         return cls(object_json=to_json(kwargs["dof"].id))
 
+    def to_domain_object(self, world: World) -> DegreeOfFreedom:
+        return world.get_degree_of_freedom_by_id(from_json(self.object_json))
+
     def apply(self, world: World):
-        dof_id = from_json(self.object_json)
-        dof = world.get_degree_of_freedom_by_id(dof_id)
-        world.remove_degree_of_freedom(dof)
+        world.remove_degree_of_freedom(self.to_domain_object(world))
 
 
 @dataclass
@@ -298,11 +313,13 @@ class AddSemanticAnnotationModification(WorldModelModification):
     def from_kwargs(cls, kwargs: Dict[str, Any]):
         return cls(object_json=kwargs["semantic_annotation"].to_json())
 
-    def apply(self, world: World):
+    def to_domain_object(self, world: World) -> SemanticAnnotation:
         tracker = WorldEntityWithIDKwargsTracker.from_world(world)
         kwargs = tracker.create_kwargs()
-        semantic_annotation = SemanticAnnotation.from_json(self.object_json, **kwargs)
-        world.add_semantic_annotation(semantic_annotation)
+        return SemanticAnnotation.from_json(self.object_json, **kwargs)
+
+    def apply(self, world: World):
+        world.add_semantic_annotation(self.to_domain_object(world))
 
 
 @dataclass
@@ -312,11 +329,11 @@ class RemoveSemanticAnnotationModification(WorldModelModification):
     def from_kwargs(cls, kwargs: Dict[str, Any]):
         return cls(object_json=kwargs["semantic_annotation"].to_json())
 
+    def to_domain_object(self, world: World) -> SemanticAnnotation:
+        return world.get_semantic_annotation_by_id(from_json(self.object_json))
+
     def apply(self, world: World):
-        tracker = WorldEntityWithIDKwargsTracker.from_world(world)
-        kwargs = tracker.create_kwargs()
-        semantic_annotation = SemanticAnnotation.from_json(self.object_json, **kwargs)
-        world.remove_semantic_annotation(semantic_annotation)
+        world.remove_semantic_annotation(self.to_domain_object(world))
 
 
 @dataclass
@@ -326,11 +343,13 @@ class AddActuatorModification(WorldModelModification):
     def from_kwargs(cls, kwargs: Dict[str, Any]):
         return cls(object_json=kwargs["actuator"].to_json())
 
-    def apply(self, world: World):
+    def to_domain_object(self, world: World) -> Actuator:
         tracker = WorldEntityWithIDKwargsTracker.from_world(world)
         kwargs = tracker.create_kwargs()
-        actuator = Actuator.from_json(self.object_json, **kwargs)
-        world.add_actuator(actuator)
+        return Actuator.from_json(self.object_json, **kwargs)
+
+    def apply(self, world: World):
+        world.add_actuator(self.to_domain_object(world))
 
 
 @dataclass
@@ -340,10 +359,11 @@ class RemoveActuatorModification(WorldModelModification):
     def from_kwargs(cls, kwargs: Dict[str, Any]):
         return cls(object_json=to_json(kwargs["actuator"].id))
 
+    def to_domain_object(self, world: World) -> Actuator:
+        return world.get_actuator_by_id(from_json(self.object_json))
+
     def apply(self, world: World):
-        actuator_id = from_json(self.object_json)
-        actuator = world.get_actuator_by_id(actuator_id)
-        world.remove_actuator(actuator)
+        world.remove_actuator(self.to_domain_object(world))
 
 
 @dataclass

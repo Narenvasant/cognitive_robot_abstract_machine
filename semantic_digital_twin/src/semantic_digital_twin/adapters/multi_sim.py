@@ -776,6 +776,7 @@ class MujocoActuator(SimulatorAdditionalProperty, SubclassJSONSerializer):
             "gain_type": self.gain_type,
         }
 
+    @classmethod
     def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         """
         Deserializes a JSON-compatible dictionary to a MujocoActuator instance.
@@ -2203,10 +2204,12 @@ class MultiSimSynchronizer(ModelChangeCallback, ABC):
     def _notify(self, **kwargs):
         for modification in self._world._model_manager.model_modification_blocks[-1]:
             if isinstance(modification, AddKinematicStructureEntityModification):
-                entity = modification.kinematic_structure_entity
+                entity = modification.to_domain_object(self._world)
+                entity = self._world.get_world_entity_with_id_by_id(entity.id)
                 self.entity_spawner.spawn(simulator=self.simulator, entity=entity)
             elif isinstance(modification, AddActuatorModification):
-                entity = modification.actuator
+                entity = modification.to_domain_object(self._world)
+                entity = self._world.get_world_entity_with_id_by_id(entity.id)
                 self.entity_spawner.spawn(simulator=self.simulator, entity=entity)
 
     def stop(self):
