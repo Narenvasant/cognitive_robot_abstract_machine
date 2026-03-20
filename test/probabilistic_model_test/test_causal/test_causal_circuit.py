@@ -1,8 +1,6 @@
 """
-Tests for causal_circuit.py
+Tests for causal_circuit
 
-The guiding principle: every test must fail if the implementation is
-replaced by a stub. Tests that pass for any implementation are removed.
 """
 
 import math
@@ -32,11 +30,6 @@ from probabilistic_model.probabilistic_circuit.causal.causal_circuit import (
     _compute_entropy_from_counts,
     _discretise_continuous_column,
 )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Circuit builders
-# ══════════════════════════════════════════════════════════════════════════════
 
 
 def _build_independent_two_variable_circuit() -> tuple:
@@ -112,11 +105,6 @@ def _build_correlated_circuit() -> tuple:
         root_sum.add_subcircuit(product, math.log(0.5))
 
     return circuit, x, w, y
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MdVtreeNode
-# ══════════════════════════════════════════════════════════════════════════════
 
 
 class MdVtreeNodeLeafTestCase(unittest.TestCase):
@@ -226,11 +214,6 @@ class MdVtreeNodeFromCausalGraphTestCase(unittest.TestCase):
             self.assertIn(name, all_vars)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Internal helpers
-# ══════════════════════════════════════════════════════════════════════════════
-
-
 class EntropyComputationTestCase(unittest.TestCase):
 
     def test_uniform_has_maximum_entropy(self):
@@ -330,10 +313,6 @@ class ConditionalMutualInformationTestCase(unittest.TestCase):
         self.assertGreater(cmi / h_y, 0.9)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Result dataclasses
-# ══════════════════════════════════════════════════════════════════════════════
-
 
 class QDeterminismVerificationResultTestCase(unittest.TestCase):
 
@@ -397,10 +376,6 @@ class CausalStrengthResultTestCase(unittest.TestCase):
         self.assertLessEqual(self.result.normalised_causal_strength, 1.0)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CausalCircuit construction
-# ══════════════════════════════════════════════════════════════════════════════
-
 
 class CausalCircuitConstructionTestCase(unittest.TestCase):
 
@@ -430,11 +405,6 @@ class CausalCircuitConstructionTestCase(unittest.TestCase):
         self.assertIn("ProbabilisticCircuit", str(ctx.exception))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# get_variable_by_name
-# ══════════════════════════════════════════════════════════════════════════════
-
-
 class GetVariableByNameTestCase(unittest.TestCase):
 
     def setUp(self):
@@ -451,11 +421,6 @@ class GetVariableByNameTestCase(unittest.TestCase):
             self.cc.get_variable_by_name("ghost")
         self.assertIn("x", str(ctx.exception))
         self.assertIn("y", str(ctx.exception))
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# verify_q_determinism
-# ══════════════════════════════════════════════════════════════════════════════
 
 
 class VerifyQDeterminismTestCase(unittest.TestCase):
@@ -483,11 +448,6 @@ class VerifyQDeterminismTestCase(unittest.TestCase):
         result = self._make_cc(mdvtree).verify_q_determinism()
         self.assertFalse(result.passed)
         self.assertTrue(any("ghost" in v for v in result.violations))
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# backdoor_adjustment — structural
-# ══════════════════════════════════════════════════════════════════════════════
 
 
 class BackdoorAdjustmentStructuralTestCase(unittest.TestCase):
@@ -527,11 +487,6 @@ class BackdoorAdjustmentStructuralTestCase(unittest.TestCase):
         self.assertAlmostEqual(
             ic_explicit.probability(event), ic_default.probability(event), delta=1e-6
         )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# backdoor_adjustment — correctness
-# ══════════════════════════════════════════════════════════════════════════════
 
 
 class BackdoorAdjustmentCorrectnessTestCase(unittest.TestCase):

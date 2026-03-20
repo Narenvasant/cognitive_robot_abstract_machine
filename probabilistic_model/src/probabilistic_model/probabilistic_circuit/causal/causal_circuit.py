@@ -2,23 +2,14 @@
 Causal Probabilistic Circuit
 =============================
 A ProbabilisticCircuit extended with exact, tractable causal inference
-using the marginal determinism framework of Wang & Kwiatkowska (2023).
-
-References
-----------
-Wang & Kwiatkowska (2023). Compositional probabilistic and causal inference
-using tractable circuit models. AISTATS. arXiv:2304.08278.
-
-Pearl (2009). Causality: Models, Reasoning, and Inference (2nd ed.).
-Cambridge University Press.
-
-Janzing et al. (2013). Quantifying causal influences. Annals of Statistics,
-41(5), 2324-2358.
+using the marginal determinism framework (md-vtree). The md-vtree
+structure encodes the causal graph and enables polytime
+backdoor adjustment for any valid adjustment set Z.
 
 Causal validity
 ---------------
 All causal queries are valid when the circuit was trained on independent
-randomised data (Batch 1 uniform sampling). Under this condition the
+randomised data (uniform sampling). Under this condition the
 backdoor criterion holds with Z=∅:
 
     P(Y | do(X=v)) = P(Y | X=v)
@@ -791,6 +782,7 @@ class CausalCircuit:
             adjustment_variable_names = []
 
         all_results: Dict[str, Dict[str, Any]] = {}
+        interventional_circuits: Dict[str, ProbabilisticCircuit] = {}
 
         for cause_name in self._causal_variable_names:
             if cause_name not in observed_parameter_values:
@@ -801,6 +793,7 @@ class CausalCircuit:
                 cause_name, effect_variable_name,
                 adjustment_variable_names, query_resolution
             )
+            interventional_circuits[cause_name] = ic
             cause_var = self.get_variable_by_name(cause_name)
             obs_event = SimpleEvent(
                 {cause_var: closed(float(observed) - query_resolution,
@@ -858,9 +851,7 @@ class CausalCircuit:
 
         if rec_value is not None:
             primary_var = self.get_variable_by_name(primary)
-            primary_ic = self.backdoor_adjustment(
-                primary, effect_variable_name, adjustment_variable_names, query_resolution
-            )
+            primary_ic = interventional_circuits[primary]
             try:
                 rec_event = SimpleEvent(
                     {primary_var: closed(float(rec_value) - query_resolution,
