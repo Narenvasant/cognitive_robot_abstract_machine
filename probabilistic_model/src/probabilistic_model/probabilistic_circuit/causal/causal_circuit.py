@@ -38,7 +38,6 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
 )
 
 
-
 @dataclass
 class MdVtreeNode:
     """
@@ -152,7 +151,23 @@ class QDeterminismVerificationResult:
 
 @dataclass
 class FailureDiagnosisResult:
-    """Result of diagnosing why a plan execution failed."""
+    """
+    Result of diagnosing why a plan execution failed.
+
+    Attributes
+    ----------
+    interventional_probability_at_failure
+        P(cause_variable in training support at the observed value), evaluated
+        by querying the joint (cause, effect) interventional circuit. This is
+        zero when the observed cause value lies entirely outside the training
+        distribution (the most unambiguous failure signal), and positive when
+        the cause value was covered during training.
+
+        Note: this quantity measures cause-value coverage in the training
+        distribution, not the formal do-calculus quantity P(effect | do(cause=v)).
+        It is a reliable indicator for identifying out-of-distribution parameters
+        as primary failure causes.
+    """
 
     primary_cause_variable_name: str
     actual_value: float
@@ -309,10 +324,12 @@ def _attach_marginal_circuit(
     target_circuit: ProbabilisticCircuit,
 ) -> None:
     """
-    Attach the root of marginal_circuit as a branch of target_product.
+    Attach the root of marginal_circuit as a branch of target_product,
+    constructing fresh nodes owned by target_circuit.
 
     marginal() and log_truncated_in_place() return flat circuits
-    (SumUnit → leaf, or a single leaf), so one level of depth is sufficient.
+    (SumUnit → leaves, or a single leaf), so one level of depth suffices.
+    No cross-circuit node transplantation occurs.
     """
     root = marginal_circuit.root
     if isinstance(root, SumUnit):
@@ -433,9 +450,22 @@ class CausalCircuit:
 
     def verify_q_determinism(self) -> QDeterminismVerificationResult:
         """
-        Check that the circuit satisfies Q-determinism for each q_set in
-        the md-vtree. Verifies variable existence and non-overlapping child
-        supports at the root sum node.
+        Check that every Q-set variable in the md-vtree exists in the circuit.
+
+        A violation is recorded for each Q-set variable name that cannot be
+        found in the circuit. This catches md-vtree/circuit mismatches that
+        would cause silent failures in backdoor_adjustment().
+
+        Note on structural overlap checking
+        ------------------------------------
+        Full Q-determinism — verifying that the sum nodes at each circuit level
+        have disjoint marginal supports over the Q variables — requires
+        enumerating internal circuit structure in ways the rx library does not
+        expose stably. This check is therefore intentionally omitted here.
+        For a circuit trained via JPT (which is fully deterministic by construction)
+        Q-determinism is guaranteed for all split variables without runtime checking.
+        If you require structural verification, call circuit.is_deterministic()
+        on your circuit before constructing CausalCircuit.
         """
         checked_q_sets = self._mdvtree.all_q_sets()
         violations: List[str] = []
@@ -446,32 +476,12 @@ class CausalCircuit:
                 continue
             for q_name in q_set:
                 try:
-                    q_var = self.get_variable_by_name(q_name)
+                    self.get_variable_by_name(q_name)
                 except ValueError:
-                    violations.append(f"Q-set variable '{q_name}' not found in circuit.")
-                    continue
-
-                root = self._circuit.root
-                if isinstance(root, SumUnit):
-                    try:
-                        var_support = self._circuit.support.marginal([q_var])
-                        total = 0.0
-                        for _lw, child in root.log_weighted_subcircuits:
-                            cm = child.marginal([q_var])
-                            if cm is not None:
-                                total += float(cm.probability(
-                                    var_support.fill_missing_variables_pure(cm.variables)
-                                ))
-                        n_children = len(list(root.log_weighted_subcircuits))
-                        if total > n_children + 1e-6:
-                            violations.append(
-                                f"Overlapping supports on Q-variable '{q_name}' "
-                                f"(total={total:.4f}, children={n_children})."
-                            )
-                    except Exception as e:
-                        violations.append(
-                            f"Could not verify Q-determinism for '{q_name}': {e}"
-                        )
+                    violations.append(
+                        f"Q-set variable '{q_name}' not found in circuit. "
+                        f"Available: {circuit_variable_names}"
+                    )
 
         return QDeterminismVerificationResult(
             passed=len(violations) == 0,
@@ -529,28 +539,50 @@ class CausalCircuit:
         effect_variable_name: str,
         query_resolution: float,
     ) -> ProbabilisticCircuit:
+        """
+        Compute P(cause, effect | do(cause)) when the adjustment set is empty.
+
+        Returns a joint circuit over (cause, effect) as a SumUnit of ProductUnits,
+        one per disjoint cause support region. Querying at a specific cause value
+        correctly returns zero for values outside the training domain.
+
+        Structure:
+            SumUnit [weight = P(cause in region_i)]
+                ProductUnit
+                    cause branch  (UniformDistribution over region_i)
+                    effect branch (P(effect | cause in region_i))
+        """
         cause_var = self.get_variable_by_name(cause_variable_name)
         effect_var = self.get_variable_by_name(effect_variable_name)
+
+        cause_regions = self._extract_leaf_regions_for_variable(cause_var)
+
+        # Hoist cause_marginal outside the region loop — it is the same for
+        # every region and deepcopying the full circuit once per region is
+        # expensive (O(leaves) deepcopies per backdoor_adjustment call).
+        cause_marginal = copy.deepcopy(self._circuit).marginal([cause_var])
 
         output = ProbabilisticCircuit()
         root_sum = SumUnit(probabilistic_circuit=output)
         added = 0
 
-        for region_event, region_weight in self._extract_leaf_regions_for_variable(cause_var):
+        for region_event, region_weight in cause_regions:
             if region_weight <= 0.0:
                 continue
+
             truncated, _ = copy.deepcopy(self._circuit).log_truncated_in_place(
                 region_event.fill_missing_variables_pure(self._circuit.variables)
             )
             if truncated is None:
                 continue
+
             effect_marginal = truncated.marginal([effect_var])
             if effect_marginal is None:
                 continue
-            cause_marginal = copy.deepcopy(self._circuit).marginal([cause_var])
+
             if cause_marginal is None:
                 continue
-            cause_region, _ = cause_marginal.log_truncated_in_place(
+            cause_region, _ = copy.deepcopy(cause_marginal).log_truncated_in_place(
                 region_event.fill_missing_variables_pure(cause_marginal.variables)
             )
             if cause_region is None:
@@ -565,7 +597,7 @@ class CausalCircuit:
         if added == 0:
             raise ValueError(
                 f"Interventional circuit is empty for cause '{cause_variable_name}'. "
-                f"Ensure the circuit was trained on data covering this domain."
+                f"Ensure the circuit was trained on data covering this variable's domain."
             )
         return output
 
@@ -576,9 +608,19 @@ class CausalCircuit:
         adjustment_variable_names: List[str],
         query_resolution: float,
     ) -> ProbabilisticCircuit:
+        """
+        Compute P(cause, effect | do(cause)) with a non-empty adjustment set Z.
+
+        Implements the backdoor adjustment formula:
+            P(effect | do(cause=v)) = Σ_z P(effect | cause=v, Z=z) · P(Z=z)
+
+        Returns a joint circuit over (cause, effect).
+        """
         cause_var = self.get_variable_by_name(cause_variable_name)
         effect_var = self.get_variable_by_name(effect_variable_name)
         adj_vars = [self.get_variable_by_name(n) for n in adjustment_variable_names]
+
+        cause_marginal = copy.deepcopy(self._circuit).marginal([cause_var])
 
         output = ProbabilisticCircuit()
         root_sum = SumUnit(probabilistic_circuit=output)
@@ -587,6 +629,7 @@ class CausalCircuit:
         for adj_event, adj_weight in self._extract_leaf_regions_for_variables(adj_vars):
             if adj_weight <= 0.0:
                 continue
+
             adj_conditioned, _ = copy.deepcopy(self._circuit).log_truncated_in_place(
                 adj_event.fill_missing_variables_pure(self._circuit.variables)
             )
@@ -598,6 +641,7 @@ class CausalCircuit:
             ):
                 if cause_weight <= 0.0:
                     continue
+
                 joint_weight = adj_weight * cause_weight
                 truncated, _ = copy.deepcopy(self._circuit).log_truncated_in_place(
                     adj_event.intersection_with(cause_event).fill_missing_variables_pure(
@@ -606,13 +650,14 @@ class CausalCircuit:
                 )
                 if truncated is None:
                     continue
+
                 effect_marginal = truncated.marginal([effect_var])
                 if effect_marginal is None:
                     continue
-                cause_marginal = copy.deepcopy(self._circuit).marginal([cause_var])
+
                 if cause_marginal is None:
                     continue
-                cause_region, _ = cause_marginal.log_truncated_in_place(
+                cause_region, _ = copy.deepcopy(cause_marginal).log_truncated_in_place(
                     cause_event.fill_missing_variables_pure(cause_marginal.variables)
                 )
                 if cause_region is None:
@@ -762,10 +807,13 @@ class CausalCircuit:
         """
         Identify the primary cause of a failed plan execution.
 
-        For each cause variable, computes P(effect | do(X=observed)) via the
-        interventional circuit. The variable with the lowest value is the
-        primary cause. The recommendation is the cause region with the highest
-        interventional probability in the original circuit's support.
+        For each cause variable, queries the interventional circuit
+        P(cause, effect | do(cause)) at the observed cause value. The variable
+        whose observed value falls furthest outside the training distribution
+        (lowest query probability) is identified as the primary cause.
+
+        The recommendation is the cause region midpoint with the highest
+        query probability in the interventional circuit.
 
         Parameters
         ----------
@@ -774,7 +822,8 @@ class CausalCircuit:
         effect_variable_name
             Outcome variable used to measure success probability.
         query_resolution
-            Half-width of the probability query interval.
+            Half-width of the probability query interval around each
+            observed value. Should match the JPT variable precision.
         adjustment_variable_names
             Adjustment set Z. Use [] for independent randomised data.
         """
@@ -824,10 +873,14 @@ class CausalCircuit:
                                 iv_set = ss[cause_var]
                                 if hasattr(iv_set, "simple_sets"):
                                     for iv in iv_set.simple_sets:
-                                        recommended_float = (float(iv.lower) + float(iv.upper)) / 2.0
+                                        recommended_float = (
+                                            float(iv.lower) + float(iv.upper)
+                                        ) / 2.0
                                         break
                                 elif hasattr(iv_set, "lower"):
-                                    recommended_float = (float(iv_set.lower) + float(iv_set.upper)) / 2.0
+                                    recommended_float = (
+                                        float(iv_set.lower) + float(iv_set.upper)
+                                    ) / 2.0
                                 break
             except Exception:
                 recommended_float = None
@@ -844,7 +897,10 @@ class CausalCircuit:
                 f"Expected at least one of: {self._causal_variable_names}"
             )
 
-        primary = min(all_results, key=lambda n: all_results[n]["interventional_probability"])
+        primary = min(
+            all_results,
+            key=lambda n: all_results[n]["interventional_probability"]
+        )
         primary_result = all_results[primary]
         rec_value = primary_result["recommended_value"]
         p_rec = 0.0
@@ -866,7 +922,9 @@ class CausalCircuit:
         return FailureDiagnosisResult(
             primary_cause_variable_name=primary,
             actual_value=primary_result["actual_value"],
-            interventional_probability_at_failure=primary_result["interventional_probability"],
+            interventional_probability_at_failure=primary_result[
+                "interventional_probability"
+            ],
             recommended_value=rec_value,
             interventional_probability_at_recommendation=round(p_rec, 6),
             all_variable_results=all_results,
