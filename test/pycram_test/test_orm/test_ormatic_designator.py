@@ -73,6 +73,8 @@ def test_replay_simple_plan(pycram_testing_session, simple_plan):
     with simulated_robot:
         simple_plan.perform()
     session = pycram_testing_session
+    simple_plan.context.world.delete_orphaned_dofs()
+    simple_plan.initial_world.delete_orphaned_dofs()
 
     dao = to_dao(simple_plan)
     session.add(dao)

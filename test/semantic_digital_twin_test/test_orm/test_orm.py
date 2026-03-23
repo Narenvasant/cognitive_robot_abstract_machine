@@ -165,3 +165,15 @@ def test_pr2_semantic_annotation_and_safe_to_db(
 
     session.add(dao)
     session.commit()
+
+
+def test_cyclic_alternative_mapping_dependency(pr2_world_state_reset, session):
+    dao: WorldMappingDAO = to_dao(pr2_world_state_reset)
+    session.add(dao)
+    session.commit()
+
+    queried_world = session.scalar(select(WorldMappingDAO))
+    reconstructed: World = queried_world.from_dao()
+
+    for connection in reconstructed.connections:
+        print(connection.connection_T_child_expression)

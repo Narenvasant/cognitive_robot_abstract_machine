@@ -56,17 +56,17 @@ class WorldMapping(HasSimulatorProperties, AlternativeMapping[World]):
             for entity in self.kinematic_structure_entities:
                 result.add_kinematic_structure_entity(entity)
 
-            # for dof in self.degrees_of_freedom:
-            #     result.add_degree_of_freedom(dof)
+            for dof in self.degrees_of_freedom:
+                result.add_degree_of_freedom(dof)
 
             for connection in self.connections:
                 result.add_connection(connection)
 
             for semantic_annotation in self.semantic_annotations:
                 result.add_semantic_annotation(semantic_annotation)
-            # result.delete_orphaned_dofs()
-            # result.state = self.state
-            # result.state._world = result
+
+            result.state = self.state
+            result.state._world = result
 
         return result
 

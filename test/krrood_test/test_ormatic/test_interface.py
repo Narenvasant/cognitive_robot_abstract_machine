@@ -805,3 +805,15 @@ def test_consistent_hashes_of_association_object_table_names():
         PersonDAO_knows_association.__tablename__
         == "_10251237771265734374157775849381996404106456336813529796572184"
     )
+
+
+def test_unresolved_reference_in_alternative_mappings(session, database):
+    from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+    import semantic_digital_twin.orm.ormatic_interface
+
+    a = HomogeneousTransformationMatrix.from_xyz_rpy()
+    dao = to_dao(a)
+    print(dao)
+    og = dao.from_dao()
+
+    print(og.to_json())

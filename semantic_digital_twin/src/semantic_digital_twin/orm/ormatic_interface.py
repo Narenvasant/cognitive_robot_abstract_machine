@@ -1223,6 +1223,30 @@ class AccelerationVariableDAO(
     )
 
 
+class AtomicWorldModificationNotAtomicDAO(
+    Base,
+    DataAccessObject[semantic_digital_twin.exceptions.AtomicWorldModificationNotAtomic],
+):
+
+    __tablename__ = "AtomicWorldModificationNotAtomicDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        Integer, primary_key=True, use_existing_column=True
+    )
+
+    message: Mapped[builtins.str] = mapped_column(String(255), use_existing_column=True)
+
+    world_id: Mapped[int] = mapped_column(
+        ForeignKey("WorldMappingDAO.database_id", use_alter=True),
+        nullable=True,
+        use_existing_column=True,
+    )
+
+    world: Mapped[WorldMappingDAO] = relationship(
+        "WorldMappingDAO", uselist=False, foreign_keys=[world_id], post_update=True
+    )
+
+
 class BoundingBoxDAO(
     Base, DataAccessObject[semantic_digital_twin.world_description.geometry.BoundingBox]
 ):
@@ -2558,10 +2582,10 @@ class JointStateDAO(
         JSON, nullable=False, use_existing_column=True
     )
     state_type: Mapped[
-        semantic_digital_twin.datastructures.definitions.JointStateType
+        typing.Optional[semantic_digital_twin.datastructures.definitions.JointStateType]
     ] = mapped_column(
         krrood.ormatic.custom_types.PolymorphicEnumType,
-        nullable=False,
+        nullable=True,
         use_existing_column=True,
     )
 

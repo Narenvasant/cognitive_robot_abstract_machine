@@ -139,9 +139,11 @@ class ResetStateContextManager:
         exc_val: Optional[Exception],
         exc_tb: Optional[type],
     ) -> None:
-        if exc_type is None:
-            self.world.state.data[:] = self.state
-            self.world.notify_state_change()
+        if exc_val:
+            raise exc_val
+
+        self.world.state.data[:] = self.state
+        self.world.notify_state_change()
 
 
 @dataclass
@@ -190,6 +192,10 @@ class WorldModelUpdateContextManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+
+        if exc_val:
+            raise exc_val
+
         self.world.delete_orphaned_dofs()
         model_manager = self.world._model_manager
         model_manager._active_world_model_update_context_manager_ids.remove(self._id)
