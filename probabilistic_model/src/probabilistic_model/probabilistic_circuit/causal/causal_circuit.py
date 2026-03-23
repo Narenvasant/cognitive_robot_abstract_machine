@@ -416,6 +416,12 @@ class CausalCircuit:
         """
         if isinstance(fitted_jpt, ProbabilisticCircuit):
             circuit = fitted_jpt
+
+        elif (
+            hasattr(fitted_jpt, "probabilistic_circuit")
+            and isinstance(fitted_jpt.probabilistic_circuit, ProbabilisticCircuit)
+        ):
+            circuit = fitted_jpt.probabilistic_circuit
         elif hasattr(fitted_jpt, "as_probabilistic_circuit"):
             circuit = fitted_jpt.as_probabilistic_circuit()
             if not isinstance(circuit, ProbabilisticCircuit):
@@ -432,9 +438,15 @@ class CausalCircuit:
                 )
         else:
             raise TypeError(
-                f"Cannot extract a ProbabilisticCircuit from {type(fitted_jpt)}. "
-                f"Expected a ProbabilisticCircuit directly, or a JPT with "
-                f".as_probabilistic_circuit() or .to_probabilistic_circuit()."
+                f"Cannot extract a ProbabilisticCircuit from {type(fitted_jpt)}.\n"
+                f"Supported types:\n"
+                f"  1. ProbabilisticCircuit directly\n"
+                f"  2. probabilistic_model.learning.jpt.jpt.JPT  "
+                f"(has .probabilistic_circuit attribute after fit/load)\n"
+                f"  3. Any JPT with .as_probabilistic_circuit() or "
+                f".to_probabilistic_circuit()\n"
+                f"Note: pyjpt.trees.JPT does not expose a ProbabilisticCircuit. "
+                f"Use probabilistic_model.learning.jpt.jpt.JPT instead."
             )
         return cls(circuit, mdvtree, causal_variable_names, effect_variable_names)
 
@@ -838,12 +850,16 @@ class CausalCircuit:
                 continue
 
             observed = observed_parameter_values[cause_name]
+            cause_var = self.get_variable_by_name(cause_name)
+
+            if not cause_var.is_numeric:
+                continue
+
             ic = self.backdoor_adjustment(
                 cause_name, effect_variable_name,
                 adjustment_variable_names, query_resolution
             )
             interventional_circuits[cause_name] = ic
-            cause_var = self.get_variable_by_name(cause_name)
             obs_event = SimpleEvent(
                 {cause_var: closed(float(observed) - query_resolution,
                                    float(observed) + query_resolution)}
