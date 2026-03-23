@@ -609,7 +609,7 @@ class World(HasSimulatorProperties):
 
         :param kinematic_structure_entity: The kinematic_structure_entity to add.
         """
-        logger.info(
+        logger.debug(
             f"Trying to add kinematic_structure_entity with name {kinematic_structure_entity.name}"
         )
         self._raise_error_if_belongs_to_other_world(kinematic_structure_entity)

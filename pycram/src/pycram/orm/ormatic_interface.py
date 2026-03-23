@@ -24,7 +24,6 @@ import krrood.ormatic.type_dict
 import numpy
 import pycram.datastructures.dataclasses
 import pycram.datastructures.grasp
-import pycram.datastructures.pose
 import pycram.designator
 import pycram.language
 import pycram.orm.model
@@ -311,12 +310,12 @@ class MoveTCPWaypointsMotionDAO_waypoints_association(
     source_movetcpwaypointsmotiondao_id: Mapped[int] = mapped_column(
         ForeignKey("MoveTCPWaypointsMotionDAO.database_id")
     )
-    target_posestampeddao_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id")
+    target_posemappingdao_id: Mapped[int] = mapped_column(
+        ForeignKey("PoseMappingDAO.database_id")
     )
 
-    target: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO", foreign_keys=[target_posestampeddao_id]
+    target: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO", foreign_keys=[target_posemappingdao_id]
     )
 
 
@@ -1733,6 +1732,41 @@ class ColorDAO(
     A: Mapped[builtins.float] = mapped_column(use_existing_column=True)
 
 
+class ContextDAO(Base, DataAccessObject[pycram.datastructures.dataclasses.Context]):
+
+    __tablename__ = "ContextDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        Integer, primary_key=True, use_existing_column=True
+    )
+
+    world_id: Mapped[int] = mapped_column(
+        ForeignKey("WorldMappingDAO.database_id", use_alter=True),
+        nullable=True,
+        use_existing_column=True,
+    )
+    robot_id: Mapped[int] = mapped_column(
+        ForeignKey("AbstractRobotDAO.database_id", use_alter=True),
+        nullable=True,
+        use_existing_column=True,
+    )
+    super_plan_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
+        ForeignKey("PlanMappingDAO.database_id", use_alter=True),
+        nullable=True,
+        use_existing_column=True,
+    )
+
+    world: Mapped[WorldMappingDAO] = relationship(
+        "WorldMappingDAO", uselist=False, foreign_keys=[world_id], post_update=True
+    )
+    robot: Mapped[AbstractRobotDAO] = relationship(
+        "AbstractRobotDAO", uselist=False, foreign_keys=[robot_id], post_update=True
+    )
+    super_plan: Mapped[PlanMappingDAO] = relationship(
+        "PlanMappingDAO", uselist=False, foreign_keys=[super_plan_id], post_update=True
+    )
+
+
 class DegreeOfFreedomLimitsDAO(
     Base,
     DataAccessObject[
@@ -2085,7 +2119,7 @@ class EfficientTransportActionDAO(
         use_existing_column=True,
     )
     target_location_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -2093,8 +2127,8 @@ class EfficientTransportActionDAO(
     object_designator: Mapped[BodyDAO] = relationship(
         "BodyDAO", uselist=False, foreign_keys=[object_designator_id], post_update=True
     )
-    target_location: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    target_location: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[target_location_id],
         post_update=True,
@@ -2128,24 +2162,24 @@ class ExecutionDataDAO(
     )
 
     execution_start_pose_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
     execution_end_pose_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
     manipulated_body_pose_start_id: Mapped[typing.Optional[builtins.int]] = (
         mapped_column(
-            ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+            ForeignKey("PoseMappingDAO.database_id", use_alter=True),
             nullable=True,
             use_existing_column=True,
         )
     )
     manipulated_body_pose_end_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -2155,14 +2189,14 @@ class ExecutionDataDAO(
         use_existing_column=True,
     )
 
-    execution_start_pose: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    execution_start_pose: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[execution_start_pose_id],
         post_update=True,
     )
-    execution_end_pose: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    execution_end_pose: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[execution_end_pose_id],
         post_update=True,
@@ -2175,14 +2209,14 @@ class ExecutionDataDAO(
         cascade="all, delete-orphan",
         foreign_keys="[ExecutionDataDAO_added_world_modifications_association.source_executiondatadao_id]",
     )
-    manipulated_body_pose_start: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    manipulated_body_pose_start: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[manipulated_body_pose_start_id],
         post_update=True,
     )
-    manipulated_body_pose_end: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    manipulated_body_pose_end: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[manipulated_body_pose_end_id],
         post_update=True,
@@ -2229,13 +2263,13 @@ class FaceAtActionDAO(
     keep_joint_states: Mapped[builtins.bool] = mapped_column(use_existing_column=True)
 
     pose_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
 
-    pose: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO", uselist=False, foreign_keys=[pose_id], post_update=True
+    pose: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO", uselist=False, foreign_keys=[pose_id], post_update=True
     )
 
     __mapper_args__ = {
@@ -2368,28 +2402,6 @@ class GraspingActionDAO(
         "polymorphic_identity": "GraspingActionDAO",
         "inherit_condition": database_id == ActionDescriptionDAO.database_id,
     }
-
-
-class HeaderDAO(Base, DataAccessObject[pycram.datastructures.pose.Header]):
-
-    __tablename__ = "HeaderDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        Integer, primary_key=True, use_existing_column=True
-    )
-
-    stamp: Mapped[datetime.datetime] = mapped_column(use_existing_column=True)
-    sequence: Mapped[builtins.int] = mapped_column(use_existing_column=True)
-
-    frame_id_id: Mapped[int] = mapped_column(
-        ForeignKey("BodyDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-
-    frame_id: Mapped[BodyDAO] = relationship(
-        "BodyDAO", uselist=False, foreign_keys=[frame_id_id], post_update=True
-    )
 
 
 class HomogeneousTransformationMatrixMappingDAO(
@@ -2601,7 +2613,7 @@ class LookAtActionDAO(
     )
 
     target_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -2611,8 +2623,8 @@ class LookAtActionDAO(
         use_existing_column=True,
     )
 
-    target: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO", uselist=False, foreign_keys=[target_id], post_update=True
+    target: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO", uselist=False, foreign_keys=[target_id], post_update=True
     )
     camera: Mapped[CameraDAO] = relationship(
         "CameraDAO", uselist=False, foreign_keys=[camera_id], post_update=True
@@ -2637,7 +2649,7 @@ class LookingMotionDAO(
     )
 
     target_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -2647,8 +2659,8 @@ class LookingMotionDAO(
         use_existing_column=True,
     )
 
-    target: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO", uselist=False, foreign_keys=[target_id], post_update=True
+    target: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO", uselist=False, foreign_keys=[target_id], post_update=True
     )
     camera: Mapped[CameraDAO] = relationship(
         "CameraDAO", uselist=False, foreign_keys=[camera_id], post_update=True
@@ -2807,7 +2819,7 @@ class MoveAndPickUpActionDAO(
     )
 
     standing_position_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -2822,8 +2834,8 @@ class MoveAndPickUpActionDAO(
         use_existing_column=True,
     )
 
-    standing_position: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    standing_position: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[standing_position_id],
         post_update=True,
@@ -2868,7 +2880,7 @@ class MoveAndPlaceActionDAO(
     )
 
     standing_position_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -2878,13 +2890,13 @@ class MoveAndPlaceActionDAO(
         use_existing_column=True,
     )
     target_location_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
 
-    standing_position: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    standing_position: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[standing_position_id],
         post_update=True,
@@ -2892,8 +2904,8 @@ class MoveAndPlaceActionDAO(
     object_designator: Mapped[BodyDAO] = relationship(
         "BodyDAO", uselist=False, foreign_keys=[object_designator_id], post_update=True
     )
-    target_location: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    target_location: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[target_location_id],
         post_update=True,
@@ -2965,24 +2977,24 @@ class MoveJointsMotionDAO(
     )
 
     tip_normal_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
-        ForeignKey("Vector3StampedDAO.database_id", use_alter=True),
+        ForeignKey("Vector3MappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
     root_normal_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
-        ForeignKey("Vector3StampedDAO.database_id", use_alter=True),
+        ForeignKey("Vector3MappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
 
-    tip_normal: Mapped[Vector3StampedDAO] = relationship(
-        "Vector3StampedDAO",
+    tip_normal: Mapped[Vector3MappingDAO] = relationship(
+        "Vector3MappingDAO",
         uselist=False,
         foreign_keys=[tip_normal_id],
         post_update=True,
     )
-    root_normal: Mapped[Vector3StampedDAO] = relationship(
-        "Vector3StampedDAO",
+    root_normal: Mapped[Vector3MappingDAO] = relationship(
+        "Vector3MappingDAO",
         uselist=False,
         foreign_keys=[root_normal_id],
         post_update=True,
@@ -3009,13 +3021,13 @@ class MoveMotionDAO(
     keep_joint_states: Mapped[builtins.bool] = mapped_column(use_existing_column=True)
 
     target_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
 
-    target: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO", uselist=False, foreign_keys=[target_id], post_update=True
+    target: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO", uselist=False, foreign_keys=[target_id], post_update=True
     )
 
     __mapper_args__ = {
@@ -3054,13 +3066,13 @@ class MoveTCPMotionDAO(
     )
 
     target_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
 
-    target: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO", uselist=False, foreign_keys=[target_id], post_update=True
+    target: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO", uselist=False, foreign_keys=[target_id], post_update=True
     )
 
     __mapper_args__ = {
@@ -3157,13 +3169,13 @@ class NavigateActionDAO(
     keep_joint_states: Mapped[builtins.bool] = mapped_column(use_existing_column=True)
 
     target_location_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
 
-    target_location: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    target_location: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[target_location_id],
         post_update=True,
@@ -3300,7 +3312,7 @@ class PickAndPlaceActionDAO(
         use_existing_column=True,
     )
     target_location_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -3313,8 +3325,8 @@ class PickAndPlaceActionDAO(
     object_designator: Mapped[BodyDAO] = relationship(
         "BodyDAO", uselist=False, foreign_keys=[object_designator_id], post_update=True
     )
-    target_location: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    target_location: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[target_location_id],
         post_update=True,
@@ -3403,7 +3415,7 @@ class PlaceActionDAO(
         use_existing_column=True,
     )
     target_location_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -3411,8 +3423,8 @@ class PlaceActionDAO(
     object_designator: Mapped[BodyDAO] = relationship(
         "BodyDAO", uselist=False, foreign_keys=[object_designator_id], post_update=True
     )
-    target_location: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    target_location: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[target_location_id],
         post_update=True,
@@ -3906,13 +3918,22 @@ class PoseMappingDAO(
         Integer, primary_key=True, use_existing_column=True
     )
 
+    polymorphic_type: Mapped[str] = mapped_column(
+        String(255), nullable=False, use_existing_column=True
+    )
+
     position_id: Mapped[int] = mapped_column(
         ForeignKey("Point3MappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
-    rotation_id: Mapped[int] = mapped_column(
+    orientation_id: Mapped[int] = mapped_column(
         ForeignKey("QuaternionMappingDAO.database_id", use_alter=True),
+        nullable=True,
+        use_existing_column=True,
+    )
+    reference_frame_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
+        ForeignKey("KinematicStructureEntityDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -3920,58 +3941,33 @@ class PoseMappingDAO(
     position: Mapped[Point3MappingDAO] = relationship(
         "Point3MappingDAO", uselist=False, foreign_keys=[position_id], post_update=True
     )
-    rotation: Mapped[QuaternionMappingDAO] = relationship(
+    orientation: Mapped[QuaternionMappingDAO] = relationship(
         "QuaternionMappingDAO",
         uselist=False,
-        foreign_keys=[rotation_id],
+        foreign_keys=[orientation_id],
         post_update=True,
     )
-
-
-class PoseStampedDAO(Base, DataAccessObject[pycram.datastructures.pose.PoseStamped]):
-
-    __tablename__ = "PoseStampedDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        Integer, primary_key=True, use_existing_column=True
-    )
-
-    polymorphic_type: Mapped[str] = mapped_column(
-        String(255), nullable=False, use_existing_column=True
-    )
-
-    pose_id: Mapped[int] = mapped_column(
-        ForeignKey("PyCramPoseDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-    header_id: Mapped[int] = mapped_column(
-        ForeignKey("HeaderDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-
-    pose: Mapped[PyCramPoseDAO] = relationship(
-        "PyCramPoseDAO", uselist=False, foreign_keys=[pose_id], post_update=True
-    )
-    header: Mapped[HeaderDAO] = relationship(
-        "HeaderDAO", uselist=False, foreign_keys=[header_id], post_update=True
+    reference_frame: Mapped[KinematicStructureEntityDAO] = relationship(
+        "KinematicStructureEntityDAO",
+        uselist=False,
+        foreign_keys=[reference_frame_id],
+        post_update=True,
     )
 
     __mapper_args__ = {
         "polymorphic_on": "polymorphic_type",
-        "polymorphic_identity": "PoseStampedDAO",
+        "polymorphic_identity": "PoseMappingDAO",
     }
 
 
 class GraspPoseDAO(
-    PoseStampedDAO, DataAccessObject[pycram.datastructures.pose.GraspPose]
+    PoseMappingDAO, DataAccessObject[pycram.datastructures.grasp.GraspPose]
 ):
 
     __tablename__ = "GraspPoseDAO"
 
     database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(PoseStampedDAO.database_id),
+        ForeignKey(PoseMappingDAO.database_id),
         primary_key=True,
         use_existing_column=True,
     )
@@ -3997,7 +3993,7 @@ class GraspPoseDAO(
 
     __mapper_args__ = {
         "polymorphic_identity": "GraspPoseDAO",
-        "inherit_condition": database_id == PoseStampedDAO.database_id,
+        "inherit_condition": database_id == PoseMappingDAO.database_id,
     }
 
 
@@ -4120,85 +4116,6 @@ class PrefixedNameDAO(
     )
 
 
-class PyCramPoseDAO(Base, DataAccessObject[pycram.datastructures.pose.PyCramPose]):
-
-    __tablename__ = "PyCramPoseDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        Integer, primary_key=True, use_existing_column=True
-    )
-
-    polymorphic_type: Mapped[str] = mapped_column(
-        String(255), nullable=False, use_existing_column=True
-    )
-
-    position_id: Mapped[int] = mapped_column(
-        ForeignKey("PyCramVector3DAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-    orientation_id: Mapped[int] = mapped_column(
-        ForeignKey("PyCRAMQuaternionMappingDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-
-    position: Mapped[PyCramVector3DAO] = relationship(
-        "PyCramVector3DAO", uselist=False, foreign_keys=[position_id], post_update=True
-    )
-    orientation: Mapped[PyCRAMQuaternionMappingDAO] = relationship(
-        "PyCRAMQuaternionMappingDAO",
-        uselist=False,
-        foreign_keys=[orientation_id],
-        post_update=True,
-    )
-
-    __mapper_args__ = {
-        "polymorphic_on": "polymorphic_type",
-        "polymorphic_identity": "PyCramPoseDAO",
-    }
-
-
-class PyCRAMQuaternionMappingDAO(
-    Base, DataAccessObject[pycram.orm.model.PyCRAMQuaternionMapping]
-):
-
-    __tablename__ = "PyCRAMQuaternionMappingDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        Integer, primary_key=True, use_existing_column=True
-    )
-
-    x: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    y: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    z: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    w: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-
-
-class PyCramVector3DAO(
-    Base, DataAccessObject[pycram.datastructures.pose.PyCramVector3]
-):
-
-    __tablename__ = "PyCramVector3DAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        Integer, primary_key=True, use_existing_column=True
-    )
-
-    x: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    y: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-    z: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-
-    polymorphic_type: Mapped[str] = mapped_column(
-        String(255), nullable=False, use_existing_column=True
-    )
-
-    __mapper_args__ = {
-        "polymorphic_on": "polymorphic_type",
-        "polymorphic_identity": "PyCramVector3DAO",
-    }
-
-
 class QuaternionMappingDAO(
     Base, DataAccessObject[semantic_digital_twin.orm.model.QuaternionMapping]
 ):
@@ -4237,7 +4154,7 @@ class ReachActionDAO(
     )
 
     target_pose_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -4252,8 +4169,8 @@ class ReachActionDAO(
         use_existing_column=True,
     )
 
-    target_pose: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO", uselist=False, foreign_keys=[target_pose_id], post_update=True
+    target_pose: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO", uselist=False, foreign_keys=[target_pose_id], post_update=True
     )
     grasp_description: Mapped[GraspDescriptionDAO] = relationship(
         "GraspDescriptionDAO",
@@ -4422,13 +4339,13 @@ class SearchActionDAO(
     )
 
     target_location_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
 
-    target_location: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    target_location: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[target_location_id],
         post_update=True,
@@ -4853,52 +4770,6 @@ class SphereDAO(
     }
 
 
-class TransformDAO(
-    PyCramPoseDAO, DataAccessObject[pycram.datastructures.pose.Transform]
-):
-
-    __tablename__ = "TransformDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(PyCramPoseDAO.database_id),
-        primary_key=True,
-        use_existing_column=True,
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "TransformDAO",
-        "inherit_condition": database_id == PyCramPoseDAO.database_id,
-    }
-
-
-class TransformStampedDAO(
-    PoseStampedDAO, DataAccessObject[pycram.datastructures.pose.TransformStamped]
-):
-
-    __tablename__ = "TransformStampedDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(PoseStampedDAO.database_id),
-        primary_key=True,
-        use_existing_column=True,
-    )
-
-    child_frame_id_id: Mapped[int] = mapped_column(
-        ForeignKey("BodyDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-
-    child_frame_id: Mapped[BodyDAO] = relationship(
-        "BodyDAO", uselist=False, foreign_keys=[child_frame_id_id], post_update=True
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "TransformStampedDAO",
-        "inherit_condition": database_id == PoseStampedDAO.database_id,
-    }
-
-
 class TransportActionDAO(
     ActionDescriptionDAO,
     DataAccessObject[pycram.robot_plans.actions.composite.transporting.TransportAction],
@@ -4928,7 +4799,7 @@ class TransportActionDAO(
         use_existing_column=True,
     )
     target_location_id: Mapped[int] = mapped_column(
-        ForeignKey("PoseStampedDAO.database_id", use_alter=True),
+        ForeignKey("PoseMappingDAO.database_id", use_alter=True),
         nullable=True,
         use_existing_column=True,
     )
@@ -4936,8 +4807,8 @@ class TransportActionDAO(
     object_designator: Mapped[BodyDAO] = relationship(
         "BodyDAO", uselist=False, foreign_keys=[object_designator_id], post_update=True
     )
-    target_location: Mapped[PoseStampedDAO] = relationship(
-        "PoseStampedDAO",
+    target_location: Mapped[PoseMappingDAO] = relationship(
+        "PoseMappingDAO",
         uselist=False,
         foreign_keys=[target_location_id],
         post_update=True,
@@ -5077,34 +4948,6 @@ class Vector3MappingDAO(
     x: Mapped[builtins.float] = mapped_column(use_existing_column=True)
     y: Mapped[builtins.float] = mapped_column(use_existing_column=True)
     z: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-
-
-class Vector3StampedDAO(
-    PyCramVector3DAO, DataAccessObject[pycram.datastructures.pose.Vector3Stamped]
-):
-
-    __tablename__ = "Vector3StampedDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(PyCramVector3DAO.database_id),
-        primary_key=True,
-        use_existing_column=True,
-    )
-
-    header_id: Mapped[int] = mapped_column(
-        ForeignKey("HeaderDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-
-    header: Mapped[HeaderDAO] = relationship(
-        "HeaderDAO", uselist=False, foreign_keys=[header_id], post_update=True
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "Vector3StampedDAO",
-        "inherit_condition": database_id == PyCramVector3DAO.database_id,
-    }
 
 
 class VelocityVariableDAO(
@@ -5560,12 +5403,14 @@ class RevoluteConnectionDAO(
     }
 
 
-class DiffDriveDAO(
+class DifferentialDriveDAO(
     ActiveConnectionDAO,
-    DataAccessObject[semantic_digital_twin.world_description.connections.DiffDrive],
+    DataAccessObject[
+        semantic_digital_twin.world_description.connections.DifferentialDrive
+    ],
 ):
 
-    __tablename__ = "DiffDriveDAO"
+    __tablename__ = "DifferentialDriveDAO"
 
     database_id: Mapped[builtins.int] = mapped_column(
         ForeignKey(ActiveConnectionDAO.database_id),
@@ -5593,7 +5438,7 @@ class DiffDriveDAO(
     )
 
     __mapper_args__ = {
-        "polymorphic_identity": "DiffDriveDAO",
+        "polymorphic_identity": "DifferentialDriveDAO",
         "inherit_condition": database_id == ActiveConnectionDAO.database_id,
     }
 
