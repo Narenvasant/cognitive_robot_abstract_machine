@@ -3,14 +3,14 @@ Causal Probabilistic Circuit
 =============================
 A ProbabilisticCircuit extended with exact, tractable causal inference
 using the marginal determinism framework (md-vtree). The md-vtree
-structure encodes the causal graph and enables polytime
-backdoor adjustment for any valid adjustment set Z.
+structure encodes the causal graph and enables polytime backdoor
+adjustment for any valid adjustment set Z.
 
 Causal validity
 ---------------
 All causal queries are valid when the circuit was trained on independent
-randomised data (uniform sampling). Under this condition the
-backdoor criterion holds with Z=∅:
+randomised data (uniform sampling). Under this condition the backdoor
+criterion holds with Z=∅:
 
     P(Y | do(X=v)) = P(Y | X=v)
 
@@ -20,12 +20,14 @@ For correlated deployment data, supply a non-empty adjustment set Z.
 from __future__ import annotations
 
 import copy
+import itertools
 import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy.special import logsumexp
 from random_events.interval import closed
 from random_events.product_algebra import SimpleEvent
 from random_events.variable import Variable
@@ -44,8 +46,9 @@ class MdVtreeNode:
     One node of a Marginal Determinism vtree (md-vtree).
 
     Each node carries the variable names in its subtree and a q_set
-    specifying which variables sum nodes at this level must be
-    Q-deterministic over. Q-determinism enables polytime backdoor adjustment.
+    specifying which variables SumUnits at this level must be
+    Q-deterministic over. Q-determinism enables polytime backdoor
+    adjustment.
 
     Build using MdVtreeNode.from_causal_graph() rather than constructing
     nodes manually.
@@ -55,25 +58,45 @@ class MdVtreeNode:
     q_set: Set[str] = field(default_factory=set)
     left: Optional[MdVtreeNode] = None
     right: Optional[MdVtreeNode] = None
+    variable_objects: Optional[Tuple[Variable, ...]] = field(default=None, repr=False)
+
+    def resolve_variables(self, circuit: ProbabilisticCircuit) -> None:
+        """
+        Populate variable_objects by resolving string names against circuit variables.
+
+        Call once after the CausalCircuit is constructed. After this call
+        every node holds typed Variable objects, enabling direct circuit
+        queries without string lookups.
+        """
+        name_to_variable: Dict[str, Variable] = {v.name: v for v in circuit.variables}
+        self.variable_objects = tuple(
+            name_to_variable[name]
+            for name in self.variables
+            if name in name_to_variable
+        )
+        if self.left is not None:
+            self.left.resolve_variables(circuit)
+        if self.right is not None:
+            self.right.resolve_variables(circuit)
 
     def is_leaf(self) -> bool:
         return self.left is None and self.right is None
 
     def find_node_for_variable(self, variable_name: str) -> Optional[MdVtreeNode]:
-        """Return the node whose q_set contains variable_name, or None."""
+        """Return the shallowest node whose q_set contains variable_name, or None."""
         if variable_name in self.q_set:
             return self
-        for child in [self.left, self.right]:
+        for child in (self.left, self.right):
             if child is not None:
-                found = child.find_node_for_variable(variable_name)
-                if found is not None:
-                    return found
+                result = child.find_node_for_variable(variable_name)
+                if result is not None:
+                    return result
         return None
 
     def all_q_sets(self) -> List[Set[str]]:
         """Return all non-empty q_sets in depth-first order."""
         collected = [self.q_set] if self.q_set else []
-        for child in [self.left, self.right]:
+        for child in (self.left, self.right):
             if child is not None:
                 collected.extend(child.all_q_sets())
         return collected
@@ -102,13 +125,12 @@ class MdVtreeNode:
             if causal_priority_order is not None
             else causal_variable_names
         )
-        all_names = set(causal_variable_names) | set(effect_variable_names)
-        return MdVtreeNode._build_subtree(ordered, all_names)
+        return MdVtreeNode._build_subtree(ordered)
 
     @staticmethod
-    def _build_subtree(ordered: List[str], all_names: Set[str]) -> MdVtreeNode:
+    def _build_subtree(ordered: List[str]) -> MdVtreeNode:
         if len(ordered) == 0:
-            return MdVtreeNode(variables=all_names, q_set=set())
+            return MdVtreeNode(variables=set(), q_set=set())
         if len(ordered) == 1:
             return MdVtreeNode(variables={ordered[0]}, q_set={ordered[0]})
 
@@ -121,9 +143,9 @@ class MdVtreeNode:
         return MdVtreeNode(
             variables=set(ordered),
             q_set={primary},
-            left=MdVtreeNode._build_subtree(left_names, set(left_names)),
+            left=MdVtreeNode._build_subtree(left_names),
             right=(
-                MdVtreeNode._build_subtree(right_names, set(right_names))
+                MdVtreeNode._build_subtree(right_names)
                 if right_names else None
             ),
         )
@@ -140,12 +162,14 @@ class QDeterminismVerificationResult:
 
     def __str__(self) -> str:
         status = "PASS" if self.passed else "FAIL"
-        lines = [f"Q-determinism verification: {status}",
-                 f"  Checked q_sets: {self.checked_q_sets}"]
+        lines = [
+            f"Q-determinism verification: {status}",
+            f"  Checked q_sets: {self.checked_q_sets}",
+        ]
         if self.violations:
             lines.append("  Violations:")
-            for v in self.violations:
-                lines.append(f"    - {v}")
+            for violation in self.violations:
+                lines.append(f"    - {violation}")
         return "\n".join(lines)
 
 
@@ -154,19 +178,10 @@ class FailureDiagnosisResult:
     """
     Result of diagnosing why a plan execution failed.
 
-    Attributes
-    ----------
-    interventional_probability_at_failure
-        P(cause_variable in training support at the observed value), evaluated
-        by querying the joint (cause, effect) interventional circuit. This is
-        zero when the observed cause value lies entirely outside the training
-        distribution (the most unambiguous failure signal), and positive when
-        the cause value was covered during training.
-
-        Note: this quantity measures cause-value coverage in the training
-        distribution, not the formal do-calculus quantity P(effect | do(cause=v)).
-        It is a reliable indicator for identifying out-of-distribution parameters
-        as primary failure causes.
+    interventional_probability_at_failure is P(cause in training support
+    at the observed value), evaluated in the joint (cause, effect)
+    interventional circuit. Zero means the observed value lies entirely
+    outside the training distribution — the most unambiguous failure signal.
     """
 
     primary_cause_variable_name: str
@@ -188,11 +203,11 @@ class FailureDiagnosisResult:
             "",
             "  All variables:",
         ]
-        for name, r in self.all_variable_results.items():
+        for name, result in self.all_variable_results.items():
             marker = " ← PRIMARY CAUSE" if name == self.primary_cause_variable_name else ""
             lines.append(
-                f"    {name:<30}  actual={r['actual_value']:.4f}  "
-                f"P={r['interventional_probability']:.4f}{marker}"
+                f"    {name:<30}  actual={result['actual_value']:.4f}  "
+                f"P={result['interventional_probability']:.4f}{marker}"
             )
         return "\n".join(lines)
 
@@ -202,7 +217,7 @@ class CausalStrengthResult:
     """
     Result of computing C(X→Y|Z) = I(X;Y|Z) / H(Y|Z).
 
-    normalised_causal_strength is in [0,1]: 0 means no causal influence,
+    normalised_causal_strength is in [0, 1]: 0 means no causal influence,
     1 means X fully determines Y given Z.
     """
 
@@ -214,9 +229,13 @@ class CausalStrengthResult:
     normalised_causal_strength: float
 
     def __str__(self) -> str:
-        z = ", ".join(self.adjustment_variable_names) if self.adjustment_variable_names else "∅"
+        adjustment_label = (
+            ", ".join(self.adjustment_variable_names)
+            if self.adjustment_variable_names else "∅"
+        )
         return (
-            f"C({self.cause_variable_name} → {self.effect_variable_name} | {z})"
+            f"C({self.cause_variable_name} → {self.effect_variable_name}"
+            f" | {adjustment_label})"
             f" = {self.normalised_causal_strength:.4f}"
             f"  [I={self.conditional_mutual_information:.4f} nats,"
             f"  H={self.conditional_entropy_of_effect:.4f} nats]"
@@ -228,8 +247,9 @@ def _compute_entropy_from_counts(count_array: np.ndarray) -> float:
     total = count_array.sum()
     if total == 0:
         return 0.0
-    p = count_array[count_array > 0] / total
-    return float(-np.sum(p * np.log(p)))
+    positive_counts = count_array[count_array > 0]
+    probabilities = positive_counts / total
+    return float(-np.sum(probabilities * np.log(probabilities)))
 
 
 def _discretise_continuous_column(
@@ -243,15 +263,16 @@ def _discretise_continuous_column(
     Categorical columns (string/bool dtype) map each unique value to an int.
     """
     if column_values.dtype.kind in ("U", "S", "O", "b"):
-        mapping = {cat: i for i, cat in enumerate(np.unique(column_values))}
-        return np.array([mapping[v] for v in column_values], dtype=np.int32)
+        category_to_index = {cat: i for i, cat in enumerate(np.unique(column_values))}
+        return np.array([category_to_index[v] for v in column_values], dtype=np.int32)
 
-    lo, hi = float(column_values.min()), float(column_values.max())
-    if lo == hi:
+    minimum, maximum = float(column_values.min()), float(column_values.max())
+    if minimum == maximum:
         return np.zeros(len(column_values), dtype=np.int32)
-    edges = np.linspace(lo, hi, number_of_bins + 1)
-    raw = np.digitize(column_values, edges[:-1]) - 1
-    return np.clip(raw, 0, number_of_bins - 1).astype(np.int32)
+
+    edges = np.linspace(minimum, maximum, number_of_bins + 1)
+    raw_indices = np.digitize(column_values, edges[:-1]) - 1
+    return np.clip(raw_indices, 0, number_of_bins - 1).astype(np.int32)
 
 
 def _compute_conditional_mutual_information(
@@ -265,57 +286,80 @@ def _compute_conditional_mutual_information(
     Compute I(X;Y|Z) and H(Y|Z) from discretised arrays.
 
     Applies Miller-Madow bias correction for finite-sample inflation.
-
     Returns (conditional_mutual_information, conditional_entropy_of_effect)
     in nats.
     """
-    N = len(cause_bin_indices)
+    total_samples = len(cause_bin_indices)
 
     if not adjustment_bin_index_list:
-        joint = np.zeros((number_of_cause_bins, number_of_effect_bins), dtype=np.int32)
-        np.add.at(joint, (cause_bin_indices, effect_bin_indices), 1)
-
-        h_y = _compute_entropy_from_counts(joint.sum(axis=0))
-        h_y_given_x = 0.0
-        row_totals = joint.sum(axis=1, keepdims=True)
-        for i in range(number_of_cause_bins):
-            n_i = row_totals[i, 0]
-            if n_i > 0:
-                h_y_given_x += (n_i / N) * _compute_entropy_from_counts(joint[i])
-
-        raw_mi = max(0.0, h_y - h_y_given_x)
-        mm = (int((joint > 0).sum()) - 1) / (2 * max(N, 1))
-        return max(0.0, raw_mi - mm), h_y
-
-    stacked = np.stack(adjustment_bin_index_list, axis=1)
-    keys = [tuple(r) for r in stacked]
-    unique_keys = list(dict.fromkeys(keys))
-    key_to_idx = {k: i for i, k in enumerate(unique_keys)}
-    n_strata = len(unique_keys)
-    stratum_idx = np.array([key_to_idx[k] for k in keys], dtype=np.int32)
-
-    h_y_z, h_y_xz = 0.0, 0.0
-    for s in range(n_strata):
-        mask_s = stratum_idx == s
-        n_s = int(mask_s.sum())
-        if n_s == 0:
-            continue
-        w_s = n_s / N
-        h_y_z += w_s * _compute_entropy_from_counts(
-            np.bincount(effect_bin_indices[mask_s], minlength=number_of_effect_bins)
+        joint_counts = np.zeros(
+            (number_of_cause_bins, number_of_effect_bins), dtype=np.int32
         )
-        for c in range(number_of_cause_bins):
-            mask_cs = mask_s & (cause_bin_indices == c)
-            n_cs = int(mask_cs.sum())
-            if n_cs == 0:
+        np.add.at(joint_counts, (cause_bin_indices, effect_bin_indices), 1)
+
+        entropy_effect = _compute_entropy_from_counts(joint_counts.sum(axis=0))
+        entropy_effect_given_cause = 0.0
+        cause_totals = joint_counts.sum(axis=1, keepdims=True)
+        for cause_bin in range(number_of_cause_bins):
+            cause_count = cause_totals[cause_bin, 0]
+            if cause_count > 0:
+                entropy_effect_given_cause += (
+                    (cause_count / total_samples)
+                    * _compute_entropy_from_counts(joint_counts[cause_bin])
+                )
+
+        raw_mutual_information = max(0.0, entropy_effect - entropy_effect_given_cause)
+        miller_madow_correction = (
+            int((joint_counts > 0).sum()) - 1
+        ) / (2 * max(total_samples, 1))
+        return max(0.0, raw_mutual_information - miller_madow_correction), entropy_effect
+
+    stacked_adjustment = np.stack(adjustment_bin_index_list, axis=1)
+    stratum_keys = [tuple(row) for row in stacked_adjustment]
+    unique_stratum_keys = list(dict.fromkeys(stratum_keys))
+    key_to_stratum_index = {key: i for i, key in enumerate(unique_stratum_keys)}
+    number_of_strata = len(unique_stratum_keys)
+    stratum_indices = np.array(
+        [key_to_stratum_index[key] for key in stratum_keys], dtype=np.int32
+    )
+
+    entropy_effect_given_adjustment = 0.0
+    entropy_effect_given_cause_adjustment = 0.0
+
+    for stratum in range(number_of_strata):
+        stratum_mask = stratum_indices == stratum
+        stratum_count = int(stratum_mask.sum())
+        if stratum_count == 0:
+            continue
+        stratum_weight = stratum_count / total_samples
+        entropy_effect_given_adjustment += stratum_weight * _compute_entropy_from_counts(
+            np.bincount(effect_bin_indices[stratum_mask], minlength=number_of_effect_bins)
+        )
+        for cause_bin in range(number_of_cause_bins):
+            cell_mask = stratum_mask & (cause_bin_indices == cause_bin)
+            cell_count = int(cell_mask.sum())
+            if cell_count == 0:
                 continue
-            h_y_xz += (n_cs / N) * _compute_entropy_from_counts(
-                np.bincount(effect_bin_indices[mask_cs], minlength=number_of_effect_bins)
+            entropy_effect_given_cause_adjustment += (
+                (cell_count / total_samples)
+                * _compute_entropy_from_counts(
+                    np.bincount(
+                        effect_bin_indices[cell_mask], minlength=number_of_effect_bins
+                    )
+                )
             )
 
-    cmi = max(0.0, h_y_z - h_y_xz)
-    mm = (number_of_cause_bins * n_strata - 1) / (2 * max(N, 1))
-    return max(0.0, cmi - mm), h_y_z
+    conditional_mutual_information = max(
+        0.0,
+        entropy_effect_given_adjustment - entropy_effect_given_cause_adjustment,
+    )
+    miller_madow_correction = (
+        number_of_cause_bins * number_of_strata - 1
+    ) / (2 * max(total_samples, 1))
+    return (
+        max(0.0, conditional_mutual_information - miller_madow_correction),
+        entropy_effect_given_adjustment,
+    )
 
 
 def _attach_marginal_circuit(
@@ -324,26 +368,61 @@ def _attach_marginal_circuit(
     target_circuit: ProbabilisticCircuit,
 ) -> None:
     """
-    Attach the root of marginal_circuit as a branch of target_product,
+    Attach the root of marginal_circuit as a child of target_product,
     constructing fresh nodes owned by target_circuit.
 
     marginal() and log_truncated_in_place() return flat circuits
-    (SumUnit → leaves, or a single leaf), so one level of depth suffices.
-    No cross-circuit node transplantation occurs.
+    (SumUnit → leaves, or a single leaf), so one level of recursion suffices.
     """
     root = marginal_circuit.root
     if isinstance(root, SumUnit):
-        new_sum = SumUnit(probabilistic_circuit=target_circuit)
-        for child_log_w, child_sub in root.log_weighted_subcircuits:
-            new_sum.add_subcircuit(
-                leaf(copy.deepcopy(child_sub.distribution), target_circuit),
-                child_log_w,
+        new_sum_unit = SumUnit(probabilistic_circuit=target_circuit)
+        for child_log_weight, child_subcircuit in root.log_weighted_subcircuits:
+            new_sum_unit.add_subcircuit(
+                leaf(copy.deepcopy(child_subcircuit.distribution), target_circuit),
+                child_log_weight,
             )
-        target_product.add_subcircuit(new_sum)
+        target_product.add_subcircuit(new_sum_unit)
     else:
         target_product.add_subcircuit(
             leaf(copy.deepcopy(root.distribution), target_circuit)
         )
+
+
+def _variables_of_support_event(support_event: Any) -> Set[Variable]:
+    """
+    Return the set of Variable keys actually constrained by support_event.
+
+    Works for both SimpleEvent (a VariableMap — directly iterable as a dict)
+    and composite Event (exposes .simple_sets, each of which is a SimpleEvent).
+    Uses the public VariableMap.keys() API so this remains stable across
+    random_events versions.
+    """
+    variable_set: Set[Variable] = set()
+    if hasattr(support_event, "simple_sets"):
+        for simple_set in support_event.simple_sets:
+            try:
+                variable_set.update(simple_set.keys())
+            except AttributeError:
+                pass
+        return variable_set
+    try:
+        variable_set.update(support_event.keys())
+    except AttributeError:
+        pass
+    return variable_set
+
+
+def _sum_unit_is_normalized(sum_unit: SumUnit, tolerance: float = 1e-6) -> bool:
+    """
+    Return True iff the SumUnit's log-weights sum to log(1) == 0.
+
+    Uses logsumexp for numerical stability, matching SumUnit.normalize().
+    """
+    log_weights = sum_unit.log_weights
+    if len(log_weights) == 0:
+        return True
+    return abs(float(logsumexp(log_weights))) < tolerance
 
 
 class CausalCircuit:
@@ -351,11 +430,11 @@ class CausalCircuit:
     A ProbabilisticCircuit extended with tractable causal inference.
 
     Wraps a fitted ProbabilisticCircuit and adds:
-      - backdoor_adjustment()   P(effect | do(cause)) as a new circuit
-      - verify_q_determinism()  structural validity check against the md-vtree
-      - causal_strength()       C(X→Y|Z) = I(X;Y|Z) / H(Y|Z)
-      - rank_causal_variables() rank causes by causal strength
-      - diagnose_failure()      identify primary cause and recommend a fix
+      - backdoor_adjustment()   — P(effect | do(cause)) as a new circuit
+      - verify_q_determinism()  — structural validity check against the md-vtree
+      - causal_strength()       — C(X→Y|Z) = I(X;Y|Z) / H(Y|Z)
+      - rank_causal_variables() — rank causes by causal strength
+      - diagnose_failure()      — identify primary cause and recommend a fix
 
     Use empty adjustment sets for independent randomised training data.
     Supply confounder names for correlated deployment data.
@@ -372,6 +451,7 @@ class CausalCircuit:
         self._mdvtree = mdvtree
         self._causal_variable_names = list(causal_variable_names)
         self._effect_variable_names = list(effect_variable_names)
+        self._mdvtree.resolve_variables(self._circuit)
 
     @property
     def probabilistic_circuit(self) -> ProbabilisticCircuit:
@@ -422,6 +502,7 @@ class CausalCircuit:
             and isinstance(fitted_jpt.probabilistic_circuit, ProbabilisticCircuit)
         ):
             circuit = fitted_jpt.probabilistic_circuit
+
         elif hasattr(fitted_jpt, "as_probabilistic_circuit"):
             circuit = fitted_jpt.as_probabilistic_circuit()
             if not isinstance(circuit, ProbabilisticCircuit):
@@ -429,6 +510,7 @@ class CausalCircuit:
                     f"as_probabilistic_circuit() returned {type(circuit)}, "
                     f"expected ProbabilisticCircuit."
                 )
+
         elif hasattr(fitted_jpt, "to_probabilistic_circuit"):
             circuit = fitted_jpt.to_probabilistic_circuit()
             if not isinstance(circuit, ProbabilisticCircuit):
@@ -436,14 +518,15 @@ class CausalCircuit:
                     f"to_probabilistic_circuit() returned {type(circuit)}, "
                     f"expected ProbabilisticCircuit."
                 )
+
         else:
             raise TypeError(
                 f"Cannot extract a ProbabilisticCircuit from {type(fitted_jpt)}.\n"
                 f"Supported types:\n"
                 f"  1. ProbabilisticCircuit directly\n"
-                f"  2. probabilistic_model.learning.jpt.jpt.JPT  "
-                f"(has .probabilistic_circuit attribute after fit/load)\n"
-                f"  3. Any JPT with .as_probabilistic_circuit() or "
+                f"  2. probabilistic_model.learning.jpt.jpt.JPT "
+                f"(exposes .probabilistic_circuit after fit/load)\n"
+                f"  3. Any object with .as_probabilistic_circuit() or "
                 f".to_probabilistic_circuit()\n"
                 f"Note: pyjpt.trees.JPT does not expose a ProbabilisticCircuit. "
                 f"Use probabilistic_model.learning.jpt.jpt.JPT instead."
@@ -452,40 +535,69 @@ class CausalCircuit:
 
     def get_variable_by_name(self, variable_name: str) -> Variable:
         """Return the Variable whose name matches, or raise ValueError."""
-        for v in self._circuit.variables:
-            if v.name == variable_name:
-                return v
-        available = [v.name for v in self._circuit.variables]
+        for variable in self._circuit.variables:
+            if variable.name == variable_name:
+                return variable
+        available_names = [v.name for v in self._circuit.variables]
         raise ValueError(
-            f"Variable '{variable_name}' not found. Available: {available}"
+            f"Variable '{variable_name}' not found. Available: {available_names}"
         )
+
 
     def verify_q_determinism(self) -> QDeterminismVerificationResult:
         """
-        Check that every Q-set variable in the md-vtree exists in the circuit.
+        Verify Q-determinism of the circuit against the md-vtree.
 
-        A violation is recorded for each Q-set variable name that cannot be
-        found in the circuit. This catches md-vtree/circuit mismatches that
-        would cause silent failures in backdoor_adjustment().
+        Three checks are performed in order.
 
-        Note on structural overlap checking
-        ------------------------------------
-        Full Q-determinism — verifying that the sum nodes at each circuit level
-        have disjoint marginal supports over the Q variables — requires
-        enumerating internal circuit structure in ways the rx library does not
-        expose stably. This check is therefore intentionally omitted here.
-        For a circuit trained via JPT (which is fully deterministic by construction)
-        Q-determinism is guaranteed for all split variables without runtime checking.
-        If you require structural verification, call circuit.is_deterministic()
-        on your circuit before constructing CausalCircuit.
+        Check 1 — Variable existence
+            Every variable name in every md-vtree q_set must exist in the
+            circuit. If any are missing the structural checks are skipped
+            because Variable objects are required for marginalisation.
+
+        Check 2 — SumUnit normalization
+            Every SumUnit's log-weights must sum to log(1). An unnormalized
+            circuit produces incorrect backdoor probabilities regardless of
+            structural determinism.
+
+        Check 3 — Structural Q-determinism via circuit.support
+            Calls self._circuit.support exactly once. This property
+            (ProbabilisticCircuit.support) does a bottom-up traversal
+            over reversed(self.layers), calling node.support() on every
+            node and populating result_of_current_query on each. It then
+            returns the root's composite Event.
+
+            After that single call, every node's result_of_current_query
+            is populated. We then iterate self._circuit.layers in BFS
+            (root-first) order to inspect each SumUnit. Because support()
+            filled nodes bottom-up, every child already has its
+            result_of_current_query set when the parent SumUnit is reached.
+
+            For each SumUnit we:
+              a) Collect children's result_of_current_query support events.
+              b) Find the intersection of Variable keys present in ALL
+                 children (safe: avoids querying absent variables which
+                 may silently return full-domain events).
+              c) Among common variables, detect split variables — those
+                 where at least one pair of children has an empty marginal
+                 intersection (i.e. disjoint support on that variable).
+              d) Cross-reference split variables against the md-vtree
+                 q_sets. A SumUnit splitting on a variable not declared
+                 in any q_set is reported as a violation.
+              e) Verify all pairs of children are pairwise disjoint on
+                 the split variable(s). Any overlap is a violation.
         """
         checked_q_sets = self._mdvtree.all_q_sets()
         violations: List[str] = []
         circuit_variable_names = [v.name for v in self._circuit.variables]
 
+        all_q_variable_names: Set[str] = set()
         for q_set in checked_q_sets:
-            if not q_set:
-                continue
+            all_q_variable_names.update(q_set)
+
+        # Check 1: variable existence
+        missing_q_variable_names: List[str] = []
+        for q_set in checked_q_sets:
             for q_name in q_set:
                 try:
                     self.get_variable_by_name(q_name)
@@ -494,6 +606,118 @@ class CausalCircuit:
                         f"Q-set variable '{q_name}' not found in circuit. "
                         f"Available: {circuit_variable_names}"
                     )
+                    missing_q_variable_names.append(q_name)
+
+        if missing_q_variable_names:
+            return QDeterminismVerificationResult(
+                passed=False,
+                violations=violations,
+                checked_q_sets=checked_q_sets,
+                circuit_variable_names=circuit_variable_names,
+            )
+
+        # Check 2: SumUnit normalization
+        for node in self._circuit.nodes():
+            if isinstance(node, SumUnit) and not _sum_unit_is_normalized(node):
+                violations.append(
+                    f"SumUnit (index={node.index}) log-weights sum to "
+                    f"{float(logsumexp(node.log_weights)):.6f}, expected 0.0. "
+                    f"Unnormalized circuits produce incorrect backdoor probabilities."
+                )
+
+        # Check 3: structural Q-determinism
+        try:
+            root_support_event = self._circuit.support
+
+            for layer in self._circuit.layers:
+                for node in layer:
+                    if not isinstance(node, SumUnit):
+                        continue
+                    children = node.subcircuits
+                    if len(children) < 2:
+                        continue
+
+                    child_support_events = [
+                        getattr(child, "result_of_current_query", None)
+                        for child in children
+                    ]
+                    if any(event is None for event in child_support_events):
+                        continue
+
+                    per_child_variable_sets = [
+                        _variables_of_support_event(event)
+                        for event in child_support_events
+                    ]
+                    common_variables: Set[Variable] = per_child_variable_sets[0]
+                    for variable_set in per_child_variable_sets[1:]:
+                        common_variables = common_variables & variable_set
+
+                    if not common_variables:
+                        continue
+
+                    split_variables: List[Variable] = []
+                    for variable in self._circuit.variables:
+                        if variable not in common_variables:
+                            continue
+                        child_marginals = []
+                        for support_event in child_support_events:
+                            try:
+                                child_marginals.append(support_event.marginal([variable]))
+                            except Exception:
+                                child_marginals.append(None)
+
+                        for marginal_a, marginal_b in itertools.combinations(
+                            child_marginals, 2
+                        ):
+                            if marginal_a is None or marginal_b is None:
+                                continue
+                            try:
+                                if marginal_a.intersection_with(marginal_b).is_empty():
+                                    split_variables.append(variable)
+                                    break
+                            except Exception:
+                                pass
+
+                    if not split_variables:
+                        continue
+
+                    split_variable_names = [v.name for v in split_variables]
+
+                    for split_variable in split_variables:
+                        if split_variable.name not in all_q_variable_names:
+                            violations.append(
+                                f"SumUnit (index={node.index}) splits on variable "
+                                f"'{split_variable.name}' which is not declared in "
+                                f"any md-vtree q_set {checked_q_sets}. This SumUnit "
+                                f"is not Q-deterministic for this variable."
+                            )
+
+                    for child_a, child_b in itertools.combinations(children, 2):
+                        support_a = getattr(child_a, "result_of_current_query", None)
+                        support_b = getattr(child_b, "result_of_current_query", None)
+                        if support_a is None or support_b is None:
+                            continue
+                        try:
+                            marginal_a = support_a.marginal(split_variables)
+                            marginal_b = support_b.marginal(split_variables)
+                            if not marginal_a.intersection_with(marginal_b).is_empty():
+                                violations.append(
+                                    f"SumUnit (index={node.index}) has overlapping "
+                                    f"children supports on split variable(s) "
+                                    f"{split_variable_names}: "
+                                    f"children are not Q-deterministic."
+                                )
+                                break
+                        except Exception:
+                            pass
+
+        except Exception as support_traversal_error:
+            violations.append(
+                f"Structural Q-determinism check failed during support "
+                f"traversal: {support_traversal_error}"
+            )
+
+        del root_support_event
 
         return QDeterminismVerificationResult(
             passed=len(violations) == 0,
@@ -516,12 +740,10 @@ class CausalCircuit:
             P(effect | do(cause=v)) = P(effect | cause=v)
 
         With non-empty adjustment set Z:
-            P(effect | do(cause=v)) = Σ_z P(effect|cause=v,Z=z) · P(Z=z)
+            P(effect | do(cause=v)) = Σ_z P(effect | cause=v, Z=z) · P(Z=z)
 
         The output encodes the joint P(effect, cause) — probability(),
         marginal(), and sample() all work on the returned circuit.
-
-        Raises ValueError if cause or effect variable names are not registered.
         """
         if cause_variable_name not in self._causal_variable_names:
             raise ValueError(
@@ -542,7 +764,7 @@ class CausalCircuit:
             )
         return self._compute_interventional_circuit_with_adjustment(
             cause_variable_name, effect_variable_name,
-            adjustment_variable_names, query_resolution
+            adjustment_variable_names, query_resolution,
         )
 
     def _compute_interventional_circuit_without_adjustment(
@@ -552,11 +774,10 @@ class CausalCircuit:
         query_resolution: float,
     ) -> ProbabilisticCircuit:
         """
-        Compute P(cause, effect | do(cause)) when the adjustment set is empty.
+        Compute P(cause, effect | do(cause)) with an empty adjustment set.
 
-        Returns a joint circuit over (cause, effect) as a SumUnit of ProductUnits,
-        one per disjoint cause support region. Querying at a specific cause value
-        correctly returns zero for values outside the training domain.
+        Returns a joint circuit over (cause, effect) as a SumUnit of
+        ProductUnits, one per disjoint cause support region.
 
         Structure:
             SumUnit [weight = P(cause in region_i)]
@@ -564,54 +785,53 @@ class CausalCircuit:
                     cause branch  (UniformDistribution over region_i)
                     effect branch (P(effect | cause in region_i))
         """
-        cause_var = self.get_variable_by_name(cause_variable_name)
-        effect_var = self.get_variable_by_name(effect_variable_name)
+        cause_variable = self.get_variable_by_name(cause_variable_name)
+        effect_variable = self.get_variable_by_name(effect_variable_name)
 
-        cause_regions = self._extract_leaf_regions_for_variable(cause_var)
+        cause_regions = self._extract_leaf_regions_for_variable(cause_variable)
+        cause_marginal_circuit = copy.deepcopy(self._circuit).marginal([cause_variable])
 
-        # Hoist cause_marginal outside the region loop — it is the same for
-        # every region and deepcopying the full circuit once per region is
-        # expensive (O(leaves) deepcopies per backdoor_adjustment call).
-        cause_marginal = copy.deepcopy(self._circuit).marginal([cause_var])
-
-        output = ProbabilisticCircuit()
-        root_sum = SumUnit(probabilistic_circuit=output)
-        added = 0
+        output_circuit = ProbabilisticCircuit()
+        root_sum_unit = SumUnit(probabilistic_circuit=output_circuit)
+        regions_added = 0
 
         for region_event, region_weight in cause_regions:
             if region_weight <= 0.0:
                 continue
 
-            truncated, _ = copy.deepcopy(self._circuit).log_truncated_in_place(
+            truncated_circuit, _ = copy.deepcopy(self._circuit).log_truncated_in_place(
                 region_event.fill_missing_variables_pure(self._circuit.variables)
             )
-            if truncated is None:
+            if truncated_circuit is None:
                 continue
 
-            effect_marginal = truncated.marginal([effect_var])
-            if effect_marginal is None:
+            effect_marginal_circuit = truncated_circuit.marginal([effect_variable])
+            if effect_marginal_circuit is None:
                 continue
 
-            if cause_marginal is None:
+            if cause_marginal_circuit is None:
                 continue
-            cause_region, _ = copy.deepcopy(cause_marginal).log_truncated_in_place(
-                region_event.fill_missing_variables_pure(cause_marginal.variables)
+
+            cause_region_circuit, _ = copy.deepcopy(
+                cause_marginal_circuit
+            ).log_truncated_in_place(
+                region_event.fill_missing_variables_pure(cause_marginal_circuit.variables)
             )
-            if cause_region is None:
+            if cause_region_circuit is None:
                 continue
 
-            product = ProductUnit(probabilistic_circuit=output)
-            _attach_marginal_circuit(cause_region, product, output)
-            _attach_marginal_circuit(effect_marginal, product, output)
-            root_sum.add_subcircuit(product, math.log(region_weight))
-            added += 1
+            product_unit = ProductUnit(probabilistic_circuit=output_circuit)
+            _attach_marginal_circuit(cause_region_circuit, product_unit, output_circuit)
+            _attach_marginal_circuit(effect_marginal_circuit, product_unit, output_circuit)
+            root_sum_unit.add_subcircuit(product_unit, math.log(region_weight))
+            regions_added += 1
 
-        if added == 0:
+        if regions_added == 0:
             raise ValueError(
                 f"Interventional circuit is empty for cause '{cause_variable_name}'. "
                 f"Ensure the circuit was trained on data covering this variable's domain."
             )
-        return output
+        return output_circuit
 
     def _compute_interventional_circuit_with_adjustment(
         self,
@@ -623,99 +843,108 @@ class CausalCircuit:
         """
         Compute P(cause, effect | do(cause)) with a non-empty adjustment set Z.
 
-        Implements the backdoor adjustment formula:
+        Implements:
             P(effect | do(cause=v)) = Σ_z P(effect | cause=v, Z=z) · P(Z=z)
-
-        Returns a joint circuit over (cause, effect).
         """
-        cause_var = self.get_variable_by_name(cause_variable_name)
-        effect_var = self.get_variable_by_name(effect_variable_name)
-        adj_vars = [self.get_variable_by_name(n) for n in adjustment_variable_names]
+        cause_variable = self.get_variable_by_name(cause_variable_name)
+        effect_variable = self.get_variable_by_name(effect_variable_name)
+        adjustment_variables = [
+            self.get_variable_by_name(name) for name in adjustment_variable_names
+        ]
 
-        cause_marginal = copy.deepcopy(self._circuit).marginal([cause_var])
+        cause_marginal_circuit = copy.deepcopy(self._circuit).marginal([cause_variable])
 
-        output = ProbabilisticCircuit()
-        root_sum = SumUnit(probabilistic_circuit=output)
-        added = 0
+        output_circuit = ProbabilisticCircuit()
+        root_sum_unit = SumUnit(probabilistic_circuit=output_circuit)
+        regions_added = 0
 
-        for adj_event, adj_weight in self._extract_leaf_regions_for_variables(adj_vars):
-            if adj_weight <= 0.0:
+        for adjustment_event, adjustment_weight in self._extract_leaf_regions_for_variables(
+            adjustment_variables
+        ):
+            if adjustment_weight <= 0.0:
                 continue
 
-            adj_conditioned, _ = copy.deepcopy(self._circuit).log_truncated_in_place(
-                adj_event.fill_missing_variables_pure(self._circuit.variables)
+            adjustment_conditioned_circuit, _ = copy.deepcopy(
+                self._circuit
+            ).log_truncated_in_place(
+                adjustment_event.fill_missing_variables_pure(self._circuit.variables)
             )
-            if adj_conditioned is None:
+            if adjustment_conditioned_circuit is None:
                 continue
 
             for cause_event, cause_weight in self._extract_leaf_regions_for_variable(
-                cause_var, base_circuit=adj_conditioned
+                cause_variable, base_circuit=adjustment_conditioned_circuit
             ):
                 if cause_weight <= 0.0:
                     continue
 
-                joint_weight = adj_weight * cause_weight
-                truncated, _ = copy.deepcopy(self._circuit).log_truncated_in_place(
-                    adj_event.intersection_with(cause_event).fill_missing_variables_pure(
-                        self._circuit.variables
-                    )
+                joint_weight = adjustment_weight * cause_weight
+                joint_event = adjustment_event.intersection_with(cause_event)
+
+                truncated_circuit, _ = copy.deepcopy(
+                    self._circuit
+                ).log_truncated_in_place(
+                    joint_event.fill_missing_variables_pure(self._circuit.variables)
                 )
-                if truncated is None:
+                if truncated_circuit is None:
                     continue
 
-                effect_marginal = truncated.marginal([effect_var])
-                if effect_marginal is None:
+                effect_marginal_circuit = truncated_circuit.marginal([effect_variable])
+                if effect_marginal_circuit is None:
                     continue
 
-                if cause_marginal is None:
+                if cause_marginal_circuit is None:
                     continue
-                cause_region, _ = copy.deepcopy(cause_marginal).log_truncated_in_place(
-                    cause_event.fill_missing_variables_pure(cause_marginal.variables)
+
+                cause_region_circuit, _ = copy.deepcopy(
+                    cause_marginal_circuit
+                ).log_truncated_in_place(
+                    cause_event.fill_missing_variables_pure(cause_marginal_circuit.variables)
                 )
-                if cause_region is None:
+                if cause_region_circuit is None:
                     continue
 
-                product = ProductUnit(probabilistic_circuit=output)
-                _attach_marginal_circuit(cause_region, product, output)
-                _attach_marginal_circuit(effect_marginal, product, output)
-                root_sum.add_subcircuit(product, math.log(joint_weight))
-                added += 1
+                product_unit = ProductUnit(probabilistic_circuit=output_circuit)
+                _attach_marginal_circuit(cause_region_circuit, product_unit, output_circuit)
+                _attach_marginal_circuit(effect_marginal_circuit, product_unit, output_circuit)
+                root_sum_unit.add_subcircuit(product_unit, math.log(joint_weight))
+                regions_added += 1
 
-        if added == 0:
+        if regions_added == 0:
             raise ValueError(
                 f"Interventional circuit with adjustment is empty. "
                 f"cause='{cause_variable_name}', adjustment={adjustment_variable_names}."
             )
-        return output
+        return output_circuit
 
     def _extract_leaf_regions_for_variable(
         self,
         variable_object: Variable,
         base_circuit: ProbabilisticCircuit = None,
     ) -> List[Tuple[Any, float]]:
-        """Return (region_event, probability) pairs for each support region."""
+        """Return (region_event, probability) pairs for each support region of variable."""
         circuit = base_circuit if base_circuit is not None else self._circuit
         regions: List[Tuple[Any, float]] = []
         try:
-            var_support = circuit.support.marginal([variable_object])
+            variable_support = circuit.support.marginal([variable_object])
         except Exception:
             return regions
-        for simple_region in var_support.simple_sets:
+        for simple_region in variable_support.simple_sets:
             region_event = SimpleEvent(
                 {variable_object: simple_region[variable_object]}
             ).as_composite_set()
-            prob = circuit.probability(
+            probability = circuit.probability(
                 region_event.fill_missing_variables_pure(circuit.variables)
             )
-            if prob > 0.0:
-                regions.append((region_event, float(prob)))
+            if probability > 0.0:
+                regions.append((region_event, float(probability)))
         return regions
 
     def _extract_leaf_regions_for_variables(
         self,
         variable_objects: List[Variable],
     ) -> List[Tuple[Any, float]]:
-        """Return (region_event, probability) pairs for joint support of variables."""
+        """Return (region_event, probability) pairs for the joint support of variables."""
         regions: List[Tuple[Any, float]] = []
         try:
             joint_support = self._circuit.support.marginal(variable_objects)
@@ -723,14 +952,15 @@ class CausalCircuit:
             return regions
         for simple_region in joint_support.simple_sets:
             region_event = SimpleEvent(
-                {v: simple_region[v] for v in variable_objects}
+                {variable: simple_region[variable] for variable in variable_objects}
             ).as_composite_set()
-            prob = self._circuit.probability(
+            probability = self._circuit.probability(
                 region_event.fill_missing_variables_pure(self._circuit.variables)
             )
-            if prob > 0.0:
-                regions.append((region_event, float(prob)))
+            if probability > 0.0:
+                regions.append((region_event, float(probability)))
         return regions
+
 
     def causal_strength(
         self,
@@ -754,39 +984,46 @@ class CausalCircuit:
             data = training_dataframe
         else:
             samples = self._circuit.sample(2000)
-            data = pd.DataFrame(samples, columns=[v.name for v in self._circuit.variables])
+            data = pd.DataFrame(
+                samples, columns=[v.name for v in self._circuit.variables]
+            )
 
-        n = len(data)
+        sample_count = len(data)
         if number_of_histogram_bins is None:
-            number_of_histogram_bins = max(5, min(20, int(n ** 0.4)))
+            number_of_histogram_bins = max(5, min(20, int(sample_count ** 0.4)))
 
-        disc_cause = _discretise_continuous_column(
+        discretised_cause = _discretise_continuous_column(
             data[cause_variable_name].values, number_of_histogram_bins
         )
-        disc_effect = _discretise_continuous_column(
+        discretised_effect = _discretise_continuous_column(
             data[effect_variable_name].values, number_of_histogram_bins
         )
-        disc_adj = [
-            _discretise_continuous_column(data[a].values, number_of_histogram_bins)
-            for a in adjustment_variable_names
+        discretised_adjustment_list = [
+            _discretise_continuous_column(data[name].values, number_of_histogram_bins)
+            for name in adjustment_variable_names
         ]
 
-        cmi, h_y = _compute_conditional_mutual_information(
-            cause_bin_indices=disc_cause,
-            effect_bin_indices=disc_effect,
-            adjustment_bin_index_list=disc_adj,
-            number_of_cause_bins=number_of_histogram_bins,
-            number_of_effect_bins=number_of_histogram_bins,
+        conditional_mutual_information, entropy_of_effect = (
+            _compute_conditional_mutual_information(
+                cause_bin_indices=discretised_cause,
+                effect_bin_indices=discretised_effect,
+                adjustment_bin_index_list=discretised_adjustment_list,
+                number_of_cause_bins=number_of_histogram_bins,
+                number_of_effect_bins=number_of_histogram_bins,
+            )
         )
-        strength = float(np.clip(cmi / h_y, 0.0, 1.0)) if h_y > 1e-10 else 0.0
+        normalised_strength = (
+            float(np.clip(conditional_mutual_information / entropy_of_effect, 0.0, 1.0))
+            if entropy_of_effect > 1e-10 else 0.0
+        )
 
         return CausalStrengthResult(
             cause_variable_name=cause_variable_name,
             effect_variable_name=effect_variable_name,
             adjustment_variable_names=list(adjustment_variable_names),
-            conditional_mutual_information=round(cmi, 6),
-            conditional_entropy_of_effect=round(h_y, 6),
-            normalised_causal_strength=round(strength, 4),
+            conditional_mutual_information=round(conditional_mutual_information, 6),
+            conditional_entropy_of_effect=round(entropy_of_effect, 6),
+            normalised_causal_strength=round(normalised_strength, 4),
         )
 
     def rank_causal_variables(
@@ -801,12 +1038,16 @@ class CausalCircuit:
         Defaults to Z=[] (correct for independent data). Returns results
         sorted descending by normalised_causal_strength.
         """
-        z = adjustment_variable_names if adjustment_variable_names is not None else []
+        adjustment_set = (
+            adjustment_variable_names if adjustment_variable_names is not None else []
+        )
         results = [
-            self.causal_strength(name, effect_variable_name, z, training_dataframe)
+            self.causal_strength(
+                name, effect_variable_name, adjustment_set, training_dataframe
+            )
             for name in self._causal_variable_names
         ]
-        results.sort(key=lambda r: r.normalised_causal_strength, reverse=True)
+        results.sort(key=lambda result: result.normalised_causal_strength, reverse=True)
         return results
 
     def diagnose_failure(
@@ -819,129 +1060,146 @@ class CausalCircuit:
         """
         Identify the primary cause of a failed plan execution.
 
-        For each cause variable, queries the interventional circuit
-        P(cause, effect | do(cause)) at the observed cause value. The variable
-        whose observed value falls furthest outside the training distribution
-        (lowest query probability) is identified as the primary cause.
+        For each cause variable, queries the interventional circuit at the
+        observed cause value. The variable whose observed value falls furthest
+        outside the training distribution (lowest query probability) is the
+        primary cause. The recommendation is the cause region midpoint with
+        the highest interventional probability.
 
-        The recommendation is the cause region midpoint with the highest
-        query probability in the interventional circuit.
-
-        Parameters
-        ----------
-        observed_parameter_values
-            Mapping of cause variable names to their observed values.
-        effect_variable_name
-            Outcome variable used to measure success probability.
-        query_resolution
-            Half-width of the probability query interval around each
-            observed value. Should match the JPT variable precision.
-        adjustment_variable_names
-            Adjustment set Z. Use [] for independent randomised data.
+        The interventional_probability recorded per variable is
+        P(cause in [observed-eps, observed+eps]) in the joint (cause, effect)
+        interventional circuit. Zero means the value is outside training support.
         """
         if adjustment_variable_names is None:
             adjustment_variable_names = []
 
-        all_results: Dict[str, Dict[str, Any]] = {}
-        interventional_circuits: Dict[str, ProbabilisticCircuit] = {}
+        all_variable_results: Dict[str, Dict[str, Any]] = {}
+        interventional_circuits_by_cause: Dict[str, ProbabilisticCircuit] = {}
 
         for cause_name in self._causal_variable_names:
             if cause_name not in observed_parameter_values:
                 continue
 
-            observed = observed_parameter_values[cause_name]
-            cause_var = self.get_variable_by_name(cause_name)
+            observed_value = observed_parameter_values[cause_name]
+            cause_variable = self.get_variable_by_name(cause_name)
 
-            if not cause_var.is_numeric:
+            if not cause_variable.is_numeric:
                 continue
 
             interventional_circuit = self.backdoor_adjustment(
                 cause_name, effect_variable_name,
-                adjustment_variable_names, query_resolution
+                adjustment_variable_names, query_resolution,
             )
-            interventional_circuits[cause_name] = interventional_circuit
+            interventional_circuits_by_cause[cause_name] = interventional_circuit
+
             observed_event = SimpleEvent(
-                {cause_var: closed(float(observed) - query_resolution,
-                                   float(observed) + query_resolution)}
+                {
+                    cause_variable: closed(
+                        float(observed_value) - query_resolution,
+                        float(observed_value) + query_resolution,
+                    )
+                }
             ).as_composite_set()
 
             try:
-                p_observed = float(interventional_circuit.probability(
-                    observed_event.fill_missing_variables_pure(interventional_circuit.variables)
-                ))
-            except Exception as e:
+                probability_at_observed = float(
+                    interventional_circuit.probability(
+                        observed_event.fill_missing_variables_pure(
+                            interventional_circuit.variables
+                        )
+                    )
+                )
+            except Exception as query_error:
                 raise ValueError(
                     f"Failed to query interventional circuit for "
-                    f"'{cause_name}'={observed}: {e}"
-                ) from e
+                    f"'{cause_name}'={observed_value}: {query_error}"
+                ) from query_error
 
-            recommended_float = None
+            recommended_value: Optional[float] = None
             try:
                 best_probability = -1.0
-                for region_event, _ in self._extract_leaf_regions_for_variable(cause_var):
-                    p_region = float(interventional_circuit.probability(
-                        region_event.fill_missing_variables_pure(interventional_circuit.variables)
-                    ))
-                    if p_region > best_probability:
-                        best_probability = p_region
-                        for ss in region_event.simple_sets:
-                            if cause_var in ss:
-                                iv_set = ss[cause_var]
-                                if hasattr(iv_set, "simple_sets"):
-                                    for iv in iv_set.simple_sets:
-                                        recommended_float = (
-                                            float(iv.lower) + float(iv.upper)
+                for region_event, _ in self._extract_leaf_regions_for_variable(
+                    cause_variable
+                ):
+                    region_probability = float(
+                        interventional_circuit.probability(
+                            region_event.fill_missing_variables_pure(
+                                interventional_circuit.variables
+                            )
+                        )
+                    )
+                    if region_probability > best_probability:
+                        best_probability = region_probability
+                        for simple_set in region_event.simple_sets:
+                            if cause_variable in simple_set:
+                                interval_set = simple_set[cause_variable]
+                                if hasattr(interval_set, "simple_sets"):
+                                    for interval in interval_set.simple_sets:
+                                        recommended_value = (
+                                            float(interval.lower) + float(interval.upper)
                                         ) / 2.0
                                         break
-                                elif hasattr(iv_set, "lower"):
-                                    recommended_float = (
-                                        float(iv_set.lower) + float(iv_set.upper)
+                                elif hasattr(interval_set, "lower"):
+                                    recommended_value = (
+                                        float(interval_set.lower) + float(interval_set.upper)
                                     ) / 2.0
                                 break
             except Exception:
-                recommended_float = None
+                recommended_value = None
 
-            all_results[cause_name] = {
-                "actual_value": observed,
-                "interventional_probability": round(p_observed, 6),
-                "recommended_value": recommended_float,
+            all_variable_results[cause_name] = {
+                "actual_value": observed_value,
+                "interventional_probability": round(probability_at_observed, 6),
+                "recommended_value": recommended_value,
             }
 
-        if not all_results:
+        if not all_variable_results:
             raise ValueError(
                 f"No cause variables found in observed_parameter_values. "
                 f"Expected at least one of: {self._causal_variable_names}"
             )
 
-        primary = min(
-            all_results,
-            key=lambda n: all_results[n]["interventional_probability"]
+        primary_cause_name = min(
+            all_variable_results,
+            key=lambda name: all_variable_results[name]["interventional_probability"],
         )
-        primary_result = all_results[primary]
+        primary_result = all_variable_results[primary_cause_name]
         recommended_value = primary_result["recommended_value"]
-        p_recommended = 0.0
+        probability_at_recommendation = 0.0
 
         if recommended_value is not None:
-            primary_variable = self.get_variable_by_name(primary)
-            primary_interventional_circuit = interventional_circuits[primary]
+            primary_cause_variable = self.get_variable_by_name(primary_cause_name)
+            primary_interventional_circuit = interventional_circuits_by_cause[
+                primary_cause_name
+            ]
             try:
-                rec_event = SimpleEvent(
-                    {primary_variable: closed(float(recommended_value) - query_resolution,
-                                        float(recommended_value) + query_resolution)}
+                recommendation_event = SimpleEvent(
+                    {
+                        primary_cause_variable: closed(
+                            float(recommended_value) - query_resolution,
+                            float(recommended_value) + query_resolution,
+                        )
+                    }
                 ).as_composite_set()
-                p_recommended = float(primary_interventional_circuit.probability(
-                    rec_event.fill_missing_variables_pure(primary_interventional_circuit.variables)
-                ))
+                probability_at_recommendation = float(
+                    primary_interventional_circuit.probability(
+                        recommendation_event.fill_missing_variables_pure(
+                            primary_interventional_circuit.variables
+                        )
+                    )
+                )
             except Exception:
-                p_recommended = 0.0
+                probability_at_recommendation = 0.0
 
         return FailureDiagnosisResult(
-            primary_cause_variable_name=primary,
+            primary_cause_variable_name=primary_cause_name,
             actual_value=primary_result["actual_value"],
             interventional_probability_at_failure=primary_result[
                 "interventional_probability"
             ],
             recommended_value=recommended_value,
-            interventional_probability_at_recommendation=round(p_recommended, 6),
-            all_variable_results=all_results,
+            interventional_probability_at_recommendation=round(
+                probability_at_recommendation, 6
+            ),
+            all_variable_results=all_variable_results,
         )
