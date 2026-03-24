@@ -855,19 +855,19 @@ class CausalCircuit:
             if not cause_var.is_numeric:
                 continue
 
-            ic = self.backdoor_adjustment(
+            interventional_circuit = self.backdoor_adjustment(
                 cause_name, effect_variable_name,
                 adjustment_variable_names, query_resolution
             )
-            interventional_circuits[cause_name] = ic
-            obs_event = SimpleEvent(
+            interventional_circuits[cause_name] = interventional_circuit
+            observed_event = SimpleEvent(
                 {cause_var: closed(float(observed) - query_resolution,
                                    float(observed) + query_resolution)}
             ).as_composite_set()
 
             try:
-                p_observed = float(ic.probability(
-                    obs_event.fill_missing_variables_pure(ic.variables)
+                p_observed = float(interventional_circuit.probability(
+                    observed_event.fill_missing_variables_pure(interventional_circuit.variables)
                 ))
             except Exception as e:
                 raise ValueError(
@@ -877,13 +877,13 @@ class CausalCircuit:
 
             recommended_float = None
             try:
-                best_prob = -1.0
+                best_probability = -1.0
                 for region_event, _ in self._extract_leaf_regions_for_variable(cause_var):
-                    p_region = float(ic.probability(
-                        region_event.fill_missing_variables_pure(ic.variables)
+                    p_region = float(interventional_circuit.probability(
+                        region_event.fill_missing_variables_pure(interventional_circuit.variables)
                     ))
-                    if p_region > best_prob:
-                        best_prob = p_region
+                    if p_region > best_probability:
+                        best_probability = p_region
                         for ss in region_event.simple_sets:
                             if cause_var in ss:
                                 iv_set = ss[cause_var]
@@ -918,22 +918,22 @@ class CausalCircuit:
             key=lambda n: all_results[n]["interventional_probability"]
         )
         primary_result = all_results[primary]
-        rec_value = primary_result["recommended_value"]
-        p_rec = 0.0
+        recommended_value = primary_result["recommended_value"]
+        p_recommended = 0.0
 
-        if rec_value is not None:
-            primary_var = self.get_variable_by_name(primary)
-            primary_ic = interventional_circuits[primary]
+        if recommended_value is not None:
+            primary_variable = self.get_variable_by_name(primary)
+            primary_interventional_circuit = interventional_circuits[primary]
             try:
                 rec_event = SimpleEvent(
-                    {primary_var: closed(float(rec_value) - query_resolution,
-                                        float(rec_value) + query_resolution)}
+                    {primary_variable: closed(float(recommended_value) - query_resolution,
+                                        float(recommended_value) + query_resolution)}
                 ).as_composite_set()
-                p_rec = float(primary_ic.probability(
-                    rec_event.fill_missing_variables_pure(primary_ic.variables)
+                p_recommended = float(primary_interventional_circuit.probability(
+                    rec_event.fill_missing_variables_pure(primary_interventional_circuit.variables)
                 ))
             except Exception:
-                p_rec = 0.0
+                p_recommended = 0.0
 
         return FailureDiagnosisResult(
             primary_cause_variable_name=primary,
@@ -941,7 +941,7 @@ class CausalCircuit:
             interventional_probability_at_failure=primary_result[
                 "interventional_probability"
             ],
-            recommended_value=rec_value,
-            interventional_probability_at_recommendation=round(p_rec, 6),
+            recommended_value=recommended_value,
+            interventional_probability_at_recommendation=round(p_recommended, 6),
             all_variable_results=all_results,
         )
