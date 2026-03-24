@@ -38,6 +38,7 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass
+from email.header import Header
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -51,7 +52,7 @@ from sqlalchemy.orm import Session
 from pycram.datastructures.dataclasses import Context
 from pycram.datastructures.enums import ApproachDirection, Arms, VerticalAlignment
 from pycram.datastructures.grasp import GraspDescription
-from pycram.datastructures.pose import Header, PoseStamped, PyCramPose, PyCramQuaternion, PyCramVector3
+# from pycram.datastructures.pose import Header, PoseStamped, PyCramPose, PyCramQuaternion, PyCramVector3
 from pycram.language import SequentialPlan
 from pycram.motion_executor import simulated_robot
 from pycram.orm.ormatic_interface import Base
@@ -89,7 +90,8 @@ from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.pr2 import PR2
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Milk, Table
-from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix, Point3
+from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix, Point3, Vector3, Quaternion
+from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import Connection6DoF, FixedConnection, OmniDrive
 from semantic_digital_twin.world_description.geometry import BoundingBox, FileMesh
@@ -227,7 +229,7 @@ class PlanParameters:
     pick_arm:           Arms
 
 
-# ── Monkey-patches ─────────────────────────────────────────────────────────────
+
 
 def _header_deepcopy(self, memo: Any) -> Header:
     if isinstance(self, type):
@@ -240,10 +242,10 @@ def _header_deepcopy(self, memo: Any) -> Header:
     )
 
 
-def _pose_stamped_deepcopy(self, memo: Any) -> PoseStamped:
+def _pose_stamped_deepcopy(self, memo: Any) -> Pose:
     if isinstance(self, type):
         return self
-    return PoseStamped(
+    return Pose(
         copy.deepcopy(getattr(self, "pose", None), memo),
         copy.deepcopy(getattr(self, "header", None), memo),
     )
@@ -264,7 +266,7 @@ def _header_getattr(self, attribute_name: str) -> Any:
 
 Header.__deepcopy__      = _header_deepcopy
 Header.__getattr__       = _header_getattr
-PoseStamped.__deepcopy__ = _pose_stamped_deepcopy
+Pose.__deepcopy__ = _pose_stamped_deepcopy
 
 
 def _patch_orm_numpy_array_type() -> None:
@@ -382,7 +384,6 @@ def _respawn_milk(world: World, milk_body: Body) -> None:
     print(f"  [respawn] Milk reset to ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
 
 
-# ── Database ───────────────────────────────────────────────────────────────────
 
 def _create_database_session(database_uri: str) -> Session:
     print(f"  [db] Connecting to {database_uri} ...")
@@ -521,14 +522,21 @@ def _find_nearest_free_point(
     return None
 
 
-def _make_pose_stamped(x: float, y: float, z: float, frame_id: Any) -> PoseStamped:
-    return PoseStamped(
-        pose=PyCramPose(
-            position=PyCramVector3(x=x, y=y, z=z),
-            orientation=PyCramQuaternion(x=0, y=0, z=0, w=1),
-        ),
-        header=Header(frame_id=frame_id, stamp=datetime.datetime.now(), sequence=0),
+def _make_pose_stamped(x: float, y: float, z: float, frame_id: Any) -> Pose:
+    """Create a Pose with manual header handling."""
+    header = type("Header", (), {})()  # Dummy Header
+    header.frame_id = frame_id
+    header.stamp = datetime.datetime.now()
+    header.sequence = 0
+
+    # Use from_xyz_quaternion to construct Pose
+    pose = Pose.from_xyz_quaternion(
+        pos_x=x, pos_y=y, pos_z=z,
+        quat_x=0, quat_y=0, quat_z=0, quat_w=1,
+        reference_frame=frame_id
     )
+    pose.header = header
+    return pose
 
 
 def _path_to_navigate_actions(
@@ -538,10 +546,10 @@ def _path_to_navigate_actions(
 ) -> List[NavigateAction]:
     return [
         NavigateAction(
-            target_location=PoseStamped(
-                pose=PyCramPose(
-                    position=PyCramVector3(x=float(p.x), y=float(p.y), z=0.0),
-                    orientation=PyCramQuaternion(x=0, y=0, z=0, w=1),
+            target_location=Pose(
+                pose=Pose(
+                    position=Vector3(x=float(p.x), y=float(p.y), z=0.0),
+                    orientation=Quaternion(x=0, y=0, z=0, w=1),
                 ),
                 header=Header(frame_id=world_frame),
             ),
@@ -700,23 +708,15 @@ def _diagnose_and_log(
     (counter_approach → pick_approach, table_approach → place_approach)
     before calling diagnose_failure().
     """
-    # Open-world constants (from pick_and_place_demo.py)
-    _OW_PLACE_TARGET_X = 4.1  # PLACE_TARGET_X in the open world
+    OPEN_WORLD_PLACE_TARGET_X = 4.1
 
     observed = {
-        # x axis coincides in both worlds (milk at x=2.4 in both)
         "pick_approach_x": parameters.counter_approach_x,
 
-        # absolute y → lateral offset from milk centreline
-        # open-world milk at y=0, apartment milk at y=MILK_SPAWN_Y=2.5
         "pick_approach_y": parameters.counter_approach_y - MILK_SPAWN_Y,
 
-        # apartment place target is 0.9m further in x than open-world target
-        # shift back: 4.1 - 0.9 = 3.2, 4.5 - 0.9 = 3.6 → within JPT [3.2, 3.79]
-        "place_approach_x": parameters.table_approach_x - (PLACE_X - _OW_PLACE_TARGET_X),
+        "place_approach_x": parameters.table_approach_x - (PLACE_X - OPEN_WORLD_PLACE_TARGET_X),
 
-        # absolute y → lateral offset from place target centreline
-        # open-world target at y=0, apartment target at y=PLACE_Y=4.0
         "place_approach_y": parameters.table_approach_y - PLACE_Y,
 
         "pick_arm": parameters.pick_arm.name,
