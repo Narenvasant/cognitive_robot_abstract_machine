@@ -1,16 +1,10 @@
-import copy
 import unittest
-
-import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import random_events.interval
 from random_events.interval import closed, singleton
-from sklearn.gaussian_process.kernels import Product
 
-from probabilistic_model.distributions import (
-    GaussianDistribution,
-    DiracDeltaDistribution,
-)
+from probabilistic_model.distributions.gaussian import GaussianDistribution
+from probabilistic_model.distributions.distributions import DiracDeltaDistribution
 from probabilistic_model.distributions.uniform import UniformDistribution
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import *
 from probabilistic_model.utils import MissingDict

@@ -1,10 +1,10 @@
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import *
-from probabilistic_model.distributions import (
-    UniformDistribution,
+from probabilistic_model.distributions.distributions import (
     SymbolicDistribution,
     IntegerDistribution,
-    GaussianDistribution,
 )
+from probabilistic_model.distributions.gaussian import GaussianDistribution
+from probabilistic_model.distributions.uniform import UniformDistribution
 from probabilistic_model.utils import MissingDict
 
 

@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from random_events.variable import Symbolic, Variable
 from typing_extensions import Optional, Any, Self, List, Tuple, Set, Iterable, Dict
 
-from probabilistic_model.distributions import SymbolicDistribution
+from probabilistic_model.distributions.distributions import SymbolicDistribution
 from probabilistic_model.distributions.helper import make_dirac
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit,

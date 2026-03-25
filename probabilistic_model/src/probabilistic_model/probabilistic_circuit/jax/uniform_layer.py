@@ -23,7 +23,7 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit as NXProbabilisticCircuit,
     UnivariateContinuousLeaf,
 )
-from probabilistic_model.distributions import UniformDistribution
+from probabilistic_model.distributions.uniform import UniformDistribution
 
 
 class UniformLayer(ContinuousLayerWithFiniteSupport):

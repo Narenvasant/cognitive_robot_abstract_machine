@@ -19,7 +19,7 @@ from probabilistic_model.learning.jpt.variables import (
     ScaledContinuous,
 )
 from probabilistic_model.learning.nyga_distribution import NygaDistribution
-from probabilistic_model.distributions import (
+from probabilistic_model.distributions.distributions import (
     DiracDeltaDistribution,
     SymbolicDistribution,
     IntegerDistribution,

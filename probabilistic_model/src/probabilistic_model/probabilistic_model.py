@@ -80,7 +80,6 @@ class ProbabilisticModel(ABC):
         """
         :return: The variables of the model.
         """
-        raise NotImplementedError
 
     @property
     @abstractmethod
@@ -88,7 +87,6 @@ class ProbabilisticModel(ABC):
         """
         :return: The support of the model.
         """
-        raise NotImplementedError
 
     def likelihood(self, events: npt.NDArray) -> npt.NDArray:
         """
@@ -120,7 +118,6 @@ class ProbabilisticModel(ABC):
         :param events: The full evidence event with shape (#events, #variables)
         :return: The log-likelihood of the event with shape (#events).
         """
-        raise NotImplementedError
 
     def cdf(self, events: npt.NDArray) -> npt.NDArray:
         """
@@ -164,7 +161,6 @@ class ProbabilisticModel(ABC):
         :param event: The event.
         :return: The probability of the event.
         """
-        raise NotImplementedError
 
     def mode(self) -> Tuple[Event, float]:
         """
@@ -191,7 +187,6 @@ class ProbabilisticModel(ABC):
 
         :return: The mode and its log-likelihood.
         """
-        raise NotImplementedError
 
     def marginal(self, variables: Iterable[Variable]) -> Optional[Self]:
         """
@@ -229,7 +224,6 @@ class ProbabilisticModel(ABC):
         :param event: The event to condition on.
         :return: The truncated distribution and the log-probability of the event.
         """
-        raise NotImplementedError
 
     def conditional(self, point: Dict[Variable, Any]) -> Tuple[Optional[Self], float]:
         """
@@ -252,7 +246,6 @@ class ProbabilisticModel(ABC):
         :param point: A partial point to calculate the conditioned distribution on.
         :return: The conditioned distribution and the log-probability of the point.
         """
-        raise NotImplementedError
 
     @abstractmethod
     def sample(self, amount: int) -> npt.NDArray:
@@ -262,7 +255,6 @@ class ProbabilisticModel(ABC):
         :param amount: The number of samples to draw.
         :return: The samples.
         """
-        raise NotImplementedError
 
     def moment(self, order: OrderType, center: CenterType) -> MomentType:
         """

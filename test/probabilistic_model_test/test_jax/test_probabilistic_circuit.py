@@ -13,7 +13,7 @@ from random_events.interval import closed
 from random_events.product_algebra import Event, SimpleEvent
 from random_events.variable import Continuous
 
-from probabilistic_model.distributions import DiracDeltaDistribution
+from probabilistic_model.distributions.distributions import DiracDeltaDistribution
 from probabilistic_model.learning.jpt.jpt import JPT
 from probabilistic_model.learning.jpt.variables import infer_variables_from_dataframe
 from probabilistic_model.probabilistic_circuit.jax import SparseSumLayer, UniformLayer

@@ -3,7 +3,8 @@ import unittest
 import numpy as np
 
 from krrood.adapters.json_serializer import from_json, to_json
-from probabilistic_model.distributions import DiracDeltaDistribution, GaussianDistribution, \
+from probabilistic_model.distributions.distributions import DiracDeltaDistribution
+from probabilistic_model.distributions.gaussian import GaussianDistribution, \
     TruncatedGaussianDistribution
 from random_events.interval import closed, reals, singleton, SimpleInterval, Bound
 from random_events.product_algebra import SimpleEvent, VariableMap

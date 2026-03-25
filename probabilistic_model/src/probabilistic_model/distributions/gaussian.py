@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing_extensions import Union, Iterable, Any, Self, Dict, List, Tuple
 import numpy as np
 import numpy.typing as npt
-from probabilistic_model.distributions import ContinuousDistribution, ContinuousDistributionWithFiniteSupport
+from probabilistic_model.distributions.distributions import ContinuousDistribution, ContinuousDistributionWithFiniteSupport
 from probabilistic_model.probabilistic_model import OrderType, CenterType, MomentType
 from probabilistic_model.utils import simple_interval_as_array
 from random_events.interval import Interval, reals, singleton, SimpleInterval, Bound
@@ -124,13 +124,6 @@ class GaussianDistribution(ContinuousDistribution):
             location=self.location,
             scale=self.scale,
         ), np.log(probability)
-
-    def __eq__(self, other: Self):
-        return (
-            super().__eq__(other)
-            and self.location == other.location
-            and self.scale == other.scale
-        )
 
     @property
     def representation(self):

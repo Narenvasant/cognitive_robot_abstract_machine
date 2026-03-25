@@ -8,20 +8,12 @@ from random_events.variable import Continuous, Symbolic
 from sortedcontainers import SortedSet
 from typing_extensions import List, Self, Type, Iterable, Union
 
-from probabilistic_model.distributions import GaussianDistribution
 from probabilistic_model.probabilistic_circuit.jax import (
-    SparseSumLayer,
     ProductLayer,
     DenseSumLayer,
 )
 from probabilistic_model.probabilistic_circuit.jax.discrete_layer import DiscreteLayer
 from probabilistic_model.probabilistic_circuit.jax.gaussian_layer import GaussianLayer
-from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
-    ProbabilisticCircuit,
-    SumUnit,
-    ProductUnit,
-    UnivariateContinuousLeaf,
-)
 from probabilistic_model.probabilistic_circuit.jax.probabilistic_circuit import (
     ProbabilisticCircuit as JPC,
     ClassificationCircuit,
@@ -35,6 +27,8 @@ class Region:
     """
     A region in a region graph.
     A region is a set of variables.
+    Refer to this paper https://ml-research.github.io/papers/peharz2019uai_ratspns.pdf .
+
     """
 
     variables: SortedSet

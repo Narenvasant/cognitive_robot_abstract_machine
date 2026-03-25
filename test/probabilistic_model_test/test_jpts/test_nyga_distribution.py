@@ -8,10 +8,8 @@ from krrood.adapters.json_serializer import SubclassJSONSerializer, from_json, t
 from random_events.variable import Continuous
 from scipy.special import logsumexp
 
-from probabilistic_model.distributions import (
-    UniformDistribution,
-    DiracDeltaDistribution,
-)
+from probabilistic_model.distributions.distributions import DiracDeltaDistribution
+from probabilistic_model.distributions.uniform import UniformDistribution
 from probabilistic_model.learning.nyga_distribution import (
     NygaDistribution,
     InductionStep,

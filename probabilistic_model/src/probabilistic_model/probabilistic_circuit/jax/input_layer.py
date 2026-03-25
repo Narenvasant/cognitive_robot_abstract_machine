@@ -22,7 +22,7 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit as NXProbabilisticCircuit,
     UnivariateContinuousLeaf,
 )
-from probabilistic_model.distributions import DiracDeltaDistribution
+from probabilistic_model.distributions.distributions import DiracDeltaDistribution
 
 
 class ContinuousLayer(InputLayer, ABC):

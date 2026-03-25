@@ -12,10 +12,8 @@ from random_events.product_algebra import SimpleEvent, Event
 from random_events.variable import Continuous
 from typing_extensions import Self
 
-from probabilistic_model.distributions import (
-    DiracDeltaDistribution,
-    UniformDistribution,
-)
+from probabilistic_model.distributions.distributions import DiracDeltaDistribution
+from probabilistic_model.distributions.uniform import UniformDistribution
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     SumUnit,
     ProbabilisticCircuit,

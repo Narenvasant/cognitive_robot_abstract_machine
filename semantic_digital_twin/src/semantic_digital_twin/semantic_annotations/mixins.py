@@ -7,7 +7,7 @@ from typing import Tuple
 import numpy as np
 import trimesh
 from polytope import bounding_box
-from probabilistic_model.distributions.helper import make_dirac
+from probabilistic_model.distributions.gaussian import GaussianDistribution
 from random_events.product_algebra import Event
 from random_events.set import Set
 from random_events.variable import Symbolic
@@ -21,7 +21,6 @@ from typing_extensions import (
 )
 
 from krrood.ormatic.utils import classproperty
-from probabilistic_model.distributions import GaussianDistribution
 from probabilistic_model.distributions.helper import make_dirac
 from probabilistic_model.probabilistic_circuit.rx.helper import (
     uniform_measure_of_event,

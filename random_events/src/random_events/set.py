@@ -29,6 +29,9 @@ class SetElement(AbstractSimpleSet):
     The elements in the C++ class are represented by their index in the all_elements tuple.
     The C++ object gets as all elements the hash values of all elements.
     A hash map is created to map the hash of each element to the element.
+
+    .. attention::
+        Use :py:func:`from_data` class method to create a set element from a dictionary, do not use the constructor directly.
     """
 
     cpp_object: rl.SetElement = field(default_factory=lambda: rl.SetElement(set()))
@@ -127,7 +130,8 @@ class Set(AbstractCompositeSet):
     Beware that an empty set is an invariant of this class.
     All elements are not consistent with invariants of this class.
 
-    Use :func:`from_simple_sets` class method to create a set from a list of simple sets, do not use the constructor directly.
+    .. attention::
+        Use :py:func:`from_simple_sets` class method to create a set from a list of simple sets, do not use the constructor directly.
     """
 
     cpp_object: rl.Set = field(default_factory=lambda: rl.Set(set(), set()))

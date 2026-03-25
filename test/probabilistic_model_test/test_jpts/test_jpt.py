@@ -13,14 +13,11 @@ import sklearn.datasets
 from jpt import infer_from_dataframe as old_infer_from_dataframe
 from jpt.learning.impurity import Impurity
 from jpt.trees import JPT as OldJPT
-from matplotlib import pyplot as plt
-
 from krrood.adapters.json_serializer import to_json, from_json
 from random_events.interval import closed
 from random_events.product_algebra import SimpleEvent
-from random_events.variable import Variable, Continuous
-
-from probabilistic_model.distributions import GaussianDistribution
+from random_events.variable import Continuous
+from probabilistic_model.distributions.gaussian import GaussianDistribution
 from probabilistic_model.learning.jpt.jpt import JPT
 from probabilistic_model.learning.jpt.variables import (
     ScaledContinuous,
@@ -28,14 +25,12 @@ from probabilistic_model.learning.jpt.variables import (
     Integer,
     Symbolic,
 )
-from probabilistic_model.learning.nyga_distribution import NygaDistribution
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     SumUnit,
     ProbabilisticCircuit,
     ProductUnit,
     IntegerDistribution,
     SymbolicDistribution,
-    UnivariateContinuousLeaf,
     leaf,
 )
 

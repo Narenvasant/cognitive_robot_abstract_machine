@@ -7,7 +7,7 @@ from random_events.set import Set
 from random_events.variable import Symbolic
 from sortedcontainers import SortedSet
 
-from probabilistic_model.distributions import SymbolicDistribution
+from probabilistic_model.distributions.distributions import SymbolicDistribution
 from probabilistic_model.probabilistic_circuit.jax.discrete_layer import DiscreteLayer
 from probabilistic_model.probabilistic_circuit.jax.probabilistic_circuit import (
     ProbabilisticCircuit,

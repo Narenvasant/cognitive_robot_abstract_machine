@@ -33,7 +33,8 @@ class SimpleInterval(sigma_algebra.AbstractSimpleSet):
     A simple interval.
     A simple interval is the convex hull of two points.
 
-    Use :func:`from_data` class method to create a simple interval from a dictionary, do not use the constructor directly.
+    .. attention::
+        Use :py:func:`from_data` class method to create a simple interval from a dictionary, do not use the constructor directly.
     """
 
     cpp_object: rl.SimpleInterval = field(
@@ -178,7 +179,8 @@ class Interval(sigma_algebra.AbstractCompositeSet):
 
     A simplified interval is an interval where adjacent simple intervals are merged.
 
-    Use :func:`from_simple_sets` class method to create an interval from a list of simple intervals, do not use the constructor directly.
+    .. attention::
+        Use :py:func:`from_simple_sets` class method to create an interval from a list of simple intervals, do not use the constructor directly.
     """
 
     cpp_object: rl.Interval = field(default_factory=lambda: rl.Interval())

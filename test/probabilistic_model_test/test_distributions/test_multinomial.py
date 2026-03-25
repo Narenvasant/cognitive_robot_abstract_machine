@@ -64,7 +64,7 @@ class MultinomialConstructionTestCase(unittest.TestCase):
 
     def test_copy(self):
         distribution_1 = MultinomialDistribution(
-            [self.x, self.y], np.array([[0.1, 0.2, 0.3], [0.7, 0.4, 0.1]])
+            (self.x, self.y), np.array([[0.1, 0.2, 0.3], [0.7, 0.4, 0.1]])
         )
         distribution_2 = distribution_1.__copy__()
         self.assertEqual(distribution_1, distribution_2)
@@ -101,7 +101,7 @@ class MultinomialInferenceTestCase(unittest.TestCase):
     def setUpClass(cls):
         np.random.seed(69)
         cls.random_distribution = MultinomialDistribution(
-            [cls.x, cls.y, cls.z],
+            (cls.x, cls.y, cls.z),
             np.random.rand(
                 len(cls.x.domain.simple_sets),
                 len(cls.y.domain.simple_sets),
@@ -111,7 +111,7 @@ class MultinomialInferenceTestCase(unittest.TestCase):
         cls.random_distribution_mass = cls.random_distribution.probabilities.sum()
 
         cls.crafted_distribution = MultinomialDistribution(
-            [cls.x, cls.y], np.array([[0.1, 0.2, 0.3], [0.7, 0.4, 0.1]])
+            (cls.x, cls.y), np.array([[0.1, 0.2, 0.3], [0.7, 0.4, 0.1]])
         )
         cls.crafted_distribution_mass = cls.crafted_distribution.probabilities.sum()
 
@@ -159,7 +159,7 @@ class MultinomialInferenceTestCase(unittest.TestCase):
 
     def test_multiple_modes(self):
         distribution = MultinomialDistribution(
-            [self.x, self.y],
+            (self.x, self.y),
             np.array([[0.1, 0.7, 0.3], [0.7, 0.4, 0.1]]),
         )
         mode, likelihood = distribution.mode()

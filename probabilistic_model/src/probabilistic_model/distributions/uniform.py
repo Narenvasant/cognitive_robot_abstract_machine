@@ -85,13 +85,6 @@ class UniformDistribution(ContinuousDistributionWithFiniteSupport):
 
         return VariableMap({self.variable: result})
 
-    def __eq__(self, other):
-        return (
-            isinstance(other, UniformDistribution)
-            and self.interval == other.interval
-            and self.variable == other.variable
-        )
-
     @property
     def drawio_label(self):
         return "rounded=1;labelPosition=center;verticalLabelPosition=bottom;align=center;verticalAlign=top;html=1;labelBorderColor=default;"

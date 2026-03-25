@@ -17,7 +17,7 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit as NXProbabilisticCircuit,
     UnivariateContinuousLeaf,
 )
-from probabilistic_model.distributions import GaussianDistribution
+from probabilistic_model.distributions.gaussian import GaussianDistribution
 
 
 class GaussianLayer(ContinuousLayer):

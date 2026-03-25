@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 import numpy as np
 import numpy.typing as npt
 import plotly.graph_objects as go
+
+from krrood.entity_query_language.exceptions import UnsupportedOperation
+from probabilistic_model.exceptions import UndefinedOperationError
 from random_events.interval import *
 from random_events.product_algebra import Event, SimpleEvent, VariableMap
 from random_events.sigma_algebra import AbstractSimpleSet
@@ -72,9 +75,6 @@ class UnivariateDistribution(
         else:
             return None
 
-    def __eq__(self, other: Self):
-        return self.variables == other.variables and isinstance(other, self.__class__)
-
     def composite_set_from_event(self, event: Event) -> AbstractCompositeSet:
         """
         Extract the composite set from the event that is relevant for this distribution.
@@ -133,19 +133,12 @@ class ContinuousDistribution(UnivariateDistribution):
 
         if len(interval.simple_sets) == 1:
             return self.log_conditional_from_simple_interval(interval.simple_sets[0])
-
         else:
-            return self.log_conditional_from_interval(interval)
+            raise UndefinedOperationError(self)
 
     def log_conditional(
         self, point: Dict[Variable, Any]
     ) -> Tuple[Optional[Union[ProbabilisticModel, Self]], float]:
-        """
-        Return the conditional distribution and log-probability for a singleton point.
-
-        :param point: Mapping from Variables to their observed value(s); the value for ``self.variable`` will be used.
-        :return: A tuple (conditional_distribution or None, log-likelihood). If the point has zero probability, returns (None, -np.inf).
-        """
         value = point[self.variable]
         log_pdf_value = self.log_likelihood(np.array([[value]]))[0]
 
@@ -167,14 +160,6 @@ class ContinuousDistribution(UnivariateDistribution):
         """
         Calculate the truncated distribution given a simple interval.
 
-        :param interval: The simple interval
-        :return: The truncated distribution and the log-probability of the interval.
-        """
-        raise NotImplementedError
-
-    def log_conditional_from_interval(self, interval) -> Tuple[Self, float]:
-        """
-        Calculate the truncated distribution given an interval with p(interval) > 0.
         :param interval: The simple interval
         :return: The truncated distribution and the log-probability of the interval.
         """
@@ -287,16 +272,6 @@ class DiscreteDistribution(UnivariateDistribution):
     """
     A dict that maps from integers (hash(symbol) for symbols) to probabilities.
     """
-
-    def __eq__(self, other):
-        return (
-            isinstance(other, DiscreteDistribution)
-            and self.probabilities == other.probabilities
-            and super().__eq__(other)
-        )
-
-    def __hash__(self):
-        return hash((self.variable, tuple(self.probabilities.items())))
 
     def log_likelihood(self, events: npt.NDArray) -> npt.NDArray:
         events = events[:, 0]
@@ -630,7 +605,7 @@ class DiracDeltaDistribution(ContinuousDistribution):
     This value will be used to replace infinity in likelihood.
     """
 
-    tolerance: float = field(default=1e-6)
+    tolerance: float = field(default=1e-6, compare=False)
     """
     The tolerance of deviations of the `location` of the Dirac delta distribution.
     This is used during calculations to take precision problems into account.
@@ -695,17 +670,6 @@ class DiracDeltaDistribution(ContinuousDistribution):
             moment = 0.0
 
         return VariableMap({self.variable: moment})
-
-    def __eq__(self, other):
-        return (
-            isinstance(other, self.__class__)
-            and super().__eq__(other)
-            and self.location == other.location
-            and self.density_cap == other.density_cap
-        )
-
-    def __hash__(self):
-        return hash((self.variable, self.location, self.density_cap))
 
     @property
     def representation(self):

@@ -74,7 +74,8 @@ class SimpleEvent(AbstractSimpleSet, VariableMap):
 
     A simple event is logically equivalent to a conjunction of assignments.
 
-    Use :func:`from_data` class method to create a simple event from a dictionary, do not use the constructor directly.
+    .. attention::
+        Use :py:func:`from_data` class method to create a simple event from a dictionary, do not use the constructor directly.
     """
 
     cpp_object: rl.SimpleEvent = field(default_factory=rl.SimpleEvent)
@@ -412,7 +413,8 @@ class Event(AbstractCompositeSet):
     Every simple event added to this event that is missing variables that any other event in this event has, will be
     extended with the missing variable. The missing variables are mapped to their domain.
 
-    Use :func:`from_simple_sets` class method to create an event from a list of simple events, do not use the constructor directly.
+    .. attention:
+        Use :py:func:`from_simple_sets` class method to create an event from a list of simple events, do not use the constructor directly.
     """
 
     cpp_object: rl.Event = field(default_factory=lambda: rl.Event(set()))

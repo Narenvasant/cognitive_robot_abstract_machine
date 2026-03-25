@@ -29,7 +29,7 @@ from typing_extensions import (
     Union,
 )
 
-from probabilistic_model.distributions import (
+from probabilistic_model.distributions.distributions import (
     UnivariateDistribution,
     IntegerDistribution,
     SymbolicDistribution,
@@ -532,8 +532,7 @@ class SumUnit(InnerUnit):
 
     @classmethod
     def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
-        result = cls()
-        return result
+        return cls()
 
     def mount_with_interaction_terms(
         self, other: Self, interaction_model: ProbabilisticModel

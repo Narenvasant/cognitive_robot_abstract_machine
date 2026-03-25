@@ -13,7 +13,7 @@ from probabilistic_model.probabilistic_circuit.jax.inner_layer import InputLayer
 import jax.numpy as jnp
 
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import Unit
-from probabilistic_model.distributions import SymbolicDistribution
+from probabilistic_model.distributions.distributions import SymbolicDistribution
 import tqdm
 import numpy as np
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
