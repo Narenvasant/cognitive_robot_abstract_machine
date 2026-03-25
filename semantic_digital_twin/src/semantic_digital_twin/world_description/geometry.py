@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import os
 import tempfile
+import weakref
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass, field, fields
@@ -341,8 +342,8 @@ class Mesh(Shape):
     Filename of the mesh.
     """
 
-    def __post_init__(self):
-        self.mesh.apply_scale(self.scale.to_np())
+    # def __post_init__(self):
+    #     self.mesh.apply_scale(self.scale.to_np())
 
     @property
     def local_frame_bounding_box(self) -> BoundingBox:
@@ -361,8 +362,11 @@ class Mesh(Shape):
 
     @classmethod
     def _from_json(cls, data: Dict[str, Any], **kwargs) -> Mesh:
+        # Recreate the trimesh without processing to preserve exact topology
         mesh = trimesh.Trimesh(
-            vertices=data["mesh"]["vertices"], faces=data["mesh"]["faces"]
+            vertices=data["mesh"]["vertices"],
+            faces=data["mesh"]["faces"],
+            process=False,
         )
         origin = from_json(data["origin"], **kwargs)
         scale = from_json(data["scale"], **kwargs)
@@ -436,40 +440,87 @@ class Mesh(Shape):
     def from_trimesh(
         cls,
         mesh: trimesh.Trimesh,
-        origin: HomogeneousTransformationMatrix,
-        scale: Scale,
+        origin: Optional[HomogeneousTransformationMatrix] = None,
+        scale: Optional[Scale] = None,
         uv: Optional[np.ndarray] = None,
         texture_file_path: Optional[str] = None,
         dirname: str = "/tmp",
         file_type: str = "obj",
-    ) -> Mesh:
+    ) -> "Mesh":
+        if origin is None:
+            origin = HomogeneousTransformationMatrix()
+        if scale is None:
+            scale = Scale()
         if uv is not None:
             mesh = cls.add_uv(mesh=mesh, uv=uv)
         if texture_file_path is not None:
             mesh = cls.add_texture(mesh=mesh, texture_file_path=texture_file_path)
 
-        f = tempfile.NamedTemporaryFile(
+        # Capture path immediately and close handle before trimesh opens the file
+        with tempfile.NamedTemporaryFile(
             dir=dirname, suffix=f".{file_type}", delete=False
-        )
-        if file_type == "obj":
-            mesh.export(f.name, file_type="obj")
-            old_mtl_file = "material.mtl"
-            new_mtl_file = f"{os.path.basename(f.name)}.mtl"
-            old_mtl = os.path.join(dirname, old_mtl_file)
-            new_mtl = os.path.join(dirname, new_mtl_file)
-            if os.path.exists(old_mtl):
-                os.rename(old_mtl, new_mtl)
-            with open(f.name) as f:
-                text = f.read()
-            text = text.replace(old_mtl_file, new_mtl_file)
-            with open(f.name, "w") as f:
-                f.write(text)
-        elif file_type == "stl":
-            mesh.export(f.name, file_type="stl")
-        else:
-            raise ValueError(f"Unsupported file type: {file_type}")
+        ) as tmp:
+            tmp_path = tmp.name
 
-        return cls(filename=f.name, origin=origin, scale=scale)
+        try:
+            if file_type == "obj":
+                mesh.export(tmp_path, file_type="obj")
+
+                old_mtl_file = "material.mtl"
+                new_mtl_file = f"{os.path.basename(tmp_path)}.mtl"
+                old_mtl = os.path.join(dirname, old_mtl_file)
+                new_mtl = os.path.join(dirname, new_mtl_file)
+
+                if os.path.exists(old_mtl):
+                    os.rename(old_mtl, new_mtl)
+
+                with open(tmp_path) as f:
+                    text = f.read()
+                text = text.replace(old_mtl_file, new_mtl_file)
+                with open(tmp_path, "w") as f:
+                    f.write(text)
+
+            elif file_type == "stl":
+                mesh.export(tmp_path, file_type="stl")
+
+            else:
+                raise ValueError(f"Unsupported file type: {file_type}")
+
+        except Exception:
+            # Clean up temp files on failure so nothing is orphaned
+            for path in [
+                tmp_path,
+                os.path.join(dirname, f"{os.path.basename(tmp_path)}.mtl"),
+            ]:
+                if os.path.exists(path):
+                    os.remove(path)
+            raise
+
+        instance = cls(
+            origin=origin,
+            scale=scale,
+            filename=tmp_path,
+        )
+
+        # Tie file lifetime to the Mesh instance
+        weakref.finalize(
+            instance, cls._cleanup_temp_files, tmp_path, dirname, file_type
+        )
+
+        return instance
+
+    @staticmethod
+    def _cleanup_temp_files(tmp_path: str, dirname: str, file_type: str) -> None:
+        for path in [
+            tmp_path,
+            os.path.join(dirname, f"{os.path.basename(tmp_path)}.mtl"),
+        ]:
+            print(f"Cleaning up temporary file: {path}")
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
 
     @classmethod
     def from_vertices_and_faces(
@@ -569,7 +620,7 @@ class Mesh(Shape):
         hull.update_faces(hull.nondegenerate_faces())
         hull.process()
 
-        return cls(
+        return cls.from_trimesh(
             mesh=hull,
             origin=HomogeneousTransformationMatrix(reference_frame=reference_frame),
         )

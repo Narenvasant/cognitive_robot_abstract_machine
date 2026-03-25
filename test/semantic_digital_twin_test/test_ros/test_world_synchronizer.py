@@ -54,7 +54,8 @@ from semantic_digital_twin.adapters.ros.messages import (
     LoadModel,
     Acknowledgment,
 )
-from semantic_digital_twin_test.example_dataset.test_annotations import TestAnnotation
+
+# from semantic_digital_twin_test.example_dataset.test_annotations import TestAnnotation
 from semantic_digital_twin.orm.ormatic_interface import *  # type: ignore
 
 

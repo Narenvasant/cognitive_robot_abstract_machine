@@ -172,7 +172,7 @@ class FBXParser(MeshParser):
                                 / 100
                             )
 
-                            t_mesh = Mesh(
+                            t_mesh = Mesh.from_trimesh(
                                 origin=HomogeneousTransformationMatrix(),
                                 mesh=trimesh.Trimesh(
                                     vertices=transformed_vertices, faces=o.faces

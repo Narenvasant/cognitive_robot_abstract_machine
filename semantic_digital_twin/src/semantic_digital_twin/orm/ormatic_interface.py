@@ -47,7 +47,6 @@ import semantic_digital_twin.world_description.geometry
 import semantic_digital_twin.world_description.shape_collection
 import semantic_digital_twin.world_description.world_entity
 import semantic_digital_twin.world_description.world_modification
-import semantic_digital_twin_test.example_dataset.test_annotations
 import sqlalchemy.sql.sqltypes
 import trimesh.base
 import typing
@@ -1006,19 +1005,6 @@ class HumanoidGripperDAO_fingers_association(Base, AssociationDataAccessObject):
     target: Mapped[FingerDAO] = relationship(
         "FingerDAO", foreign_keys=[target_fingerdao_id]
     )
-
-
-class TestAnnotationDAO_entities_association(Base, AssociationDataAccessObject):
-
-    __tablename__ = "_87294364793164365806041812858401202745808266017515980357068771"
-
-    database_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source_testannotationdao_id: Mapped[int] = mapped_column(
-        ForeignKey("TestAnnotationDAO.database_id")
-    )
-    target_bodydao_id: Mapped[int] = mapped_column(ForeignKey("BodyDAO.database_id"))
-
-    target: Mapped[BodyDAO] = relationship("BodyDAO", foreign_keys=[target_bodydao_id])
 
 
 class WorldModelModificationBlockDAO_modifications_association(
@@ -6889,47 +6875,6 @@ class CameraDAO(
     __mapper_args__ = {
         "polymorphic_identity": "CameraDAO",
         "inherit_condition": database_id == SensorDAO.database_id,
-    }
-
-
-class TestAnnotationDAO(
-    SemanticAnnotationDAO,
-    DataAccessObject[
-        semantic_digital_twin_test.example_dataset.test_annotations.TestAnnotation
-    ],
-):
-
-    __tablename__ = "TestAnnotationDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(SemanticAnnotationDAO.database_id),
-        primary_key=True,
-        use_existing_column=True,
-    )
-
-    value: Mapped[builtins.str] = mapped_column(String(255), use_existing_column=True)
-
-    entity_id: Mapped[typing.Optional[builtins.int]] = mapped_column(
-        ForeignKey("BodyDAO.database_id", use_alter=True),
-        nullable=True,
-        use_existing_column=True,
-    )
-
-    entity: Mapped[BodyDAO] = relationship(
-        "BodyDAO", uselist=False, foreign_keys=[entity_id], post_update=True
-    )
-    entities: Mapped[builtins.list[TestAnnotationDAO_entities_association]] = (
-        relationship(
-            "TestAnnotationDAO_entities_association",
-            collection_class=builtins.list,
-            cascade="all, delete-orphan",
-            foreign_keys="[TestAnnotationDAO_entities_association.source_testannotationdao_id]",
-        )
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "TestAnnotationDAO",
-        "inherit_condition": database_id == SemanticAnnotationDAO.database_id,
     }
 
 

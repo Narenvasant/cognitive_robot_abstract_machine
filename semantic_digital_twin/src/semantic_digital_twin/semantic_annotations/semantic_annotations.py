@@ -254,7 +254,7 @@ class Door(HasHandle, HasHinge):
         )
         entry_way_region = Region(
             name=entry_way_region_name,
-            area=ShapeCollection([Mesh(mesh=door_body.combined_mesh)]),
+            area=ShapeCollection([Mesh.from_trimesh(mesh=door_body.combined_mesh)]),
         )
         entry_way = EntryWay(name=entry_way_name, root=entry_way_region)
         world.add_region(entry_way.root)
