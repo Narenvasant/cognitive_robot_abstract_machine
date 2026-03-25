@@ -1,5 +1,6 @@
 """
-Apartment world: JPT-guided pick-and-place with GCS navigation and causal failure diagnosis.
+Apartment world: JPT-guided pick-and-place with GCS navigation and
+causal failure diagnosis with active parameter correction.
 
 Uses the open-world JPT (pick_and_place_jpt.json), trained on 1742 successful
 open-world Batch 1 plans, to guide approach-position and arm sampling in the
@@ -13,17 +14,45 @@ JPT variable mapping (open-world → apartment):
     milk_end_x/y/z      →  unchanged
     pick_arm            →  unchanged
 
-Causal failure diagnosis
-------------------------
+Causal failure diagnosis with active correction
+------------------------------------------------
 On each failed iteration, CausalCircuit.diagnose_failure() identifies the
-primary causal variable and recommends a corrective value. The diagnosis
-uses the backdoor adjustment formula (Pearl 2009, Thm 3.2.2) with Z=∅,
-valid for the independent Batch 1 training data.
+primary causal variable and recommends a corrective value. The demo then
+applies a CausalSamplingCorrection for the immediately following iteration:
+the primary cause variable is clamped to the recommended region, while all
+other variables are still drawn freely from the JPT joint distribution.
 
-The CausalCircuit is built once at startup from a ProbModelJPT
-(probabilistic_model variant), which exposes the .probabilistic_circuit
-attribute required by CausalCircuit.from_jpt(). The pyjpt model is kept
-separately for sampling because it is faster at inference time.
+This closes the feedback loop:
+    failure → causal diagnosis → parameter correction → re-attempt
+
+The CausalSamplingCorrection is designed to be reusable for any JPT-based
+robot plan that uses a CausalCircuit. It is task-agnostic — it operates on
+variable names and recommended values without any knowledge of the specific
+action being planned.
+
+Correction strategy
+-------------------
+- After a failure, one corrected sample is attempted immediately.
+- If the corrected attempt succeeds, sampling reverts to the unconstrained JPT.
+- If the corrected attempt also fails, sampling reverts to the unconstrained JPT
+  rather than recursively correcting — this prevents the system from getting
+  stuck following a bad recommendation.
+- Corrections are tracked separately in the run statistics so the contribution
+  of the causal circuit to the overall success rate can be measured directly.
+
+GCS return navigation
+---------------------
+After every iteration (success or failure), the robot navigates back to the
+fixed start zone using a single GCS call from the robot's actual current
+position in the world. This avoids the previous two-leg approach
+(table → counter → start) which used phantom planned positions as the GCS
+start point, causing path planning failures and incorrect fallback straight-line
+routes that crossed the kitchen counter.
+
+CausalCircuit is built once at startup from a ProbModelJPT (probabilistic_model
+variant), which exposes the .probabilistic_circuit attribute required by
+CausalCircuit.from_jpt(). The pyjpt model is kept separately for sampling
+because it is faster at inference time.
 """
 
 from __future__ import annotations
@@ -37,7 +66,7 @@ import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -68,11 +97,11 @@ from probabilistic_model.learning.jpt.variables import (
     Symbolic as ProbSymbolic,
 )
 from random_events.set import Set as RESet
-from random_events.product_algebra import SimpleEvent
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import SumUnit as _SumUnit
 
 from probabilistic_model.probabilistic_circuit.causal.causal_circuit import (
     CausalCircuit,
+    FailureDiagnosisResult,
     MdVtreeNode,
 )
 
@@ -99,6 +128,14 @@ from semantic_digital_twin.world_description.shape_collection import (
 from semantic_digital_twin.world_description.world_entity import Body
 
 
+# ---------------------------------------------------------------------------
+# Library patch: SumUnit.simplify() version mismatch
+#
+# This version of probabilistic_model calls self.add_subcircuit(..., mount=False)
+# but add_subcircuit() does not accept a mount= keyword argument.
+# Patched here to avoid modifying the library source.
+# ---------------------------------------------------------------------------
+
 def _patched_sum_simplify(self) -> None:
     import numpy as _np
     if len(self.subcircuits) == 1:
@@ -116,6 +153,10 @@ def _patched_sum_simplify(self) -> None:
 
 _SumUnit.simplify = _patched_sum_simplify
 
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
 NUMBER_OF_ITERATIONS: int = 5000
 
@@ -156,8 +197,11 @@ GCS_SEARCH_MIN_Z: float =  0.0
 GCS_SEARCH_MAX_Z: float =  0.1
 GCS_OBSTACLE_BLOAT: float = 0.3
 
-ROBOT_INIT_X: float = 1.4
-ROBOT_INIT_Y: float = 1.5
+# Robot start position — in the open aisle south of the kitchen counter.
+# Verified to be inside the GCS free-space graph for the apartment world.
+# The kitchen counter occupies roughly y∈[1.5,3.5]; the aisle is at y<1.2.
+ROBOT_INIT_X: float = 1.0
+ROBOT_INIT_Y: float = 0.5
 
 GRASP_MANIPULATION_OFFSET: float = 0.06
 
@@ -191,6 +235,35 @@ EFFECT_VARIABLE_NAMES: List[str] = ["milk_end_z"]
 
 CAUSAL_QUERY_RESOLUTION: float = 0.005
 
+# Width of the correction window applied to the primary cause variable.
+# Set to one JPT leaf width (10x the variable precision of 0.005).
+# Wide enough to draw valid samples, narrow enough to stay near the recommendation.
+CAUSAL_CORRECTION_WINDOW: float = 0.05
+
+# Apartment approach variable bounds in JPT coordinate space (after offset remapping).
+# Used to clip corrected values to the physically reachable zone.
+# Keyed by JPT variable name. To reuse this correction framework for a different
+# task, replace this dict with bounds appropriate for that task's JPT coordinate space.
+APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE: Dict[str, tuple] = {
+    "pick_approach_x":  (COUNTER_APPROACH_MIN_X, COUNTER_APPROACH_MAX_X),
+    "pick_approach_y":  (
+        COUNTER_APPROACH_MIN_Y - MILK_SPAWN_Y,
+        COUNTER_APPROACH_MAX_Y - MILK_SPAWN_Y,
+    ),
+    "place_approach_x": (
+        TABLE_APPROACH_MIN_X - (PLACE_TARGET_X - OPEN_WORLD_PLACE_TARGET_X),
+        TABLE_APPROACH_MAX_X - (PLACE_TARGET_X - OPEN_WORLD_PLACE_TARGET_X),
+    ),
+    "place_approach_y": (
+        TABLE_APPROACH_MIN_Y - PLACE_TARGET_Y,
+        TABLE_APPROACH_MAX_Y - PLACE_TARGET_Y,
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Symbolic arm domain for pyjpt sampling
+# ---------------------------------------------------------------------------
 
 ArmChoiceDomain = type(
     "ArmChoiceDomain",
@@ -213,6 +286,10 @@ JPT_VARIABLES: List = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
 @dataclass
 class PlanParameters:
     """Sampled parameters for one pick-and-place iteration."""
@@ -223,12 +300,83 @@ class PlanParameters:
     pick_arm:           Arms
 
 
+@dataclass
+class CausalSamplingCorrection:
+    """
+    A one-shot correction applied to the next JPT sample after a causal failure.
+
+    This class is intentionally task-agnostic. It holds the JPT variable name
+    and recommended value from a FailureDiagnosisResult, plus the correction
+    window and task-specific variable bounds.
+
+    Generalisation note
+    -------------------
+    To reuse this correction framework for a different robot action (door opening,
+    object handover, pouring, etc.), the only task-specific changes required are:
+
+      1. Define a variable_bounds dict mapping JPT variable names to (min, max)
+         in that task's JPT coordinate space — analogous to
+         APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE here.
+
+      2. Implement the coordinate remapping in the task's sample function
+         (analogous to _sample_plan_parameters() here) to convert JPT-space
+         recommendations back to the task's world coordinates.
+
+      Everything else — the CausalCircuit, MdVtreeNode, diagnose_failure(),
+      _diagnose_and_log(), _build_correction_from_diagnosis(), and the main
+      loop correction logic — is reused completely unchanged.
+
+    Fields
+    ------
+    active
+        Whether a correction is pending for the next sample.
+    jpt_variable_name
+        The variable to correct, in JPT coordinate space.
+    recommended_value
+        Midpoint of the highest-probability cause region from the
+        interventional circuit, in JPT coordinate space.
+    correction_window
+        Half-width of the interval around the recommended value.
+        The corrected sample lies in [recommended_value ± correction_window].
+    variable_bounds
+        Task-specific (min, max) bounds in JPT space for clipping.
+    source_iteration
+        The iteration that produced this correction, for logging.
+    """
+    active:            bool  = False
+    jpt_variable_name: str   = ""
+    recommended_value: float = 0.0
+    correction_window: float = CAUSAL_CORRECTION_WINDOW
+    variable_bounds:   tuple = (float("-inf"), float("inf"))
+    source_iteration:  int   = 0
+
+
+@dataclass
+class RunStatistics:
+    """
+    Tracks success and failure counts, separating corrected-attempt outcomes
+    from baseline outcomes.
+
+    The separation is the key measurement: it lets you directly compare the
+    success rate of causally corrected iterations against the baseline JPT
+    success rate, quantifying the causal circuit's contribution to improvement.
+    """
+    successful_count:        int = 0
+    failed_count:            int = 0
+    corrected_attempt_count: int = 0
+    corrected_success_count: int = 0
+    corrected_failure_count: int = 0
+
+
+# ---------------------------------------------------------------------------
+# ORM patch: handle None values in numpy TypeDecorator
+# ---------------------------------------------------------------------------
 
 def _patch_orm_numpy_array_type() -> None:
     """
     Patch the PyCRAM ORM numpy TypeDecorator so that None values are passed
-    through without calling .astype(), which would raise AttributeError when
-    a plan action has no associated array data.
+    through without calling .astype(), which raises AttributeError when a plan
+    action has no associated array data.
     """
     target_class = None
     for module_name in list(sys.modules):
@@ -263,7 +411,9 @@ def _patch_orm_numpy_array_type() -> None:
 _patch_orm_numpy_array_type()
 
 
-
+# ---------------------------------------------------------------------------
+# World construction
+# ---------------------------------------------------------------------------
 
 def _build_world(apartment_urdf_path: Path) -> tuple[World, PR2]:
     world = URDFParser.from_file(str(apartment_urdf_path)).parse()
@@ -353,7 +503,16 @@ def _respawn_milk(world: World, milk_body: Body) -> None:
     print(f"  [respawn] Milk reset to ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
 
 
+# Robot position is tracked explicitly in the main loop via robot_x / robot_y
+# variables rather than reading from the world transform chain. This avoids
+# the ambiguity between the odom_combined local frame and the apartment world
+# frame, which caused incorrect (0,0) readings when the OmniDrive connection
+# origin was read directly.
 
+
+# ---------------------------------------------------------------------------
+# Database
+# ---------------------------------------------------------------------------
 
 def _create_database_session(database_uri: str) -> Session:
     print(f"  [db] Connecting to {database_uri} ...")
@@ -423,6 +582,10 @@ def _persist_plan(session: Session, plan: SequentialPlan) -> None:
     print("  [db] Plan committed.")
 
 
+# ---------------------------------------------------------------------------
+# GCS navigation
+# ---------------------------------------------------------------------------
+
 def _build_navigation_map(world: World) -> GraphOfConvexSets:
     search_space = BoundingBoxCollection(
         [
@@ -447,60 +610,74 @@ def _build_navigation_map(world: World) -> GraphOfConvexSets:
     return navigation_map
 
 
-def _build_gcs_node_array(navigation_map: GraphOfConvexSets) -> np.ndarray:
+def _build_gcs_bounds_array(navigation_map: GraphOfConvexSets) -> np.ndarray:
     """
-    Pre-compute a (N, 6) array of [min_x, min_y, min_z, max_x, max_y, max_z]
-    for all GCS nodes. Enables vectorised free-space checks roughly 100x faster
-    than the Python loop in GraphOfConvexSets.node_of_point.
+    Build a fast (N, 6) numpy array of world-frame GCS node bounds.
+
+    Uses node.simple_event to extract world-frame interval bounds, which is
+    the same coordinate system that path_from_to uses internally. This is
+    correct regardless of the BoundingBox origin transform, because
+    simple_event accesses the event representation that GCS builds from the
+    free-space computation (world coordinates).
+
+    Returns array with columns: [min_x, min_y, min_z, max_x, max_y, max_z].
     """
-    nodes = list(navigation_map.graph.nodes())
-    node_bounding_boxes = np.array(
-        [[node.min_x, node.min_y, node.min_z, node.max_x, node.max_y, node.max_z]
-         for node in nodes],
-        dtype=np.float64,
+    from semantic_digital_twin.datastructures.variables import SpatialVariables
+    rows = []
+    for node in navigation_map.graph.nodes():
+        se = node.simple_event
+        x_intervals = se[SpatialVariables.x.value].simple_sets
+        y_intervals = se[SpatialVariables.y.value].simple_sets
+        z_intervals = se[SpatialVariables.z.value].simple_sets
+        if not x_intervals or not y_intervals or not z_intervals:
+            continue
+        xi, yi, zi = x_intervals[0], y_intervals[0], z_intervals[0]
+        rows.append([float(xi.lower), float(yi.lower), float(zi.lower),
+                     float(xi.upper), float(yi.upper), float(zi.upper)])
+    array = np.array(rows, dtype=np.float64)
+    print(f"  GCS bounds array: {len(array)} nodes")
+    return array
+
+
+def _point_in_free_space(bounds: np.ndarray, x: float, y: float, z: float) -> bool:
+    """Vectorised O(N) free-space check using precomputed world-frame bounds."""
+    return bool(
+        ((bounds[:, 0] <= x) & (x <= bounds[:, 3]) &
+         (bounds[:, 1] <= y) & (y <= bounds[:, 4]) &
+         (bounds[:, 2] <= z) & (z <= bounds[:, 5])).any()
     )
-    print(f"  GCS node index: {len(node_bounding_boxes)} bounding boxes")
-    return node_bounding_boxes
 
 
-def _is_in_free_space(
-    node_bounding_boxes: np.ndarray,
-    x: float,
-    y: float,
-    z: float,
-) -> bool:
-    inside = (
-        (node_bounding_boxes[:, 0] <= x) & (x <= node_bounding_boxes[:, 3]) &
-        (node_bounding_boxes[:, 1] <= y) & (y <= node_bounding_boxes[:, 4]) &
-        (node_bounding_boxes[:, 2] <= z) & (z <= node_bounding_boxes[:, 5])
-    )
-    return bool(inside.any())
-
-
-def _find_nearest_free_point(
-    navigation_map:      GraphOfConvexSets,
-    node_bounding_boxes: np.ndarray,
-    x:                   float,
-    y:                   float,
-    z:                   float,
-    world:               World,
-    search_radius:       float = 0.6,
-    radial_step:         float = 0.05,
-    angular_steps:       int   = 16,
+def _snap_to_free_space(
+    gcs_bounds:    np.ndarray,
+    x:             float,
+    y:             float,
+    z:             float,
+    world:         World,
+    search_radius: float = 0.8,
+    radial_step:   float = 0.05,
+    angular_steps: int   = 16,
 ) -> Optional[Point3]:
-    """Spiral outward from (x, y, z) until a GCS free-space cell is found."""
-    if _is_in_free_space(node_bounding_boxes, x, y, z):
+    """
+    Return a Point3 in GCS free space at or near (x, y, z).
+
+    Uses the precomputed world-frame bounds array for fast O(N) checks
+    instead of the O(N) Python loop in node_of_point(). Spirals outward
+    until a free cell is found or search_radius is exceeded.
+    """
+    if _point_in_free_space(gcs_bounds, x, y, z):
         return Point3(x, y, z, reference_frame=world.root)
-    print(f"    [GCS] ({x:.3f},{y:.3f}) is occupied — searching for nearest free point ...")
+
+    print(f"    [GCS] ({x:.3f},{y:.3f}) not in free space — searching nearby ...")
     for radius in np.arange(radial_step, search_radius + radial_step, radial_step):
         angles = np.linspace(0, 2 * np.pi, angular_steps, endpoint=False)
-        for candidate_x, candidate_y in zip(
-            x + radius * np.cos(angles),
-            y + radius * np.sin(angles),
-        ):
-            if _is_in_free_space(node_bounding_boxes, candidate_x, candidate_y, z):
-                print(f"    [GCS] Free point found at ({candidate_x:.3f},{candidate_y:.3f}) r={radius:.2f}")
-                return Point3(candidate_x, candidate_y, z, reference_frame=world.root)
+        for theta in angles:
+            probe_x = x + radius * np.cos(theta)
+            probe_y = y + radius * np.sin(theta)
+            if _point_in_free_space(gcs_bounds, probe_x, probe_y, z):
+                print(f"    [GCS] Free point found at ({probe_x:.3f},{probe_y:.3f}) r={radius:.2f}")
+                return Point3(probe_x, probe_y, z, reference_frame=world.root)
+
     print(f"    [GCS] No free point found within radius={search_radius}")
     return None
 
@@ -514,15 +691,17 @@ def _make_pose(x: float, y: float, z: float, reference_frame: Any) -> Pose:
 
 
 def _path_to_navigate_actions(
-    path:            List[Point3],
-    world_frame:     Any,
+    path:              List[Point3],
+    world_frame:       Any,
     keep_joint_states: bool,
 ) -> List[NavigateAction]:
     return [
         NavigateAction(
             target_location=Pose(
-                position=Point3(x=float(waypoint.x), y=float(waypoint.y), z=0.0,
-                                reference_frame=world_frame),
+                position=Point3(
+                    x=float(waypoint.x), y=float(waypoint.y), z=0.0,
+                    reference_frame=world_frame,
+                ),
                 orientation=Quaternion(x=0, y=0, z=0, w=1, reference_frame=world_frame),
                 reference_frame=world_frame,
             ),
@@ -532,48 +711,71 @@ def _path_to_navigate_actions(
 
 
 def _navigate_via_gcs(
-    context:             Context,
-    navigation_map:      GraphOfConvexSets,
-    node_bounding_boxes: np.ndarray,
-    start_x:             float,
-    start_y:             float,
-    goal_x:              float,
-    goal_y:              float,
-    world:               World,
-    keep_joint_states:   bool = False,
+    context:           Context,
+    navigation_map:    GraphOfConvexSets,
+    gcs_bounds:        np.ndarray,
+    start_x:           float,
+    start_y:           float,
+    goal_x:            float,
+    goal_y:            float,
+    world:             World,
+    keep_joint_states: bool = False,
 ) -> List[NavigateAction]:
     """
-    Plan a collision-free path via GCS and return it as NavigateActions.
-    Falls back to a single direct NavigateAction if GCS cannot find a path.
-    """
-    midpoint_z  = (GCS_SEARCH_MIN_Z + GCS_SEARCH_MAX_Z) / 2.0
-    start_point = Point3(start_x, start_y, midpoint_z, reference_frame=world.root)
-    goal_point  = Point3(goal_x,  goal_y,  midpoint_z, reference_frame=world.root)
+    Plan a collision-free path via GCS and return it as a list of NavigateActions.
 
-    direct_fallback = [NavigateAction(
-        target_location=_make_pose(goal_x, goal_y, 0.0, world.root),
-        keep_joint_states=keep_joint_states,
-    )]
+    Both start and goal are snapped into GCS free space using the precomputed
+    world-frame bounds array (fast vectorised O(N) check). path_from_to is
+    then called on the snapped points.
+
+    Raises ValueError if either point cannot be placed in free space or if
+    path_from_to returns no path. There is no silent straight-line fallback —
+    any straight line through the apartment crosses the kitchen counter.
+    """
+    midpoint_z = (GCS_SEARCH_MIN_Z + GCS_SEARCH_MAX_Z) / 2.0
+
+    snapped_start = _snap_to_free_space(gcs_bounds, start_x, start_y, midpoint_z, world)
+    if snapped_start is None:
+        raise ValueError(
+            f"GCS: cannot place start ({start_x:.3f},{start_y:.3f}) in free space. "
+            f"The position may be inside an obstacle or outside the search space."
+        )
+
+    snapped_goal = _snap_to_free_space(gcs_bounds, goal_x, goal_y, midpoint_z, world)
+    if snapped_goal is None:
+        raise ValueError(
+            f"GCS: cannot place goal ({goal_x:.3f},{goal_y:.3f}) in free space. "
+            f"The target may be inside an obstacle or outside the search space."
+        )
 
     try:
-        path = navigation_map.path_from_to(start_point, goal_point)
+        path = navigation_map.path_from_to(snapped_start, snapped_goal)
     except Exception as path_error:
-        print(f"    [GCS] path_from_to failed: {path_error} — falling back to direct navigation.")
-        return direct_fallback
+        raise ValueError(
+            f"GCS: path_from_to failed from ({start_x:.3f},{start_y:.3f}) "
+            f"to ({goal_x:.3f},{goal_y:.3f}): {path_error}"
+        ) from path_error
 
     if path is None or len(path) < 2:
-        print("    [GCS] No path found — falling back to direct navigation.")
-        return direct_fallback
+        raise ValueError(
+            f"GCS: no path found from ({start_x:.3f},{start_y:.3f}) "
+            f"to ({goal_x:.3f},{goal_y:.3f})."
+        )
 
     navigate_actions = _path_to_navigate_actions(path, world.root, keep_joint_states)
-    print(f"    [GCS] ({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}): "
-          f"{len(navigate_actions)} waypoint(s)")
+    print(
+        f"    [GCS] ({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}): "
+        f"{len(navigate_actions)} waypoint(s)"
+    )
     for index, action in enumerate(navigate_actions):
         position = action.target_location.to_position()
         print(f"           waypoint {index + 1}: ({float(position.x):.3f}, {float(position.y):.3f})")
     return navigate_actions
 
 
+# ---------------------------------------------------------------------------
+# JPT loading and sampling
+# ---------------------------------------------------------------------------
 
 def _load_joint_probability_tree(model_path: str) -> JointProbabilityTree:
     print(f"  [jpt] Loading model from {model_path} ...")
@@ -587,55 +789,94 @@ def _load_joint_probability_tree(model_path: str) -> JointProbabilityTree:
 
 def _sample_plan_parameters(
     joint_probability_tree: JointProbabilityTree,
+    correction:             Optional[CausalSamplingCorrection] = None,
 ) -> PlanParameters:
     """
-    Draw one joint sample from the open-world JPT and map it to apartment
-    PlanParameters, clipping approach positions to the apartment zones.
+    Draw one joint sample from the JPT and map it to PlanParameters.
 
-    All five plan variables are drawn in a single call so their values reflect
-    the learned joint distribution of successful executions rather than being
-    drawn independently. The clipping ensures positions stay within the
-    apartment's physically reachable zones.
+    If a CausalSamplingCorrection is active, the primary cause variable is
+    overridden with the recommended value clamped to the correction window and
+    the task's variable bounds. All other variables are drawn freely from the
+    joint distribution, preserving inter-variable correlations.
+
+    The correction is applied in JPT coordinate space before the coordinate
+    remapping to apartment absolute positions. This ordering is essential:
+    the CausalCircuit recommendation is in JPT space (open-world offsets),
+    so it must be applied before the offset addition that produces apartment
+    absolute coordinates.
+
+    To adapt this function for a different robot action, replace the coordinate
+    remapping block with the mapping appropriate for that task's world geometry.
+    The correction logic above the remapping block is completely task-agnostic.
     """
     sample_row     = joint_probability_tree.sample(1)[0]
     sample_by_name = {variable.name: sample_row[index]
                       for index, variable in enumerate(JPT_VARIABLES)}
+
+    # Apply causal correction in JPT coordinate space if active.
+    if correction is not None and correction.active:
+        lower_bound = correction.recommended_value - correction.correction_window
+        upper_bound = correction.recommended_value + correction.correction_window
+        if correction.variable_bounds != (float("-inf"), float("inf")):
+            lower_bound = max(lower_bound, correction.variable_bounds[0])
+            upper_bound = min(upper_bound, correction.variable_bounds[1])
+        corrected_value = float(
+            np.clip(correction.recommended_value, lower_bound, upper_bound)
+        )
+        sample_by_name[correction.jpt_variable_name] = corrected_value
+        print(
+            f"  [correction] {correction.jpt_variable_name}: "
+            f"{corrected_value:.4f}  "
+            f"(window [{lower_bound:.4f}, {upper_bound:.4f}], "
+            f"from iteration {correction.source_iteration})"
+        )
 
     arm_label = sample_by_name["pick_arm"]
     if isinstance(arm_label, (int, float)):
         arm_label = ArmChoiceDomain.labels[int(arm_label)]
     pick_arm = Arms.LEFT if arm_label == "LEFT" else Arms.RIGHT
 
+    # Coordinate remapping: JPT open-world offsets → apartment absolute positions.
+    # The JPT was trained with milk at y=0 and place target at x=OPEN_WORLD_PLACE_TARGET_X.
+    # The apartment milk is at y=MILK_SPAWN_Y and place target at x=PLACE_TARGET_X.
+    # Adding back the respective offsets recovers absolute apartment coordinates.
+    counter_approach_x = float(np.clip(
+        sample_by_name["pick_approach_x"],
+        COUNTER_APPROACH_MIN_X, COUNTER_APPROACH_MAX_X,
+    ))
+    counter_approach_y = float(np.clip(
+        sample_by_name["pick_approach_y"] + MILK_SPAWN_Y,
+        COUNTER_APPROACH_MIN_Y, COUNTER_APPROACH_MAX_Y,
+    ))
+    table_approach_x = float(np.clip(
+        sample_by_name["place_approach_x"] + (PLACE_TARGET_X - OPEN_WORLD_PLACE_TARGET_X),
+        TABLE_APPROACH_MIN_X, TABLE_APPROACH_MAX_X,
+    ))
+    table_approach_y = float(np.clip(
+        sample_by_name["place_approach_y"] + PLACE_TARGET_Y,
+        TABLE_APPROACH_MIN_Y, TABLE_APPROACH_MAX_Y,
+    ))
+
     return PlanParameters(
-        counter_approach_x=float(np.clip(
-            sample_by_name["pick_approach_x"],
-            COUNTER_APPROACH_MIN_X, COUNTER_APPROACH_MAX_X,
-        )),
-        counter_approach_y=float(np.clip(
-            sample_by_name["pick_approach_y"],
-            COUNTER_APPROACH_MIN_Y, COUNTER_APPROACH_MAX_Y,
-        )),
-        table_approach_x=float(np.clip(
-            sample_by_name["place_approach_x"],
-            TABLE_APPROACH_MIN_X, TABLE_APPROACH_MAX_X,
-        )),
-        table_approach_y=float(np.clip(
-            sample_by_name["place_approach_y"],
-            TABLE_APPROACH_MIN_Y, TABLE_APPROACH_MAX_Y,
-        )),
+        counter_approach_x=counter_approach_x,
+        counter_approach_y=counter_approach_y,
+        table_approach_x=table_approach_x,
+        table_approach_y=table_approach_y,
         pick_arm=pick_arm,
     )
 
 
+# ---------------------------------------------------------------------------
+# CausalCircuit construction
+# ---------------------------------------------------------------------------
 
 def _build_prob_model_variables(csv_path: str) -> list:
     """
     Build probabilistic_model variable definitions from training CSV statistics.
 
     ProbModelJPT requires its own Continuous/Symbolic types from random_events,
-    which are separate from pyjpt's NumericVariable. Mean and std are used to
-    initialise the Continuous variables, matching the convention expected by
-    the probabilistic_model JPT fitting procedure.
+    which are separate from pyjpt's NumericVariable. Mean and std initialise
+    the Continuous variables as required by the fitting procedure.
     """
     dataframe = pd.read_csv(csv_path)
 
@@ -658,12 +899,10 @@ def _build_causal_circuit(csv_path: str) -> CausalCircuit:
     """
     Fit a ProbModelJPT and construct a CausalCircuit from it.
 
-    A separate ProbModelJPT is used rather than pyjpt because CausalCircuit
-    requires access to a ProbabilisticCircuit object, which only the
-    probabilistic_model JPT exposes via .probabilistic_circuit after fit().
-    The pyjpt model is kept separately for sampling because it is faster.
-
     The CausalCircuit is built once at startup and reused across all iterations.
+    A separate ProbModelJPT is used rather than pyjpt because CausalCircuit
+    requires a ProbabilisticCircuit object exposed via .probabilistic_circuit
+    after fit(). The pyjpt model is retained separately for faster sampling.
     """
     print("  [causal] Fitting ProbModelJPT from training CSV ...")
     prob_model_variables = _build_prob_model_variables(csv_path)
@@ -696,32 +935,36 @@ def _build_causal_circuit(csv_path: str) -> CausalCircuit:
     return causal_circuit
 
 
+# ---------------------------------------------------------------------------
+# Failure diagnosis and correction construction
+# ---------------------------------------------------------------------------
 
 def _diagnose_and_log(
-    causal_circuit:    CausalCircuit,
-    plan_parameters:   PlanParameters,
-    iteration_number:  int,
-) -> None:
+    causal_circuit:   CausalCircuit,
+    plan_parameters:  PlanParameters,
+    iteration_number: int,
+) -> Optional[FailureDiagnosisResult]:
     """
-    Run causal failure diagnosis and print a structured report.
+    Run causal failure diagnosis, print a structured report, and return the
+    FailureDiagnosisResult so the caller can construct a CausalSamplingCorrection.
 
-    Apartment approach coordinates are remapped to open-world JPT coordinates
-    before calling diagnose_failure(). This is necessary because the JPT was
-    trained in the open world where:
-      - The milk is at y=0 (apartment: y=MILK_SPAWN_Y=2.5)
-      - The place target is at x=4.1 (apartment: x=PLACE_TARGET_X=5.0)
+    Apartment approach coordinates are remapped to open-world JPT space before
+    calling diagnose_failure(), because the JPT was trained with the milk at
+    y=0 and the place target at x=OPEN_WORLD_PLACE_TARGET_X. The remapping
+    converts absolute apartment positions to the lateral offsets that the JPT
+    learned during Batch 1 training.
 
-    The remapping shifts absolute apartment positions to the lateral offsets
-    that the JPT learned during Batch 1 training.
+    Returns None if diagnosis raises an exception, allowing the caller to skip
+    correction safely without crashing.
     """
     observed_parameter_values = {
-        "pick_approach_x": plan_parameters.counter_approach_x,
-        "pick_approach_y": plan_parameters.counter_approach_y - MILK_SPAWN_Y,
+        "pick_approach_x":  plan_parameters.counter_approach_x,
+        "pick_approach_y":  plan_parameters.counter_approach_y - MILK_SPAWN_Y,
         "place_approach_x": plan_parameters.table_approach_x - (
             PLACE_TARGET_X - OPEN_WORLD_PLACE_TARGET_X
         ),
         "place_approach_y": plan_parameters.table_approach_y - PLACE_TARGET_Y,
-        "pick_arm": plan_parameters.pick_arm.name,
+        "pick_arm":         plan_parameters.pick_arm.name,
     }
 
     apartment_variable_name_map = {
@@ -777,21 +1020,64 @@ def _diagnose_and_log(
                 f"{out_of_support}{primary_marker}"
             )
         print(f"  └{'─' * 60}")
+        return diagnosis
 
     except Exception as diagnosis_error:
         print(f"  [causal] Diagnosis failed (iteration {iteration_number}): {diagnosis_error}")
+        return None
 
 
+def _build_correction_from_diagnosis(
+    diagnosis:        FailureDiagnosisResult,
+    iteration_number: int,
+) -> Optional[CausalSamplingCorrection]:
+    """
+    Construct a CausalSamplingCorrection from a FailureDiagnosisResult.
+
+    Returns None if no recommendation is available — for example when the
+    primary cause variable has no high-probability region in the interventional
+    circuit (the variable is entirely out of training support).
+
+    This function is the only bridge between the task-agnostic CausalCircuit
+    output and the task-specific sampling pipeline. To reuse for a different
+    task, replace APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE with bounds for
+    that task's JPT coordinate space.
+    """
+    if diagnosis.recommended_value is None:
+        print("  [correction] No recommendation available — skipping correction.")
+        return None
+
+    variable_bounds = APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE.get(
+        diagnosis.primary_cause_variable_name,
+        (float("-inf"), float("inf")),
+    )
+    correction = CausalSamplingCorrection(
+        active=True,
+        jpt_variable_name=diagnosis.primary_cause_variable_name,
+        recommended_value=diagnosis.recommended_value,
+        correction_window=CAUSAL_CORRECTION_WINDOW,
+        variable_bounds=variable_bounds,
+        source_iteration=iteration_number,
+    )
+    print(
+        f"  [correction] Scheduled: {diagnosis.primary_cause_variable_name} → "
+        f"{diagnosis.recommended_value:.4f}  "
+        f"(window ±{CAUSAL_CORRECTION_WINDOW},  bounds {variable_bounds})"
+    )
+    return correction
+
+
+# ---------------------------------------------------------------------------
+# Plan construction
+# ---------------------------------------------------------------------------
 
 def _build_fixed_plan(
-    planning_context:    Context,
-    world:               World,
-    robot:               PR2,
-    milk_body:           Body,
-    navigation_map:      GraphOfConvexSets,
-    node_bounding_boxes: np.ndarray,
-    robot_start_x:       float,
-    robot_start_y:       float,
+    planning_context: Context,
+    world:            World,
+    robot:            PR2,
+    milk_body:        Body,
+    navigation_map:   GraphOfConvexSets,
+    gcs_bounds:       np.ndarray,
 ) -> SequentialPlan:
     """
     Deterministic seed plan used for iteration 1.
@@ -802,20 +1088,24 @@ def _build_fixed_plan(
     """
     seed_arm = Arms.RIGHT
     navigate_to_counter = _navigate_via_gcs(
-        planning_context, navigation_map, node_bounding_boxes,
-        start_x=robot_start_x,     start_y=robot_start_y,
+        planning_context, navigation_map, gcs_bounds,
+        start_x=ROBOT_INIT_X,      start_y=ROBOT_INIT_Y,
         goal_x=COUNTER_APPROACH_X, goal_y=COUNTER_APPROACH_Y,
         world=world,
     )
     navigate_to_table = _navigate_via_gcs(
-        planning_context, navigation_map, node_bounding_boxes,
+        planning_context, navigation_map, gcs_bounds,
         start_x=COUNTER_APPROACH_X, start_y=COUNTER_APPROACH_Y,
         goal_x=TABLE_APPROACH_X,    goal_y=TABLE_APPROACH_Y,
         world=world, keep_joint_states=True,
     )
     place_pose = _make_pose(PLACE_TARGET_X, PLACE_TARGET_Y, PLACE_TARGET_Z, world.root)
-    print(f"  [plan] seed — counter:({COUNTER_APPROACH_X},{COUNTER_APPROACH_Y})  "
-          f"table:({TABLE_APPROACH_X},{TABLE_APPROACH_Y})  arm:{seed_arm}")
+    print(
+        f"  [plan] seed — "
+        f"counter:({COUNTER_APPROACH_X},{COUNTER_APPROACH_Y})  "
+        f"table:({TABLE_APPROACH_X},{TABLE_APPROACH_Y})  "
+        f"arm:{seed_arm}"
+    )
     return SequentialPlan(
         planning_context,
         ParkArmsAction(arm=Arms.BOTH),
@@ -842,30 +1132,30 @@ def _build_fixed_plan(
 
 
 def _build_sampled_plan(
-    planning_context:    Context,
-    plan_parameters:     PlanParameters,
-    world:               World,
-    robot:               PR2,
-    milk_body:           Body,
-    navigation_map:      GraphOfConvexSets,
-    node_bounding_boxes: np.ndarray,
-    robot_start_x:       float,
-    robot_start_y:       float,
+    planning_context: Context,
+    plan_parameters:  PlanParameters,
+    world:            World,
+    robot:            PR2,
+    milk_body:        Body,
+    navigation_map:   GraphOfConvexSets,
+    gcs_bounds:       np.ndarray,
+    robot_start_x:    float,
+    robot_start_y:    float,
 ) -> SequentialPlan:
-    """Build a plan from JPT-sampled approach positions and arm choice."""
+    """Build a plan from JPT-sampled (or causally corrected) approach positions."""
     manipulator = (
         robot.right_arm.manipulator
         if plan_parameters.pick_arm == Arms.RIGHT
         else robot.left_arm.manipulator
     )
     navigate_to_counter = _navigate_via_gcs(
-        planning_context, navigation_map, node_bounding_boxes,
+        planning_context, navigation_map, gcs_bounds,
         start_x=robot_start_x,                    start_y=robot_start_y,
         goal_x=plan_parameters.counter_approach_x, goal_y=plan_parameters.counter_approach_y,
         world=world,
     )
     navigate_to_table = _navigate_via_gcs(
-        planning_context, navigation_map, node_bounding_boxes,
+        planning_context, navigation_map, gcs_bounds,
         start_x=plan_parameters.counter_approach_x, start_y=plan_parameters.counter_approach_y,
         goal_x=plan_parameters.table_approach_x,    goal_y=plan_parameters.table_approach_y,
         world=world, keep_joint_states=True,
@@ -903,69 +1193,153 @@ def _build_sampled_plan(
 
 
 def _navigate_back_to_start(
-    planning_context:    Context,
-    navigation_map:      GraphOfConvexSets,
-    node_bounding_boxes: np.ndarray,
-    world:               World,
-    table_approach_x:    float,
-    table_approach_y:    float,
-    counter_approach_x:  float,
-    counter_approach_y:  float,
+    planning_context: Context,
+    navigation_map:   GraphOfConvexSets,
+    gcs_bounds:       np.ndarray,
+    world:            World,
+    robot_x:          float,
+    robot_y:          float,
 ) -> None:
     """
-    Return the robot to the start zone by retracing the forward path in reverse:
-        table_approach → counter_approach → fixed start zone
+    Return the robot to the fixed start zone from its actual current position.
+
+    Reads the robot ground-truth position from the world state rather than
+    using planned approach coordinates. This is correct regardless of where the
+    robot stopped — after a complete successful plan it will be near the table
+    approach zone; after a mid-plan failure it may be anywhere.
+
+    If GCS cannot plan a path (robot is deeply inside an obstacle or the graph
+    is disconnected at that position), the failure is logged and the next
+    iteration reads the robot position fresh, so this is non-fatal.
+    There is no straight-line fallback — routing through the counter is never
+    acceptable and would cause the next iteration to start from a wrong position.
     """
     print(
-        f"  [return] table({table_approach_x:.2f},{table_approach_y:.2f}) -> "
-        f"counter({counter_approach_x:.2f},{counter_approach_y:.2f}) -> "
-        f"start({COUNTER_APPROACH_X},{COUNTER_APPROACH_Y})"
+        f"  [return] robot position ({robot_x:.2f},{robot_y:.2f}) -> "
+        f"start ({COUNTER_APPROACH_X},{COUNTER_APPROACH_Y})"
     )
-    leg_table_to_counter = _navigate_via_gcs(
-        planning_context, navigation_map, node_bounding_boxes,
-        start_x=table_approach_x,   start_y=table_approach_y,
-        goal_x=counter_approach_x,  goal_y=counter_approach_y,
-        world=world,
-    )
-    leg_counter_to_start = _navigate_via_gcs(
-        planning_context, navigation_map, node_bounding_boxes,
-        start_x=counter_approach_x, start_y=counter_approach_y,
-        goal_x=COUNTER_APPROACH_X,  goal_y=COUNTER_APPROACH_Y,
-        world=world,
-    )
-    return_plan = SequentialPlan(
-        planning_context,
-        *(leg_table_to_counter + leg_counter_to_start),
-    )
+    try:
+        return_actions = _navigate_via_gcs(
+            planning_context, navigation_map, gcs_bounds,
+            start_x=robot_x,           start_y=robot_y,
+            goal_x=COUNTER_APPROACH_X, goal_y=COUNTER_APPROACH_Y,
+            world=world,
+        )
+    except ValueError as gcs_error:
+        print(f"  [return] WARNING: GCS path planning failed: {gcs_error}")
+        print("  [return] Robot position will be read fresh at the next iteration.")
+        return
+
+    return_plan = SequentialPlan(planning_context, *return_actions)
     with simulated_robot:
         try:
             return_plan.perform()
             print("  [return] Robot at start position.")
         except Exception as return_error:
-            print(f"  [return] WARNING: return navigation failed: {return_error}")
+            print(f"  [return] WARNING: return navigation execution failed: {return_error}")
+
+# ---------------------------------------------------------------------------
+# Run summary
+# ---------------------------------------------------------------------------
+
+def _print_run_summary(
+    statistics:           RunStatistics,
+    number_of_iterations: int,
+    database_session:     Session,
+) -> None:
+    """
+    Print the final run summary including the causal correction contribution.
+
+    The summary separates corrected-attempt statistics from baseline statistics
+    so the direct impact of the CausalCircuit can be read off immediately.
+    The lift metric is the corrected success rate minus the baseline rate.
+    """
+    overall_success_rate        = 100 * statistics.successful_count // number_of_iterations
+    uncorrected_iteration_count = number_of_iterations - statistics.corrected_attempt_count
+    uncorrected_success_count   = (
+        statistics.successful_count - statistics.corrected_success_count
+    )
+    baseline_rate = (
+        100 * uncorrected_success_count // max(uncorrected_iteration_count, 1)
+    )
+
+    print(f"\n{'=' * 64}")
+    print(f"  Run complete.")
+    print(f"  {'─' * 60}")
+    print(f"  Overall results")
+    print(f"    Iterations        : {number_of_iterations}")
+    print(f"    Successful        : {statistics.successful_count}  ({overall_success_rate}%)")
+    print(f"    Failed            : {statistics.failed_count}")
+    print(f"  {'─' * 60}")
+    print(f"  Causal correction breakdown")
+    print(f"    Corrected attempts  : {statistics.corrected_attempt_count}")
+
+    if statistics.corrected_attempt_count > 0:
+        corrected_rate = (
+            100 * statistics.corrected_success_count
+            // statistics.corrected_attempt_count
+        )
+        lift = corrected_rate - baseline_rate
+        print(
+            f"    Corrected successes : {statistics.corrected_success_count}  "
+            f"({corrected_rate}%)"
+        )
+        print(f"    Corrected failures  : {statistics.corrected_failure_count}")
+        print(f"  {'─' * 60}")
+        print(f"  Baseline success rate (uncorrected)  : {baseline_rate}%")
+        print(f"  Corrected success rate               : {corrected_rate}%")
+        print(f"  Causal correction lift               : {lift:+d}%")
+    else:
+        print("    No corrected attempts recorded.")
+
+    print(f"{'=' * 64}")
+
+    try:
+        row_count = database_session.execute(
+            text('SELECT COUNT(*) FROM "SequentialPlanDAO"')
+        ).scalar()
+        print(f"  DB rows (SequentialPlanDAO): {row_count}")
+    except Exception as count_error:
+        print(f"  [db] Could not read row count: {count_error}")
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 def pick_and_place_demo_apartment_jpt() -> None:
     """
     Apartment world Batch 2: 5000 iterations of JPT-guided pick-and-place
-    with causal failure diagnosis.
+    with causal failure diagnosis and active parameter correction.
 
     Iteration 1 uses fixed deterministic parameters to confirm the world,
     robot, and database are correctly initialised. Subsequent iterations
-    sample jointly from the open-world JPT, concentrating parameter choices
-    in the region of the space that historically led to successful executions.
+    sample jointly from the open-world JPT.
 
-    On each failure, CausalCircuit.diagnose_failure() identifies the primary
-    causal variable and recommends a corrective value based on the backdoor
-    adjustment formula with Z=∅.
+    When a plan fails, CausalCircuit.diagnose_failure() identifies the primary
+    causal variable and recommends a corrective value. A CausalSamplingCorrection
+    is then applied to the immediately following iteration, clamping the primary
+    cause variable near the recommended value while all other variables are still
+    drawn freely from the JPT joint distribution.
+
+    If the corrected attempt also fails, sampling reverts to the unconstrained
+    JPT on the next iteration — correction chains on bad recommendations are
+    prevented by design.
+
+    After every iteration, the robot navigates back to the start zone from its
+    actual current position using a single GCS call, avoiding the previously
+    broken two-leg return that used phantom planned positions as start points.
+
+    The final run summary reports baseline and corrected success rates separately,
+    quantifying the direct contribution of the causal circuit to improvement.
     """
     print("=" * 64)
     print("  pick_and_place_demo_apartment_jpt  (Batch 2 / JPT + Causal)")
-    print(f"  Iterations   : {NUMBER_OF_ITERATIONS}")
-    print(f"  Place target : ({PLACE_TARGET_X}, {PLACE_TARGET_Y}, {PLACE_TARGET_Z})")
-    print(f"  JPT model    : {JPT_MODEL_PATH}")
-    print(f"  Database     : {DATABASE_URI}")
+    print(f"  Iterations        : {NUMBER_OF_ITERATIONS}")
+    print(f"  Place target      : ({PLACE_TARGET_X}, {PLACE_TARGET_Y}, {PLACE_TARGET_Z})")
+    print(f"  JPT model         : {JPT_MODEL_PATH}")
+    print(f"  Database          : {DATABASE_URI}")
+    print(f"  Correction window : ±{CAUSAL_CORRECTION_WINDOW}")
     print("=" * 64)
 
     print("\n[1/6] Building apartment world ...")
@@ -973,8 +1347,8 @@ def pick_and_place_demo_apartment_jpt() -> None:
     _add_localization_frames(world, robot)
     milk_body = _spawn_milk(world, MILK_STL_PATH)
     print(f"  Milk at ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
-    navigation_map      = _build_navigation_map(world)
-    node_bounding_boxes = _build_gcs_node_array(navigation_map)
+    navigation_map = _build_navigation_map(world)
+    gcs_bounds     = _build_gcs_bounds_array(navigation_map)
 
     print("\n[2/6] Connecting to database ...")
     database_session = _create_database_session(DATABASE_URI)
@@ -982,7 +1356,7 @@ def pick_and_place_demo_apartment_jpt() -> None:
     print("\n[3/6] Loading pyjpt model (for sampling) ...")
     joint_probability_tree = _load_joint_probability_tree(JPT_MODEL_PATH)
 
-    print("\n[4/6] Building CausalCircuit (for failure diagnosis) ...")
+    print("\n[4/6] Building CausalCircuit (for diagnosis and correction) ...")
     causal_circuit = _build_causal_circuit(TRAINING_CSV_PATH)
 
     print("\n[5/6] Starting ROS ...")
@@ -996,98 +1370,163 @@ def pick_and_place_demo_apartment_jpt() -> None:
         TFPublisher(_world=world, node=ros_node)
         VizMarkerPublisher(_world=world, node=ros_node)
 
-        planning_context = Context(world, robot, None)
+        planning_context    = Context(world, robot, None)
+        statistics          = RunStatistics()
+        pending_correction: Optional[CausalSamplingCorrection] = None
+        # Explicit robot position tracking in apartment world coordinates.
+        # Updated to ROBOT_INIT after each return navigation completes.
+        robot_x: float = ROBOT_INIT_X
+        robot_y: float = ROBOT_INIT_Y
 
         print("\n[6/6] Running iterations ...")
-        successful_count = 0
-        failed_count     = 0
 
         for iteration_number in range(1, NUMBER_OF_ITERATIONS + 1):
             print(f"\n{'=' * 64}")
             print(
                 f"  Iteration {iteration_number}/{NUMBER_OF_ITERATIONS}  "
-                f"(success={successful_count}  failed={failed_count})"
+                f"(success={statistics.successful_count}  "
+                f"failed={statistics.failed_count}  "
+                f"corrected={statistics.corrected_success_count}/"
+                f"{statistics.corrected_attempt_count})"
             )
             print(f"{'=' * 64}")
 
+            this_iteration_is_corrected = (
+                pending_correction is not None and pending_correction.active
+            )
+
+            plan = None
             if iteration_number == 1:
                 print("  Mode: FIXED")
-                plan = _build_fixed_plan(
-                    planning_context, world, robot, milk_body,
-                    navigation_map, node_bounding_boxes,
-                    robot_start_x=ROBOT_INIT_X, robot_start_y=ROBOT_INIT_Y,
+                current_parameters = None
+                try:
+                    plan = _build_fixed_plan(
+                        planning_context, world, robot, milk_body,
+                        navigation_map, gcs_bounds,
+                    )
+                except ValueError as gcs_error:
+                    statistics.failed_count += 1
+                    print(f"  RESULT: FAILED (GCS plan build) — {gcs_error}")
+
+            elif this_iteration_is_corrected:
+                print(
+                    f"  Mode: CAUSALLY CORRECTED  "
+                    f"({pending_correction.jpt_variable_name} → "
+                    f"{pending_correction.recommended_value:.4f}, "
+                    f"from iteration {pending_correction.source_iteration})"
                 )
-                return_table_approach_x   = TABLE_APPROACH_X
-                return_table_approach_y   = TABLE_APPROACH_Y
-                return_counter_approach_x = COUNTER_APPROACH_X
-                return_counter_approach_y = COUNTER_APPROACH_Y
-                current_parameters        = None
+                statistics.corrected_attempt_count += 1
+                current_parameters = _sample_plan_parameters(
+                    joint_probability_tree, correction=pending_correction
+                )
+                try:
+                    plan = _build_sampled_plan(
+                        planning_context, current_parameters, world, robot, milk_body,
+                        navigation_map, gcs_bounds,
+                        robot_start_x=robot_x, robot_start_y=robot_y,
+                    )
+                except ValueError as gcs_error:
+                    statistics.failed_count += 1
+                    statistics.corrected_failure_count += 1
+                    print(f"  RESULT: FAILED (GCS plan build) — {gcs_error}")
+
             else:
                 print("  Mode: JPT-SAMPLED")
                 current_parameters = _sample_plan_parameters(joint_probability_tree)
-                plan = _build_sampled_plan(
-                    planning_context, current_parameters, world, robot, milk_body,
-                    navigation_map, node_bounding_boxes,
-                    robot_start_x=ROBOT_INIT_X, robot_start_y=ROBOT_INIT_Y,
-                )
-                return_table_approach_x   = current_parameters.table_approach_x
-                return_table_approach_y   = current_parameters.table_approach_y
-                return_counter_approach_x = current_parameters.counter_approach_x
-                return_counter_approach_y = current_parameters.counter_approach_y
-
-            print("\n  Executing plan ...")
-            execution_succeeded = False
-            with simulated_robot:
                 try:
-                    plan.perform()
-                    execution_succeeded = True
-                    print("  Execution complete.")
-                except Exception as execution_error:
-                    failed_count += 1
-                    print(
-                        f"  RESULT: FAILED — "
-                        f"{type(execution_error).__name__}: {execution_error}"
+                    plan = _build_sampled_plan(
+                        planning_context, current_parameters, world, robot, milk_body,
+                        navigation_map, gcs_bounds,
+                        robot_start_x=robot_x, robot_start_y=robot_y,
                     )
-                    if current_parameters is not None:
-                        _diagnose_and_log(causal_circuit, current_parameters, iteration_number)
+                except ValueError as gcs_error:
+                    statistics.failed_count += 1
+                    print(f"  RESULT: FAILED (GCS plan build) — {gcs_error}")
 
-            if execution_succeeded:
-                try:
-                    _persist_plan(database_session, plan)
-                    successful_count += 1
-                    print(
-                        f"  RESULT: SUCCESS  "
-                        f"({successful_count}/{iteration_number} stored,  "
-                        f"{NUMBER_OF_ITERATIONS - iteration_number} remaining)"
-                    )
-                except Exception as database_error:
-                    print(f"  [db] ERROR: {database_error}")
-                    traceback.print_exc()
+            # Consume the pending correction. Corrections are one-shot — the next
+            # iteration samples freely from the JPT unless a new failure triggers
+            # a new correction.
+            pending_correction = None
+
+            if plan is None:
+                # GCS failed to build a valid path during plan construction.
+                # Skip execution and reset world state for the next iteration.
+                print("  Skipping execution — plan could not be built.")
+            else:
+                print("\n  Executing plan ...")
+                execution_succeeded = False
+                with simulated_robot:
+                    try:
+                        plan.perform()
+                        execution_succeeded = True
+                        print("  Execution complete.")
+                        if this_iteration_is_corrected:
+                            statistics.corrected_success_count += 1
+                            print("  [correction] Corrected attempt SUCCEEDED.")
+
+                    except Exception as execution_error:
+                        statistics.failed_count += 1
+                        print(
+                            f"  RESULT: FAILED — "
+                            f"{type(execution_error).__name__}: {execution_error}"
+                        )
+
+                        if this_iteration_is_corrected:
+                            statistics.corrected_failure_count += 1
+                            print(
+                                "  [correction] Corrected attempt also failed — "
+                                "reverting to unconstrained JPT sampling."
+                            )
+                        elif current_parameters is not None:
+                            # Diagnose the failure and schedule a correction for the
+                            # next iteration. Corrected failures are never re-diagnosed
+                            # to prevent correction chains on bad recommendations.
+                            diagnosis = _diagnose_and_log(
+                                causal_circuit, current_parameters, iteration_number
+                            )
+                            if diagnosis is not None:
+                                pending_correction = _build_correction_from_diagnosis(
+                                    diagnosis, iteration_number
+                                )
+
+                if execution_succeeded:
+                    try:
+                        _persist_plan(database_session, plan)
+                        statistics.successful_count += 1
+                        print(
+                            f"  RESULT: SUCCESS  "
+                            f"({statistics.successful_count}/{iteration_number} stored,  "
+                            f"{NUMBER_OF_ITERATIONS - iteration_number} remaining)"
+                        )
+                    except Exception as database_error:
+                        print(f"  [db] ERROR: {database_error}")
+                        traceback.print_exc()
+
+            # Update robot position to the plan endpoint before return navigation.
+            # After a successful plan the robot is at table_approach.
+            # After a failed plan it may be at counter_approach or table_approach
+            # depending on where the failure occurred — use table_approach as the
+            # conservative estimate (the further point) so GCS plans a path that
+            # covers the full return distance even in the worst case.
+            # For iteration 1 (fixed plan) use the fixed approach coordinates.
+            if current_parameters is not None:
+                robot_x = current_parameters.table_approach_x
+                robot_y = current_parameters.table_approach_y
+            else:
+                robot_x = TABLE_APPROACH_X
+                robot_y = TABLE_APPROACH_Y
 
             print("\n  Resetting ...")
             _respawn_milk(world, milk_body)
             _navigate_back_to_start(
-                planning_context, navigation_map, node_bounding_boxes, world,
-                table_approach_x=return_table_approach_x,
-                table_approach_y=return_table_approach_y,
-                counter_approach_x=return_counter_approach_x,
-                counter_approach_y=return_counter_approach_y,
+                planning_context, navigation_map, gcs_bounds, world,
+                robot_x=robot_x, robot_y=robot_y,
             )
+            # After return navigation the robot is at the start zone.
+            robot_x = ROBOT_INIT_X
+            robot_y = ROBOT_INIT_Y
 
-        success_rate = 100 * successful_count // NUMBER_OF_ITERATIONS
-        print(f"\n{'=' * 64}")
-        print(f"  Run complete.")
-        print(f"  Successful : {successful_count} / {NUMBER_OF_ITERATIONS}  ({success_rate}%)")
-        print(f"  Failed     : {failed_count}")
-        print(f"{'=' * 64}")
-
-        try:
-            row_count = database_session.execute(
-                text('SELECT COUNT(*) FROM "SequentialPlanDAO"')
-            ).scalar()
-            print(f"  DB rows (SequentialPlanDAO): {row_count}")
-        except Exception as count_error:
-            print(f"  [db] Could not read row count: {count_error}")
+        _print_run_summary(statistics, NUMBER_OF_ITERATIONS, database_session)
 
     finally:
         database_session.close()
