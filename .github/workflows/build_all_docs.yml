@@ -56,7 +56,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install Jupyter-Book
-        run: pip install 'jupyter-book<2'
+        run: pip install 'jupyter-book<2' sphinxcontrib-mermaid
 
       - name: Build root documentation
         run: jupyter-book build doc
