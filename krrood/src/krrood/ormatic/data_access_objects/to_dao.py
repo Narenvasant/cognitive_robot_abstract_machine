@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, Type, TYPE_CHECKING
 from typing_extensions import get_origin
 
-from krrood.ormatic.data_access_objects import helper
+from krrood.ormatic.data_access_objects.helper import to_dao
 from krrood.ormatic.data_access_objects.base import (
     DataAccessObjectWorkItem,
     DataAccessObjectState,
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from krrood.ormatic.data_access_objects.dao import (
         DataAccessObject,
     )
+
 
 @dataclass
 class ToDataAccessObjectWorkItem(DataAccessObjectWorkItem):
@@ -76,7 +77,7 @@ class ToDataAccessObjectState(DataAccessObjectState[ToDataAccessObjectWorkItem])
         # or might not be what we want to check for AlternativeMapping anyway.
         origin = get_origin(original_class) or original_class
         if inspect.isclass(origin) and issubclass(origin, AlternativeMapping):
-            return helper.to_dao(source_object, state=self)
+            return origin.to_dao(source_object, state=self)
         return source_object
 
     def register(self, source_object: Any, dao_instance: DataAccessObject) -> None:

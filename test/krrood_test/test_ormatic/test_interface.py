@@ -7,10 +7,10 @@ from krrood.ormatic.data_access_objects.alternative_mappings import (
 )
 from krrood.ormatic.data_access_objects.helper import (
     to_dao,
-    ToDataAccessObjectState,
     get_dao_class,
 )
 from krrood.ormatic.data_access_objects.from_dao import FromDataAccessObjectState
+from krrood.ormatic.data_access_objects.to_dao import ToDataAccessObjectState
 from krrood.ormatic.utils import is_data_column
 from krrood.ormatic.exceptions import NoDAOFoundError
 from ..dataset.alternative_mappings_construction_order import (

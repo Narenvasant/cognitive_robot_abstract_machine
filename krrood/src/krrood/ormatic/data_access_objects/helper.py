@@ -6,12 +6,13 @@ from typing_extensions import get_origin
 
 
 from krrood.ormatic.data_access_objects.alternative_mappings import AlternativeMapping
-from krrood.ormatic.data_access_objects.to_dao import ToDataAccessObjectState
+
 from krrood.ormatic.exceptions import NoGenericError, NoDAOFoundError
 from krrood.utils import recursive_subclasses
 
 if TYPE_CHECKING:
     from krrood.ormatic.data_access_objects.dao import DataAccessObject
+    from krrood.ormatic.data_access_objects.to_dao import ToDataAccessObjectState
 
 
 @lru_cache(maxsize=None)
@@ -100,6 +101,9 @@ def to_dao(
     :param state: The conversion state.
     :return: The converted DAO instance.
     """
+
+    from krrood.ormatic.data_access_objects.to_dao import ToDataAccessObjectState
+
     dao_clazz = get_dao_class(type(source_object))
     if dao_clazz is None:
         raise NoDAOFoundError(source_object)
