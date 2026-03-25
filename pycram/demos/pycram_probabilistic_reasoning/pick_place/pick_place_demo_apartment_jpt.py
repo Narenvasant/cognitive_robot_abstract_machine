@@ -38,7 +38,6 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass
-from email.header import Header
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -47,7 +46,7 @@ import pandas as pd
 import rclpy
 import sqlalchemy.types as sqlalchemy_types
 from sqlalchemy import event, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, session
 
 from pycram.datastructures.dataclasses import Context
 from pycram.datastructures.enums import ApproachDirection, Arms, VerticalAlignment
@@ -90,8 +89,8 @@ from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.pr2 import PR2
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Milk, Table
-from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix, Point3, Vector3, Quaternion
-from semantic_digital_twin.spatial_types.spatial_types import Pose
+from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix, Point3
+from semantic_digital_twin.spatial_types.spatial_types import Pose, Quaternion
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import Connection6DoF, FixedConnection, OmniDrive
 from semantic_digital_twin.world_description.geometry import BoundingBox, FileMesh
@@ -130,7 +129,7 @@ NUMBER_OF_ITERATIONS: int = 5000
 
 DATABASE_URI: str = os.environ.get(
     "SEMANTIC_DIGITAL_TWIN_DATABASE_URI",
-    "postgresql://semantic_digital_twin:naren@localhost:5432/demo_robot_plans",
+    "postgresql://semantic_digital_twin:naren@localhost:5432/probabilistic_reasoning",
 )
 
 MILK_SPAWN_X: float = 2.4
@@ -229,26 +228,26 @@ class PlanParameters:
     pick_arm:           Arms
 
 
+# ── Monkey-patches ─────────────────────────────────────────────────────────────
 
-
-def _header_deepcopy(self, memo: Any) -> Header:
-    if isinstance(self, type):
-        return self
-    timestamp = getattr(self, "stamp", None) or datetime.datetime.now()
-    return Header(
-        frame_id=getattr(self, "frame_id", None),
-        stamp=copy.deepcopy(timestamp, memo),
-        sequence=getattr(self, "sequence", 0),
-    )
-
-
-def _pose_stamped_deepcopy(self, memo: Any) -> Pose:
-    if isinstance(self, type):
-        return self
-    return Pose(
-        copy.deepcopy(getattr(self, "pose", None), memo),
-        copy.deepcopy(getattr(self, "header", None), memo),
-    )
+# def _header_deepcopy(self, memo: Any) -> Header:
+#     if isinstance(self, type):
+#         return self
+#     timestamp = getattr(self, "stamp", None) or datetime.datetime.now()
+#     return Header(
+#         frame_id=getattr(self, "frame_id", None),
+#         stamp=copy.deepcopy(timestamp, memo),
+#         sequence=getattr(self, "sequence", 0),
+#     )
+#
+#
+# def _pose_stamped_deepcopy(self, memo: Any) -> PoseStamped:
+#     if isinstance(self, type):
+#         return self
+#     return PoseStamped(
+#         copy.deepcopy(getattr(self, "pose", None), memo),
+#         copy.deepcopy(getattr(self, "header", None), memo),
+#     )
 
 
 def _header_getattr(self, attribute_name: str) -> Any:
@@ -264,9 +263,9 @@ def _header_getattr(self, attribute_name: str) -> Any:
     raise AttributeError(attribute_name)
 
 
-Header.__deepcopy__      = _header_deepcopy
-Header.__getattr__       = _header_getattr
-Pose.__deepcopy__ = _pose_stamped_deepcopy
+# Header.__deepcopy__      = _header_deepcopy
+# Header.__getattr__       = _header_getattr
+# PoseStamped.__deepcopy__ = _pose_stamped_deepcopy
 
 
 def _patch_orm_numpy_array_type() -> None:
@@ -384,6 +383,7 @@ def _respawn_milk(world: World, milk_body: Body) -> None:
     print(f"  [respawn] Milk reset to ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
 
 
+# ── Database ───────────────────────────────────────────────────────────────────
 
 def _create_database_session(database_uri: str) -> Session:
     print(f"  [db] Connecting to {database_uri} ...")
@@ -523,20 +523,11 @@ def _find_nearest_free_point(
 
 
 def _make_pose_stamped(x: float, y: float, z: float, frame_id: Any) -> Pose:
-    """Create a Pose with manual header handling."""
-    header = type("Header", (), {})()  # Dummy Header
-    header.frame_id = frame_id
-    header.stamp = datetime.datetime.now()
-    header.sequence = 0
-
-    # Use from_xyz_quaternion to construct Pose
-    pose = Pose.from_xyz_quaternion(
-        pos_x=x, pos_y=y, pos_z=z,
-        quat_x=0, quat_y=0, quat_z=0, quat_w=1,
-        reference_frame=frame_id
-    )
-    pose.header = header
-    return pose
+    return Pose(
+        position=Point3(x=x, y=y, z=z),
+        orientation=Quaternion(x=0, y=0, z=0, w=1),
+        reference_frame=frame_id,
+        )
 
 
 def _path_to_navigate_actions(
@@ -547,15 +538,12 @@ def _path_to_navigate_actions(
     return [
         NavigateAction(
             target_location=Pose(
-                pose=Pose(
-                    position=Vector3(x=float(p.x), y=float(p.y), z=0.0),
-                    orientation=Quaternion(x=0, y=0, z=0, w=1),
+                position=Point3(x=float(p.x), y=float(p.y), z=0.0, reference_frame=world_frame),
+                orientation=Quaternion(x=0, y=0, z=0, w=1, reference_frame=world_frame),
+                reference_frame=world_frame,
                 ),
-                header=Header(frame_id=world_frame),
-            ),
-            keep_joint_states=keep_joint_states,
-        )
-        for p in path[1:]
+            )
+            for p in path[1:]
     ]
 
 
@@ -595,8 +583,8 @@ def _navigate_via_gcs(
     navigate_actions = _path_to_navigate_actions(path, world.root, keep_joint_states)
     print(f"    [GCS] ({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}): {len(navigate_actions)} waypoint(s)")
     for i, action in enumerate(navigate_actions):
-        pos = action.target_location.pose.position
-        print(f"           waypoint {i + 1}: ({pos.x:.3f}, {pos.y:.3f})")
+        pos = action.target_location.to_position()
+        print(f"           waypoint {i + 1}: ({float(pos.x):.3f}, {float(pos.y):.3f})")
     return navigate_actions
 
 
@@ -708,15 +696,23 @@ def _diagnose_and_log(
     (counter_approach → pick_approach, table_approach → place_approach)
     before calling diagnose_failure().
     """
-    OPEN_WORLD_PLACE_TARGET_X = 4.1
+    # Open-world constants (from pick_and_place_demo.py)
+    _OW_PLACE_TARGET_X = 4.1  # PLACE_TARGET_X in the open world
 
     observed = {
+        # x axis coincides in both worlds (milk at x=2.4 in both)
         "pick_approach_x": parameters.counter_approach_x,
 
+        # absolute y → lateral offset from milk centreline
+        # open-world milk at y=0, apartment milk at y=MILK_SPAWN_Y=2.5
         "pick_approach_y": parameters.counter_approach_y - MILK_SPAWN_Y,
 
-        "place_approach_x": parameters.table_approach_x - (PLACE_X - OPEN_WORLD_PLACE_TARGET_X),
+        # apartment place target is 0.9m further in x than open-world target
+        # shift back: 4.1 - 0.9 = 3.2, 4.5 - 0.9 = 3.6 → within JPT [3.2, 3.79]
+        "place_approach_x": parameters.table_approach_x - (PLACE_X - _OW_PLACE_TARGET_X),
 
+        # absolute y → lateral offset from place target centreline
+        # open-world target at y=0, apartment target at y=PLACE_Y=4.0
         "place_approach_y": parameters.table_approach_y - PLACE_Y,
 
         "pick_arm": parameters.pick_arm.name,
@@ -983,12 +979,10 @@ def pick_and_place_demo_apartment_jpt() -> None:
                 except Exception as execution_error:
                     failed_count += 1
                     print(f"  RESULT: FAILED — {type(execution_error).__name__}: {execution_error}")
+                    print(traceback.format_exc())
                     for line in traceback.format_exc().strip().splitlines()[-3:]:
                         print(f"    {line}")
 
-                    # ── Causal failure diagnosis ───────────────────────────────
-                    # Only meaningful for sampled iterations where we have
-                    # JPT-drawn parameters to diagnose.
                     if current_parameters is not None:
                         _diagnose_and_log(causal_circuit, current_parameters, iteration)
 
