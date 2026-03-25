@@ -99,14 +99,6 @@ from semantic_digital_twin.world_description.shape_collection import (
 from semantic_digital_twin.world_description.world_entity import Body
 
 
-# ---------------------------------------------------------------------------
-# Library patch: SumUnit.simplify() version mismatch
-#
-# This version of probabilistic_model calls self.add_subcircuit(..., mount=False)
-# but add_subcircuit() does not accept a mount= keyword argument.
-# Patched here to avoid modifying the library source.
-# ---------------------------------------------------------------------------
-
 def _patched_sum_simplify(self) -> None:
     import numpy as _np
     if len(self.subcircuits) == 1:
@@ -124,10 +116,6 @@ def _patched_sum_simplify(self) -> None:
 
 _SumUnit.simplify = _patched_sum_simplify
 
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 NUMBER_OF_ITERATIONS: int = 5000
 
@@ -204,10 +192,6 @@ EFFECT_VARIABLE_NAMES: List[str] = ["milk_end_z"]
 CAUSAL_QUERY_RESOLUTION: float = 0.005
 
 
-# ---------------------------------------------------------------------------
-# Symbolic arm domain for pyjpt sampling
-# ---------------------------------------------------------------------------
-
 ArmChoiceDomain = type(
     "ArmChoiceDomain",
     (Multinomial,),
@@ -229,10 +213,6 @@ JPT_VARIABLES: List = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Data class
-# ---------------------------------------------------------------------------
-
 @dataclass
 class PlanParameters:
     """Sampled parameters for one pick-and-place iteration."""
@@ -243,9 +223,6 @@ class PlanParameters:
     pick_arm:           Arms
 
 
-# ---------------------------------------------------------------------------
-# ORM patch: handle None values in numpy TypeDecorator
-# ---------------------------------------------------------------------------
 
 def _patch_orm_numpy_array_type() -> None:
     """
@@ -286,9 +263,7 @@ def _patch_orm_numpy_array_type() -> None:
 _patch_orm_numpy_array_type()
 
 
-# ---------------------------------------------------------------------------
-# World construction
-# ---------------------------------------------------------------------------
+
 
 def _build_world(apartment_urdf_path: Path) -> tuple[World, PR2]:
     world = URDFParser.from_file(str(apartment_urdf_path)).parse()
@@ -378,9 +353,7 @@ def _respawn_milk(world: World, milk_body: Body) -> None:
     print(f"  [respawn] Milk reset to ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
 
 
-# ---------------------------------------------------------------------------
-# Database
-# ---------------------------------------------------------------------------
+
 
 def _create_database_session(database_uri: str) -> Session:
     print(f"  [db] Connecting to {database_uri} ...")
@@ -449,10 +422,6 @@ def _persist_plan(session: Session, plan: SequentialPlan) -> None:
     session.commit()
     print("  [db] Plan committed.")
 
-
-# ---------------------------------------------------------------------------
-# GCS navigation
-# ---------------------------------------------------------------------------
 
 def _build_navigation_map(world: World) -> GraphOfConvexSets:
     search_space = BoundingBoxCollection(
@@ -605,9 +574,6 @@ def _navigate_via_gcs(
     return navigate_actions
 
 
-# ---------------------------------------------------------------------------
-# JPT loading and sampling
-# ---------------------------------------------------------------------------
 
 def _load_joint_probability_tree(model_path: str) -> JointProbabilityTree:
     print(f"  [jpt] Loading model from {model_path} ...")
@@ -661,9 +627,6 @@ def _sample_plan_parameters(
     )
 
 
-# ---------------------------------------------------------------------------
-# CausalCircuit construction
-# ---------------------------------------------------------------------------
 
 def _build_prob_model_variables(csv_path: str) -> list:
     """
@@ -733,9 +696,6 @@ def _build_causal_circuit(csv_path: str) -> CausalCircuit:
     return causal_circuit
 
 
-# ---------------------------------------------------------------------------
-# Failure diagnosis
-# ---------------------------------------------------------------------------
 
 def _diagnose_and_log(
     causal_circuit:    CausalCircuit,
@@ -822,9 +782,6 @@ def _diagnose_and_log(
         print(f"  [causal] Diagnosis failed (iteration {iteration_number}): {diagnosis_error}")
 
 
-# ---------------------------------------------------------------------------
-# Plan construction
-# ---------------------------------------------------------------------------
 
 def _build_fixed_plan(
     planning_context:    Context,
@@ -988,9 +945,6 @@ def _navigate_back_to_start(
             print(f"  [return] WARNING: return navigation failed: {return_error}")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 def pick_and_place_demo_apartment_jpt() -> None:
     """
