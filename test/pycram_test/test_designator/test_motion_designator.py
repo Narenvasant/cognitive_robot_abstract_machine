@@ -11,6 +11,15 @@ from pycram.datastructures.enums import (
     Arms,
 )
 from pycram.datastructures.grasp import GraspDescription
+from pycram.language import SequentialPlan
+from pycram.motion_executor import simulated_robot, real_robot
+from pycram.plan import MotionNode
+from pycram.robot_plans import (
+    PickUpActionDescription,
+    NavigateActionDescription,
+    MoveTorsoActionDescription,
+    PickUpAction,
+)
 from pycram.datastructures.pose import PoseStamped
 from pycram.plans.factories import sequential, execute_single
 
@@ -22,6 +31,8 @@ from pycram.robot_plans.actions.core.robot_body import MoveTorsoAction
 
 from semantic_digital_twin.datastructures.definitions import TorsoState
 from semantic_digital_twin.robots.pr2 import PR2
+from semantic_digital_twin.spatial_types import Point3, Quaternion
+from semantic_digital_twin.spatial_types.spatial_types import Pose
 
 try:
     from pycram.alternative_motion_mappings.hsrb_motion_mapping import *
@@ -49,7 +60,10 @@ def test_pick_up_motion(immutable_model_world):
         children=[
             ActionNode(
                 designator=NavigateAction(
-                    PoseStamped.from_list([1.7, 1.5, 0], [0, 0, 0, 1], test_world.root),
+                    Pose(
+                Point3.from_iterable([1.7, 1.5, 0]),
+                Quaternion.from_iterable([0, 0, 0, 1]),
+                test_world.root,),
                     True,
                 )
             ),
@@ -78,7 +92,9 @@ def test_pick_up_motion(immutable_model_world):
 
 def test_move_motion_chart(immutable_model_world):
     world, view, context = immutable_model_world
-    motion = MoveMotion(PoseStamped.from_list([1, 1, 1], frame=world.root))
+    motion = MoveMotion(
+        Pose(Point3.from_iterable([1, 1, 1]), reference_frame=world.root)
+    )
     plan = execute_single(
         motion,
         context=context,
@@ -93,7 +109,9 @@ def test_move_motion_chart(immutable_model_world):
 @pytest.mark.skipIf(skip_tests, "Alternative motion mappings not available")
 def test_alternative_mapping(hsr_apartment_world):
     world, view, context = hsr_apartment_world
-    move_motion = MoveMotion(PoseStamped.from_list([1, 1, 1], frame=world.root))
+    move_motion = MoveMotion(
+        Pose(Point3.from_iterable([1, 1, 1]), reference_frame=world.root)
+    )
 
     plan = execute_single(move_motion, context=context)
 

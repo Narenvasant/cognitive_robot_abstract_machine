@@ -8,6 +8,7 @@ from typing import Tuple, List
 from typing_extensions import Optional, Dict, Any
 
 from pycram.datastructures.enums import AxisIdentifier, Arms
+from pycram.datastructures.partial_designator import PartialDesignator
 from pycram.datastructures.pose import Vector3Stamped
 from pycram.datastructures.trajectory import PoseTrajectory
 from pycram.plans.factories import execute_single, sequential
@@ -228,14 +229,13 @@ class CarryAction(ActionDescription):
 
     def axis_to_vector3_stamped(
         self, axis: AxisIdentifier, link: str = "base_link"
-    ) -> Vector3Stamped:
+    ) -> Vector3:
         v = {
-            AxisIdentifier.X: Vector3Stamped(x=1.0, y=0.0, z=0.0),
-            AxisIdentifier.Y: Vector3Stamped(x=0.0, y=1.0, z=0.0),
-            AxisIdentifier.Z: Vector3Stamped(x=0.0, y=0.0, z=1.0),
+            AxisIdentifier.X: Vector3(x=1.0, y=0.0, z=0.0),
+            AxisIdentifier.Y: Vector3(x=0.0, y=1.0, z=0.0),
+            AxisIdentifier.Z: Vector3(x=0.0, y=0.0, z=1.0),
         }[axis]
         v.frame_id = link
-        v.header.stamp = datetime.datetime.now()
         return v
 
     def validate(

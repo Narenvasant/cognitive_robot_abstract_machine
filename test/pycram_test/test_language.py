@@ -33,7 +33,7 @@ from semantic_digital_twin.datastructures.definitions import TorsoState
 
 
 def test_factory_construction():
-    act = NavigateAction(PoseStamped())
+    act = NavigateAction(Pose())
     act2 = MoveTorsoAction(TorsoState.HIGH)
     act3 = DetectAction(DetectionTechnique.TYPES)
 
@@ -132,7 +132,7 @@ def test_perform_execute_single(immutable_model_world):
     with simulated_robot:
         plan.perform()
     np.testing.assert_almost_equal(
-        robot_view.root.global_pose.to_np()[:3, 3], [0.3, 0.3, 0], decimal=1
+        robot_view.root.global_transform.to_np()[:3, 3], [0.3, 0.3, 0], decimal=1
     )
     assert world.state[
         world.get_degree_of_freedom_by_name("torso_lift_joint").id
@@ -215,7 +215,7 @@ def test_exception_try_in_order(immutable_model_world):
     def raise_except():
         raise PlanFailure()
 
-    act = NavigateAction(PoseStamped().from_list(frame=world.root))
+    act = NavigateAction(Pose(reference_frame=world.root))
     act2 = code(raise_except)
 
     plan = try_in_order([act, act2], context).plan
@@ -231,7 +231,7 @@ def test_exception_parallel(immutable_model_world):
     def raise_except():
         raise PlanFailure()
 
-    act = NavigateAction(PoseStamped().from_list(frame=world.root))
+    act = NavigateAction(Pose(reference_frame=world.root))
     act2 = code(raise_except)
 
     plan = parallel([act, act2], context).plan
@@ -248,7 +248,7 @@ def test_exception_try_all(immutable_model_world):
     def raise_except():
         raise PlanFailure()
 
-    act = NavigateAction(PoseStamped().from_list(frame=world.root))
+    act = NavigateAction(Pose(reference_frame=world.root))
     act2 = code(raise_except)
 
     plan = try_all([act, act2], context).plan

@@ -1,10 +1,7 @@
-from giskardpy.motion_statechart.tasks.pointing import Pointing
-
 try:
     from nav2_msgs.action import NavigateToPose
 except ModuleNotFoundError:
     NavigateToPose = None
-from giskardpy.motion_statechart.tasks.cartesian_tasks import CartesianPose
 from giskardpy.motion_statechart.ros2_nodes.ros_tasks import (
     NavigateActionServerTask,
 )
@@ -29,7 +26,7 @@ class HSRBMoveMotion(MoveMotion, AlternativeMotion[HSRB]):
     @property
     def _motion_chart(self) -> NavigateActionServerTask:
         return NavigateActionServerTask(
-            target_pose=self.target.to_spatial_type(),
+            target_pose=self.target,
             base_link=self.robot.root,
             action_topic="/hsrb/move_base",
             message_type=NavigateToPose,

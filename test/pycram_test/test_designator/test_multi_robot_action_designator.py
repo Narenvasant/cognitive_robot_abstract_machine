@@ -15,7 +15,6 @@ from pycram.datastructures.enums import (
     DetectionTechnique,
 )
 from pycram.datastructures.grasp import GraspDescription
-from pycram.datastructures.pose import PoseStamped
 from pycram.datastructures.trajectory import PoseTrajectory
 
 from pycram.motion_executor import simulated_robot
@@ -58,7 +57,12 @@ from semantic_digital_twin.robots.pr2 import PR2
 from semantic_digital_twin.robots.stretch import Stretch
 from semantic_digital_twin.robots.tiago import Tiago
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Milk
-from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Point3,
+    Quaternion,
+)
+from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world import World
 
 # The alternative mapping needs to be imported for the stretch to work properly
@@ -153,14 +157,16 @@ def test_move_torso_multi(immutable_multiple_robot_apartment):
 def test_navigate_multi(immutable_multiple_robot_apartment):
     world, view, context = immutable_multiple_robot_apartment
     plan = execute_single(
-        NavigateAction(PoseStamped.from_list([1, 2, 0], frame=world.root)),
+        NavigateAction(
+            Pose(Point3.from_iterable([1, 2, 0]), reference_frame=world.root)
+        ),
         context=context,
     )
 
     with simulated_robot:
         plan.perform()
 
-    robot_base_pose = view.root.global_pose
+    robot_base_pose = view.root.global_transform
     robot_base_position = robot_base_pose.to_position().to_np()
     robot_base_orientation = robot_base_pose.to_quaternion().to_np()
 
@@ -239,7 +245,9 @@ def test_reach_action_multi(immutable_multiple_robot_apartment):
         [
             ParkArmsAction(Arms.BOTH),
             ReachAction(
-                target_pose=PoseStamped.from_list([1, -2, 0.8], frame=world.root),
+                target_pose=Pose(
+                Point3.from_iterable([1, -2, 0.8]), reference_frame=world.root
+            ),
                 object_designator=milk_body,
                 arm=Arms.LEFT,
                 grasp_description=grasp_description,
@@ -251,7 +259,7 @@ def test_reach_action_multi(immutable_multiple_robot_apartment):
     with simulated_robot:
         plan.perform()
 
-    manipulator_pose = left_arm.manipulator.tool_frame.global_pose
+    manipulator_pose = left_arm.manipulator.tool_frame.global_transform
     manipulator_position = manipulator_pose.to_position().to_np()
     manipulator_orientation = manipulator_pose.to_quaternion().to_np()
 
@@ -290,8 +298,8 @@ def test_follow_tcp_path_multi(immutable_multiple_robot_apartment):
     )
     grasp_axis = AxisIdentifier.from_tuple(front_axis)
 
-    pose = PoseStamped.from_spatial_type(world.get_body_by_name("milk.stl").global_pose)
-    pose_T = pose.to_spatial_type()
+    pose_T = world.get_body_by_name("milk.stl").global_transform
+    pose = pose_T.to_pose()
     if grasp_axis == AxisIdentifier.X:
         target_pose = pose
     elif grasp_axis == AxisIdentifier.Z:
@@ -300,7 +308,7 @@ def test_follow_tcp_path_multi(immutable_multiple_robot_apartment):
             angle=np.pi / 2,
             reference_frame=world.root,
         )
-        target_pose = PoseStamped.from_spatial_type(pose_T @ offset_T)
+        target_pose = (pose_T @ offset_T).to_pose()
     else:
         target_pose = pose
 
@@ -316,10 +324,8 @@ def test_follow_tcp_path_multi(immutable_multiple_robot_apartment):
     with simulated_robot:
         plan.perform()
 
-    tip_pose = left_arm.manipulator.tool_frame.global_pose
-    dist = np.linalg.norm(
-        tip_pose.to_position().to_np()[:3] - np.array(target_pose.position.to_list())
-    )
+    tip_pose = left_arm.manipulator.tool_frame.global_transform
+    dist = np.linalg.norm(tip_pose.to_position() - np.array(target_pose.to_position()))
     assert dist < 0.01
 
 
@@ -354,7 +360,9 @@ def test_grasping(immutable_multiple_robot_apartment):
     )
     with simulated_robot:
         plan.perform()
-    dist = np.linalg.norm(world.get_body_by_name("milk.stl").global_pose.to_np()[3, :3])
+    dist = np.linalg.norm(
+        world.get_body_by_name("milk.stl").global_transform.to_np()[3, :3]
+    )
     assert dist < 0.01
 
 
@@ -430,7 +438,7 @@ def test_place_multi(mutable_multiple_robot_apartment):
             ),
             PlaceAction(
                 world.get_body_by_name("milk.stl"),
-                PoseStamped.from_list([1, -2.2, 0.6], frame=world.root),
+                Pose(Point3.from_iterable([1, -2.2, 0.6]), reference_frame=world.root),
                 Arms.LEFT,
             ),
         ],
@@ -446,7 +454,7 @@ def test_place_multi(mutable_multiple_robot_apartment):
             world.get_body_by_name("milk.stl"),
         )
 
-    milk_position = milk_body.global_pose.to_position().to_np()
+    milk_position = milk_body.global_transform.to_position().to_np()
 
     assert milk_position[:3] == pytest.approx([1, -2.2, 0.6], abs=0.01)
 
@@ -454,6 +462,15 @@ def test_place_multi(mutable_multiple_robot_apartment):
 
 
 def test_look_at(immutable_multiple_robot_apartment):
+    world, robot_view, context = immutable_multiple_robot_apartment
+    description = LookAtActionDescription(
+        [Pose(Point3.from_iterable([3, 0, 1]), reference_frame=world.root)]
+    )
+    assert np.allclose(
+        description.resolve().target.to_np(),
+        Pose(Point3.from_iterable([3, 0, 1]), reference_frame=world.root).to_np(),
+        atol=1e-3,
+    )
     world, robot, context = immutable_multiple_robot_apartment
     description = LookAtAction(PoseStamped.from_list([3, 0, 1], frame=world.root))
     assert description.target == PoseStamped.from_list([3, 0, 1], frame=world.root)
@@ -496,7 +513,10 @@ def test_open(immutable_multiple_robot_apartment):
             MoveTorsoAction(TorsoState.HIGH),
             ParkArmsAction(Arms.BOTH),
             NavigateAction(
-                PoseStamped.from_list([1.6, 1.9, 0], [0, 0, 0.3, 1], world.root)
+                Pose(
+                Point3.from_iterable([1.6, 1.9, 0]),
+                Quaternion.from_iterable([0, 0, 0.3, 1]),
+                reference_frame=world.root,)
             ),
             OpenAction(world.get_body_by_name("handle_cab10_m"), Arms.LEFT),
         ],
@@ -537,17 +557,16 @@ def test_facing(immutable_multiple_robot_apartment):
     world, robot, context = immutable_multiple_robot_apartment
 
     with simulated_robot:
-        milk_pose = PoseStamped.from_spatial_type(
-            world.get_body_by_name("milk.stl").global_pose
-        )
+        milk_pose = world.get_body_by_name("milk.stl").global_pose
         plan = execute_single(FaceAtAction(milk_pose, True), context)
         plan.perform()
         milk_in_robot_frame = world.transform(
-            world.get_body_by_name("milk.stl").global_pose,
+            world.get_body_by_name("milk.stl").global_transform,
             robot.root,
         )
-        milk_in_robot_frame = PoseStamped.from_spatial_type(milk_in_robot_frame)
-        assert milk_in_robot_frame.position.y == pytest.approx(0.0, abs=0.01)
+        assert float(milk_in_robot_frame.to_position().y) == pytest.approx(
+            0.0, abs=0.01
+        )
 
 
 def test_transport(mutable_multiple_robot_apartment):
@@ -563,7 +582,7 @@ def test_transport(mutable_multiple_robot_apartment):
     plan = sequential([MoveTorsoAction(TorsoState.HIGH), description], context)
     with simulated_robot:
         plan.perform()
-    milk_position = world.get_body_by_name("milk.stl").global_pose.to_np()[:3, 3]
+    milk_position = world.get_body_by_name("milk.stl").global_transform.to_np()[:3, 3]
     dist = np.linalg.norm(milk_position - np.array([3.1, 2.2, 0.95]))
     assert dist <= 0.02
 

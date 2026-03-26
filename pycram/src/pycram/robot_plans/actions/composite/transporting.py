@@ -24,6 +24,7 @@ from pycram.robot_plans.actions.core.robot_body import ParkArmsAction, MoveTorso
 from semantic_digital_twin.datastructures.definitions import TorsoState
 from semantic_digital_twin.reasoning.predicates import InsideOf
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Drawer
+from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world_description.world_entity import Body
 from typing_extensions import Union, Optional, Type, Any, Iterable
 
@@ -31,8 +32,17 @@ from typing_extensions import Union, Optional, Type, Any, Iterable
 from pycram.config.action_conf import ActionConfig
 from pycram.datastructures.enums import Arms, Grasp, VerticalAlignment
 from pycram.datastructures.grasp import GraspDescription
+from pycram.datastructures.partial_designator import PartialDesignator
+from pycram.designators.location_designator import (
+    ProbabilisticCostmapLocation,
+    CostmapLocation,
+    GiskardLocation,
+)
+from pycram.designators.object_designator import BelieveObject
+from pycram.failures import ObjectUnfetchable, ConfigurationNotReached
+from pycram.language import SequentialPlan
 
-from pycram.datastructures.pose import PoseStamped, GraspPose
+from pycram.datastructures.pose import GraspPose
 
 from pycram.failures import ConfigurationNotReached
 from pycram.robot_plans.actions.base import ActionDescription
@@ -48,7 +58,7 @@ class TransportAction(ActionDescription):
     """
     Object designator_description describing the object that should be transported.
     """
-    target_location: PoseStamped
+    target_location: Pose
     """
     Target Location to which the object should be transported
     """
@@ -93,7 +103,7 @@ class TransportAction(ActionDescription):
 
         self.add_subplan(execute_single(ParkArmsAction(Arms.BOTH))).perform()
         pickup_loc = CostmapLocation(
-            target=PoseStamped.from_spatial_type(self.object_designator.global_pose),
+            target=self.object_designator.global_pose,
             reachable_arm=self.arm,
             reachable=True,
             context=self.plan_node.plan.context,
@@ -184,7 +194,7 @@ class PickAndPlaceAction(ActionDescription):
     """
     Object designator_description describing the object that should be transported.
     """
-    target_location: PoseStamped
+    target_location: Pose
     """
     Target Location to which the object should be transported
     """
@@ -229,7 +239,7 @@ class MoveAndPlaceAction(ActionDescription):
     Navigate to `standing_position`, then turn towards the object and pick it up.
     """
 
-    standing_position: PoseStamped
+    standing_position: Pose
     """
     The pose to stand before trying to pick up the object
     """
@@ -239,7 +249,7 @@ class MoveAndPlaceAction(ActionDescription):
     The object to pick up
     """
 
-    target_location: PoseStamped
+    target_location: Pose
     """
     The location to place the object.
     """
@@ -278,7 +288,7 @@ class MoveAndPickUpAction(ActionDescription):
     Navigate to `standing_position`, then turn towards the object and pick it up.
     """
 
-    standing_position: PoseStamped
+    standing_position: Pose
     """
     The pose to stand before trying to pick up the object
     """
@@ -304,7 +314,7 @@ class MoveAndPickUpAction(ActionDescription):
     """
 
     def execute(self):
-        obj_pose = PoseStamped.from_spatial_type(self.object_designator.global_pose)
+        obj_pose = Pose.from_spatial_type(self.object_designator.global_transform)
         self.add_subplan(
             sequential(
                 [
@@ -332,7 +342,7 @@ class EfficientTransportAction(ActionDescription):
     """
 
     object_designator: Body
-    target_location: PoseStamped
+    target_location: Pose
 
     def _choose_best_arm(self, robot: Body, obj: Body) -> Arms:
         """

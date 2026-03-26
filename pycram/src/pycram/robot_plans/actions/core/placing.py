@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
+from semantic_digital_twin.datastructures.definitions import GripperState
+from semantic_digital_twin.spatial_types.spatial_types import Pose
+from semantic_digital_twin.world_description.connections import Connection6DoF
+from semantic_digital_twin.world_description.world_entity import Body
+from typing_extensions import Union, Optional, Type, Any, Iterable
 from typing_extensions import Optional, Any
 
 from pycram.datastructures.enums import (
@@ -11,6 +16,10 @@ from pycram.datastructures.enums import (
     VerticalAlignment,
 )
 from pycram.datastructures.grasp import GraspDescription
+from pycram.datastructures.partial_designator import PartialDesignator
+from pycram.failures import ObjectNotPlacedAtTargetLocation, ObjectStillInContact
+from pycram.language import SequentialPlan
+from pycram.view_manager import ViewManager
 from pycram.datastructures.pose import PoseStamped
 
 from pycram.plans.factories import sequential, execute_single
@@ -37,7 +46,7 @@ class PlaceAction(ActionDescription):
     """
     Object designator_description describing the object that should be place
     """
-    target_location: PoseStamped
+    target_location: Pose
     """
     Pose in the world at which the object should be placed
     """

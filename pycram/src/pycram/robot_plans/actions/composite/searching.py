@@ -5,9 +5,14 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from typing_extensions import Optional, Type, Any
+from semantic_digital_twin.spatial_types.spatial_types import Pose
+from semantic_digital_twin.world_description.world_entity import SemanticAnnotation
+from typing_extensions import Union, Optional, Type, Any, Iterable
 
 from pycram.datastructures.enums import DetectionTechnique
+from pycram.datastructures.partial_designator import PartialDesignator
 from pycram.datastructures.pose import PoseStamped
+from pycram.designators.location_designator import CostmapLocation
 from pycram.failures import PerceptionObjectNotFound
 from pycram.locations.locations import CostmapLocation
 from pycram.plans.factories import sequential, execute_single, try_in_order
@@ -23,7 +28,7 @@ class SearchAction(ActionDescription):
     Searches for a target object around the given location.
     """
 
-    target_location: PoseStamped
+    target_location: Pose
     """
     Location around which to look for a target object.
     """
@@ -47,7 +52,7 @@ class SearchAction(ActionDescription):
         ).perform()
 
         # define searching cone
-        target_base = PoseStamped.from_spatial_type(
+        target_base = Pose.from_spatial_type(
             self.world.transform(
                 self.target_location.to_spatial_type(), self.world.root
             )

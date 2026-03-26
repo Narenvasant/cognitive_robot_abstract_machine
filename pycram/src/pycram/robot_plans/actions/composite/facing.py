@@ -6,8 +6,16 @@ from datetime import timedelta
 import numpy as np
 from typing_extensions import Optional, Any
 
+from semantic_digital_twin.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Quaternion,
+)
+from semantic_digital_twin.spatial_types.spatial_types import Pose
+from pycram.robot_plans.actions.core.navigation import (
+    LookAtActionDescription,
+    NavigateActionDescription,
+)
 from pycram.config.action_conf import ActionConfig
-from pycram.datastructures.pose import PoseStamped
 from pycram.plans.factories import sequential
 from pycram.robot_plans.actions.base import ActionDescription
 from pycram.robot_plans.actions.core.navigation import NavigateAction, LookAtAction
@@ -20,7 +28,7 @@ class FaceAtAction(ActionDescription):
     Turn the robot chassis such that is faces the ``pose`` and after that perform a look at action.
     """
 
-    pose: PoseStamped
+    pose: Pose
     """
     The pose to face 
     """
@@ -31,21 +39,22 @@ class FaceAtAction(ActionDescription):
 
     def execute(self) -> None:
         # get the robot position
-        robot_position = PoseStamped.from_spatial_type(self.robot.root.global_pose)
+        robot_position = self.robot.root.global_transform
 
         # calculate orientation for robot to face the object
         angle = (
             np.arctan2(
-                robot_position.position.y - self.pose.position.y,
-                robot_position.position.x - self.pose.position.x,
+                robot_position.y - self.pose.y,
+                robot_position.x - self.pose.x,
             )
             + np.pi
         )
-        orientation = list(quaternion_from_euler(0, 0, angle, axes="sxyz"))
 
         # create new robot pose
-        new_robot_pose = PoseStamped.from_list(
-            robot_position.position.to_list(), orientation, self.world.root
+        new_robot_pose = Pose(
+            robot_position.to_position(),
+            Quaternion.from_rpy(0, 0, angle),
+            reference_frame=self.world.root,
         )
 
         self.add_subplan(

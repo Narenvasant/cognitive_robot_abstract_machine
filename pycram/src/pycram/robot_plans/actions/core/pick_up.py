@@ -6,14 +6,19 @@ from datetime import timedelta
 
 from typing_extensions import Optional, Any
 
+from semantic_digital_twin.datastructures.definitions import GripperState
+from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.spatial_types.spatial_types import Pose
+from semantic_digital_twin.world_description.connections import FixedConnection
+from semantic_digital_twin.world_description.world_entity import Body
+from pycram.robot_plans.motions.gripper import MoveGripperMotion, MoveTCPMotion
+from pycram.config.action_conf import ActionConfig
 from pycram.datastructures.enums import (
     Arms,
     MovementType,
     FindBodyInRegionMethod,
 )
 from pycram.datastructures.grasp import GraspDescription
-from pycram.datastructures.pose import PoseStamped
-
 from pycram.plans.factories import sequential, execute_single
 
 from pycram.robot_plans.actions.base import ActionDescription
@@ -24,6 +29,7 @@ from pycram.robot_plans.motions.gripper import (
 from pycram.view_manager import ViewManager
 from semantic_digital_twin.datastructures.definitions import GripperState
 from semantic_digital_twin.world_description.world_entity import Body
+from pycram.robot_plans.actions.base import ActionDescription
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +40,7 @@ class ReachAction(ActionDescription):
     Let the robot reach a specific pose.
     """
 
-    target_pose: PoseStamped
+    target_pose: Pose
     """
     Pose that should be reached.
     """
@@ -129,9 +135,9 @@ class PickUpAction(ActionDescription):
                 children=[
                     MoveGripperMotion(motion=GripperState.OPEN, gripper=self.arm),
                     ReachAction(
-                        target_pose=PoseStamped.from_spatial_type(
+                        target_pose=
                             self.object_designator.global_pose
-                        ),
+                        ,
                         object_designator=self.object_designator,
                         arm=self.arm,
                         grasp_description=self.grasp_description,

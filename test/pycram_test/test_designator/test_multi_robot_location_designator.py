@@ -7,7 +7,6 @@ from krrood.entity_query_language.backends import ProbabilisticBackend
 from krrood.entity_query_language.factories import underspecified
 from pycram.datastructures.dataclasses import Context
 from pycram.datastructures.enums import Arms
-from pycram.datastructures.pose import PoseStamped
 from pycram.locations.locations import (
     CostmapLocation,
     AccessingLocation,
@@ -22,7 +21,12 @@ from semantic_digital_twin.robots.hsrb import HSRB
 from semantic_digital_twin.robots.pr2 import PR2
 from semantic_digital_twin.robots.stretch import Stretch
 from semantic_digital_twin.robots.tiago import Tiago
-from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Point3,
+    Quaternion,
+)
+from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world import World
 
 
@@ -116,8 +120,8 @@ def test_reachability_costmap_location(immutable_multiple_robot_simple_apartment
     )
     location = next(iter(location_desig))
 
-    assert len(location.position.to_list()) == 3
-    assert len(location.orientation.to_list()) == 4
+    assert len(location.to_position().to_list()) == 4
+    assert len(location.to_quaternion().to_list()) == 4
 
 
 def test_reachability_pose_costmap_location(immutable_multiple_robot_simple_apartment):
@@ -132,7 +136,7 @@ def test_reachability_pose_costmap_location(immutable_multiple_robot_simple_apar
     with simulated_robot:
         plan.perform()
     underspecified_costmap_location = underspecified(CostmapLocation)(
-        target=PoseStamped.from_list([-2.7, 0, 1], [0, 0, 0, 1], world.root),
+        target=Pose.from_xyz_quaternion(pos_x=-2.7, pos_y=0, pos_z=1, 0, 0, 0, 1, reference_frame=world.root),
         reachable=True,
         context=context,
         reachable_arm=...,
@@ -144,8 +148,8 @@ def test_reachability_pose_costmap_location(immutable_multiple_robot_simple_apar
 
     location = next(iter(specified_costmap_location))
 
-    assert len(location.position.to_list()) == 3
-    assert len(location.orientation.to_list()) == 4
+    assert len(location.to_position().to_list()) == 4
+    assert len(location.to_quaternion().to_list()) == 4
 
 
 def test_visibility_costmap_location(immutable_multiple_robot_simple_apartment):
@@ -163,8 +167,8 @@ def test_visibility_costmap_location(immutable_multiple_robot_simple_apartment):
     )
     location = next(iter(location_desig))
 
-    assert len(location.position.to_list()) == 3
-    assert len(location.orientation.to_list()) == 4
+    assert len(location.to_position().to_list()) == 4
+    assert len(location.to_quaternion().to_list()) == 4
 
 
 def test_visibility_pose_costmap_location(immutable_multiple_robot_simple_apartment):
@@ -179,14 +183,14 @@ def test_visibility_pose_costmap_location(immutable_multiple_robot_simple_apartm
     with simulated_robot:
         plan.perform()
     location_desig = CostmapLocation(
-        PoseStamped.from_list([-1, 0, 1.2], frame=world.root),
+        Pose(Point3.from_iterable([-1, 0, 1.2]), reference_frame=world.root),
         visible=True,
         context=context,
     )
 
     location = next(iter(location_desig))
-    assert len(location.position.to_list()) == 3
-    assert len(location.orientation.to_list()) == 4
+    assert len(location.to_position().to_list()) == 4
+    assert len(location.to_quaternion().to_list()) == 4
 
 
 def test_reachability_and_visibility_costmap_location(
@@ -224,22 +228,22 @@ def test_accessing_location(immutable_model_world):
     )
     access_pose = next(iter(location_desig))
 
-    assert len(access_pose.position.to_list()) == 3
-    assert len(access_pose.orientation.to_list()) == 4
+    assert len(access_pose.to_position().to_list()) == 4
+    assert len(access_pose.to_quaternion().to_list()) == 4
 
 
 def test_giskard_location_pose(immutable_model_world):
-    world, robot_view, context = immutable_model_world
+    world, pr2, context = immutable_model_world
     location_desig = GiskardLocation(
-        PoseStamped.from_list([1.9, 2, 1], frame=world.root),
+        Pose(Point3.from_iterable([1.9, 2, 1]), reference_frame=world.root),
         Arms.RIGHT,
         context=context,
     )
 
     location = next(iter(location_desig))
 
-    assert len(location.position.to_list()) == 3
-    assert len(location.orientation.to_list()) == 4
+    assert len(location.to_position().to_list()) == 4
+    assert len(location.to_quaternion().to_list()) == 4
 
 
 def test_costmap_location_last_result(immutable_multiple_robot_simple_apartment):
@@ -255,7 +259,11 @@ def test_costmap_location_last_result(immutable_multiple_robot_simple_apartment)
         plan.perform()
     world.notify_state_change()
     location_desig = CostmapLocation(
-        PoseStamped.from_list([-2.7, 0, 1], [0, 0, 0, 1], world.root),
+        Pose(
+            Point3.from_iterable([-2.7, 0, 1]),
+            Quaternion.from_iterable([0, 0, 0, 1]),
+            world.root,
+        ),
         reachable=True,
         context=context,
         reachable_arm=Arms.BOTH,
@@ -264,7 +272,7 @@ def test_costmap_location_last_result(immutable_multiple_robot_simple_apartment)
     location = next(iter(location_desig))
     last_result = location_desig._last_result
 
-    assert len(last_result.position.to_list()) == 3
-    assert len(last_result.orientation.to_list()) == 4
+    assert len(last_result.to_position().to_list()) == 4
+    assert len(last_result.to_quaternion().to_list()) == 4
     assert location == last_result
     assert location is last_result

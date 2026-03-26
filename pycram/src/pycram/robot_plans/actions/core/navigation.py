@@ -5,6 +5,11 @@ from datetime import timedelta
 
 from typing_extensions import Optional, Any
 
+from semantic_digital_twin.spatial_types.spatial_types import Pose
+from semantic_digital_twin.robots.abstract_robot import Camera
+from pycram.robot_plans.actions.base import ActionDescription
+from pycram.robot_plans.motions.robot_body import LookingMotion
+from pycram.robot_plans.motions.navigation import MoveMotion
 from pycram.config.action_conf import ActionConfig
 from pycram.datastructures.pose import PoseStamped
 from pycram.plans.factories import execute_single
@@ -12,6 +17,11 @@ from pycram.robot_plans.actions.base import ActionDescription
 from pycram.robot_plans.motions.navigation import MoveMotion
 from pycram.robot_plans.motions.robot_body import LookingMotion
 from semantic_digital_twin.robots.abstract_robot import Camera
+from pycram.datastructures.partial_designator import PartialDesignator
+from pycram.failures import NavigationGoalNotReachedError
+from pycram.language import SequentialPlan
+from pycram.validation.error_checkers import PoseErrorChecker
+from semantic_digital_twin.world import World
 
 
 @dataclass
@@ -20,7 +30,7 @@ class NavigateAction(ActionDescription):
     Navigates the Robot to a position.
     """
 
-    target_location: PoseStamped
+    target_location: Pose
     """
     Location to which the robot should be navigated
     """
@@ -42,7 +52,7 @@ class LookAtAction(ActionDescription):
     Lets the robot look at a position.
     """
 
-    target: PoseStamped
+    target: Pose
     """
     Position at which the robot should look, given as 6D pose
     """

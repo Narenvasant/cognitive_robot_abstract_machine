@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from functools import cached_property
+from inspect import ismethod, isfunction, isclass
 from typing import assert_never, Any
 
 import rustworkx as rx
@@ -24,8 +25,6 @@ from typing_extensions import (
     Generic,
     TYPE_CHECKING,
     Self,
-    Dict,
-    Generator,
     Iterator,
     get_type_hints,
 )
@@ -49,7 +48,6 @@ from krrood.entity_query_language.exceptions import (
     CalledMatchMultipleTimes,
 )
 from krrood.entity_query_language.predicate import HasType
-from krrood.entity_query_language.query.quantifiers import An
 from krrood.entity_query_language.utils import T
 from krrood.patterns.factory_and_kwargs import HasFactoryAndKwargs
 from krrood.rustworkx_utils import RWXNode
@@ -58,6 +56,8 @@ from krrood.symbol_graph.helpers import get_field_type_endpoint
 if TYPE_CHECKING:
     from krrood.entity_query_language.factories import ConditionType
     from krrood.entity_query_language.query.query import Entity, Query
+
+from typing import get_type_hints
 
 
 import builtins
@@ -229,7 +229,10 @@ class Match(AbstractMatchExpression[T], HasFactoryAndKwargs[T]):
         if self.type_ is None:
             if isclass(self.factory):
                 self.type_ = self.factory
+            elif ismethod(self.factory):
+                self.type_ = self.factory.__class__
             elif isfunction(self.factory):
+
                 type_ = get_type_hints(self.factory)["return"]
                 assert isclass(
                     type_

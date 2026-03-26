@@ -9,8 +9,17 @@ from krrood.ormatic.data_access_objects.alternative_mappings import (
 from sqlalchemy import TypeDecorator, types
 from typing_extensions import Optional
 
+from pycram.datastructures.dataclasses import ExecutionData
+from pycram.datastructures.enums import TaskStatus
+from pycram.designator import DesignatorDescription
+from pycram.failures import PlanFailure
+from pycram.plan import (
+    ActionDescriptionNode,
+    MotionNode,
+    PlanNode,
+    ActionNode,
+    DesignatorNode,)
 from pycram.datastructures.dataclasses import Context
-from pycram.datastructures.pose import PyCramQuaternion
 from pycram.plans.plan import (
     Plan,
 )
@@ -24,21 +33,6 @@ from semantic_digital_twin.world import World
 #            Specify the columns(attributes) that are supposed to be tracked in the database.
 #            One attribute equals one column. Please refer to the ORMatic documentation for more information.
 # ----------------------------------------------------------------------------------------------------------------------
-
-
-@dataclass(eq=False)
-class PyCRAMQuaternionMapping(AlternativeMapping[PyCramQuaternion]):
-    x: float = 0
-    y: float = 0
-    z: float = 0
-    w: float = 1
-
-    @classmethod
-    def from_domain_object(cls, obj: T):
-        return cls(obj.x, obj.y, obj.z, obj.w)
-
-    def to_domain_object(self) -> T:
-        return PyCramQuaternion(self.x, self.y, self.z, self.w)
 
 
 @dataclass
