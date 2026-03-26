@@ -18,13 +18,14 @@ kernelspec:
 
 > Safe yourself and your colleges time and effort and:
 > 1. Verify assumptions we have about the URDF
-> 	1.  Please make sure the robot has a properly defined tool center point or tool frame at each of the manipulators
-> 	2. Velocities should always be positive if set
+> 	1. Please make sure the robot has a properly defined tool center point or tool frame at each of the manipulators
+> 	2. Velocity limits should always be positive if set
 > 	3. Any filepaths in the urdf should be defined with a `package://your_ros2_package/` prefix, so that they may be discovered by ros
 > 2. Make sure the URDF and Meshes are packaged correctly into a ROS2 Package
 > 	1. This includes a valid CMakeLists.txt and package.xml
+>   2. You can verify this by building your ROS2 workspace with `colcon build` and sourcing the workspace
 > 
-> => If this is not the case, please consider re-requesting properly packaged data!
+> => If this is not the case, and you are in contact with the author, please consider re-requesting properly packaged data!
 
 ## Step 1 - Clone the iai_robots Repository on the Ros-jazzy Branch
 
@@ -44,9 +45,9 @@ git clone https://github.com/code-iai/iai_robots -b ros-jazzy
 
 > Disclaimer: This section will be reworked in the future when the Robot Semantic Annotation implementation has been refactored, because then @LucaKro will write a tool to create Robot Semantic Annotations easier.
 
-1. Create a new class inheriting from AbstractRobot, and the mixins that describe your robot the best. You can find all mixins at `semantic_digital_twin/src/semantic_digital_twin/robots/robot_mixins.py`
-2. Implement the abstract methods of AbstractRobot according to your robots specifications. For an example check out the implementation of the PR2 at `semantic_digital_twin/src/semantic_digital_twin/robots/pr2.py`
-	1. To get some better insight into the structure of your URDF, and to check if you have done Step 2 correctly, edit this script and execute it: `semantic_digital_twin/scripts/new_robot_integration_helper.py`
+1. Create a new class inheriting from AbstractRobot, and the mixins that describe your robot the best. You can find all mixins at [here](https://github.com/cram2/cognitive_robot_abstract_machine/blob/main/semantic_digital_twin/src/semantic_digital_twin/robots/robot_mixins.py)
+2. Implement the abstract methods of AbstractRobot according to your robots specifications. For an example check out the implementation of the [PR2](https://github.com/cram2/cognitive_robot_abstract_machine/blob/main/semantic_digital_twin/src/semantic_digital_twin/robots/pr2.py)
+	1. To get some better insight into the structure of your URDF, and to check if you have done Step 2 correctly, [edit this script and execute it](https://github.com/cram2/cognitive_robot_abstract_machine/blob/main/semantic_digital_twin/scripts/new_robot_integration_helper.py)
 	2. This script will Publish your Robot to RVIZ, and create an image of the kinematic structure of your robot. This can be really helpful for figuring out what bodies are part of your robots gripper for example, without needing to search through the whole URDF.
 
 Below you can find a starting point for your class:
