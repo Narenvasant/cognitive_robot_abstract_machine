@@ -104,6 +104,7 @@ class WorldWithOmniDriveRobot(WorldConfig):
         self.world.merge_world(world_with_robot, odom)
 
 
+@dataclass
 class WorldWithDiffDriveRobot(WorldConfig):
     urdf: str = field(kw_only=True)
     root_name: PrefixedName = field(default=PrefixedName("map"))
