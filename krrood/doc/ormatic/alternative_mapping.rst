@@ -24,7 +24,7 @@ The generic variable has to be the class you create the alternative mapping for.
 - Introduce association tables explicitly
 - Write reusable mappings that can be shared across multiple applications
 - Filter information that should not persist
-- Control build order of objects during :func:`krrood.ormatic.data_access_objects.helper.from_dao`
+- Control build order of objects during :func:`krrood.ormatic.data_access_objects.dao.DataAccessObject.from_dao`
 
 You also have to implement the methods :func:`krrood.ormatic.data_access_objects.alternative_mappings.AlternativeMapping.from_domain_object` and
 :func:`krrood.ormatic.data_access_objects.alternative_mappings.AlternativeMapping.to_domain_object`.
