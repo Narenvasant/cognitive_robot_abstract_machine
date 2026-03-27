@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
 import sys
-import os
 
 from PySide6.QtWidgets import QApplication
 
