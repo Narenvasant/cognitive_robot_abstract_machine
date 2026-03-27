@@ -5,6 +5,7 @@ import time
 import unittest
 import uuid
 from dataclasses import dataclass, field
+from time import sleep
 from typing import Optional, List, Set, Tuple
 from uuid import uuid4
 
@@ -1232,6 +1233,54 @@ def test_acknowledgement_with_missed_messages(rclpy_node):
         receiver_executor.shutdown()
         receiver_thread.join(timeout=2.0)
         receiver_node.destroy_node()
+
+
+def test_simultaneous_state_and_model_updates(rclpy_node):
+    w1 = World(name="w1")
+    w2 = World(name="w2")
+
+    b1 = Body(name=PrefixedName("b1"))
+    b2 = Body(name=PrefixedName("b2"))
+
+    model_sync_1 = ModelSynchronizer(
+        node=rclpy_node,
+        _world=w1,
+    )
+    state_sync_1 = StateSynchronizer(
+        node=rclpy_node,
+        _world=w1,
+    )
+
+    model_sync_2 = ModelSynchronizer(
+        node=rclpy_node,
+        _world=w2,
+    )
+    state_sync_2 = StateSynchronizer(
+        node=rclpy_node,
+        _world=w2,
+    )
+
+    with w1.modify_world():
+        w1.add_body(b1)
+        w1.add_body(b2)
+        connection = PrismaticConnection.create_with_dofs(
+            world=w1, parent=b1, child=b2, axis=Vector3.X()
+        )
+        w1.add_connection(connection)
+
+    sleep(1)
+
+    synced_connection = w2.get_connections_by_type(PrismaticConnection)[0]
+
+    with w2.modify_world():
+        connection.position = 1
+
+        sleep(1)
+
+        assert synced_connection.position == 0
+
+    sleep(1)
+    assert synced_connection.position == 1
 
 
 if __name__ == "__main__":

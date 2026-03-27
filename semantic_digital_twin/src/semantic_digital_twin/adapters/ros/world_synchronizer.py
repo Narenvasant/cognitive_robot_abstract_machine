@@ -26,8 +26,14 @@ from semantic_digital_twin.adapters.ros.messages import (
     LoadModel,
     Acknowledgment,
 )
-from semantic_digital_twin.adapters.world_entity_kwargs_tracker import WorldEntityWithIDKwargsTracker
-from semantic_digital_twin.callbacks.callback import Callback, StateChangeCallback, ModelChangeCallback
+from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
+    WorldEntityWithIDKwargsTracker,
+)
+from semantic_digital_twin.callbacks.callback import (
+    Callback,
+    StateChangeCallback,
+    ModelChangeCallback,
+)
 from semantic_digital_twin.exceptions import MissingPublishChangesKWARG
 from semantic_digital_twin.orm.ormatic_interface import *
 from semantic_digital_twin.world import World
@@ -369,9 +375,10 @@ class StateSynchronizer(StateChangeCallback, SynchronizerOnCallback):
         indices = [self._world.state._index[_id] for _id in msg.ids]
 
         if indices:
-            self._world.state.data[0, indices] = np.asarray(msg.states, dtype=float)
-            self.update_previous_world_state()
-            self._world.notify_state_change(publish_changes=False)
+            with self._world._world_lock:
+                self._world.state.data[0, indices] = np.asarray(msg.states, dtype=float)
+                self.update_previous_world_state()
+                self._world.notify_state_change(publish_changes=False)
 
     def world_callback(self, publish_changes: bool = True, synchronous: bool = False):
         """

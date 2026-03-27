@@ -169,7 +169,7 @@ class WorldModelUpdateContextManager:
     """
 
     def __enter__(self):
-        self.world._model_manager._world_lock.acquire()
+        self.world._world_lock.acquire()
         model_manager = self.world._model_manager
         if model_manager._current_modifications_will_be_published is None:
             model_manager._current_modifications_will_be_published = (
@@ -209,7 +209,7 @@ class WorldModelUpdateContextManager:
             model_manager._current_modifications_will_be_published = None
 
         # keep outside the if block, as it needs to be released as many times as it was acquired
-        model_manager._world_lock.release()
+        self.world._world_lock.release()
 
 
 class AtomicWorldModificationNotAtomic(Exception):
@@ -324,13 +324,6 @@ class WorldModelManager:
     Indicates if the current modifications will be published via a synchronizer. If None, then there are no active contexts.
     """
 
-    _world_lock: threading.RLock = field(
-        default_factory=threading.RLock, init=False, repr=False
-    )
-    """
-    Lock used to prevent multiple threads from modifying the world at the same time.
-    """
-
     def update_model_version_and_notify_callbacks(self, **kwargs) -> None:
         """
         Notifies the system of a model change and updates necessary states, caches,
@@ -427,6 +420,13 @@ class World(HasSimulatorProperties):
     _world_entity_hash_table: Dict = field(init=False, default_factory=dict)
     """
     Lookup table to get a world entity by its hash
+    """
+
+    _world_lock: threading.RLock = field(
+        default_factory=threading.RLock, init=False, repr=False
+    )
+    """
+    Lock used to prevent multiple threads from modifying the world at the same time.
     """
 
     def __post_init__(self):

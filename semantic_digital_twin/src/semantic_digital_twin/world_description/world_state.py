@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import threading
 from dataclasses import dataclass, field
 from typing import Union, Iterator, Optional
 from uuid import UUID
@@ -24,52 +26,55 @@ if TYPE_CHECKING:
     from semantic_digital_twin.world import World
 
 
+@dataclass
 class WorldStateEntryView:
     """
     Returned if you access members in WorldState.
     Provides a more convenient interface to the data of a single DOF.
     """
 
-    def __init__(self, data: np.ndarray):
-        self.data = data
+    data: np.ndarray
+    lock: threading.RLock
 
     def __getitem__(self, item: Derivatives) -> float:
-        return self.data[item]
+        with self.lock:
+            return self.data[item]
 
     def __setitem__(self, key: Derivatives, value: float) -> None:
-        self.data[key] = value
+        with self.lock:
+            self.data[key] = value
 
     @property
     def position(self) -> float:
-        return self.data[Derivatives.position]
+        return self[Derivatives.position]
 
     @position.setter
     def position(self, value: float):
-        self.data[Derivatives.position] = value
+        self[Derivatives.position] = value
 
     @property
     def velocity(self) -> float:
-        return self.data[Derivatives.velocity]
+        return self[Derivatives.velocity]
 
     @velocity.setter
     def velocity(self, value: float):
-        self.data[Derivatives.velocity] = value
+        self[Derivatives.velocity] = value
 
     @property
     def acceleration(self) -> float:
-        return self.data[Derivatives.acceleration]
+        return self[Derivatives.acceleration]
 
     @acceleration.setter
     def acceleration(self, value: float):
-        self.data[Derivatives.acceleration] = value
+        self[Derivatives.acceleration] = value
 
     @property
     def jerk(self) -> float:
-        return self.data[Derivatives.jerk]
+        return self[Derivatives.jerk]
 
     @jerk.setter
     def jerk(self, value: float):
-        self.data[Derivatives.jerk] = value
+        self[Derivatives.jerk] = value
 
 
 @dataclass
@@ -132,34 +137,39 @@ class WorldState(MutableMapping[UUID, WorldStateEntryView]):
             self.data = np.hstack((self.data, new_col))
 
     def __getitem__(self, dof_id: UUID) -> WorldStateEntryView:
-        if dof_id not in self._index:
-            raise DofNotInWorldStateError(dof_id)
-        idx = self._index[dof_id]
-        return WorldStateEntryView(self.data[:, idx])
+        with self.world_lock:
+            if dof_id not in self._index:
+                raise DofNotInWorldStateError(dof_id)
+            idx = self._index[dof_id]
+            return WorldStateEntryView(
+                data=self.data[:, idx], lock=self._world._world_lock
+            )
 
     def __setitem__(
         self, dof_id: UUID, value: np.ndarray | WorldStateEntryView
     ) -> None:
-        if dof_id not in self._index:
-            raise DofNotInWorldStateError(dof_id)
-        if isinstance(value, WorldStateEntryView):
-            value = value.data
-        arr = np.asarray(value, dtype=float)
-        if arr.shape != (4,):
-            raise IncorrectWorldStateValueShapeError(dof_id)
-        idx = self._index[dof_id]
-        self.data[:, idx] = arr
+        with self.world_lock:
+            if dof_id not in self._index:
+                raise DofNotInWorldStateError(dof_id)
+            if isinstance(value, WorldStateEntryView):
+                value = value.data
+            arr = np.asarray(value, dtype=float)
+            if arr.shape != (4,):
+                raise IncorrectWorldStateValueShapeError(dof_id)
+            idx = self._index[dof_id]
+            self.data[:, idx] = arr
 
     def __delitem__(self, dof_id: UUID) -> None:
-        if dof_id not in self._index:
-            raise DofNotInWorldStateError(dof_id)
-        idx = self._index.pop(dof_id)
-        self._ids.pop(idx)
-        # remove column from data
-        self.data = np.delete(self.data, idx, axis=1)
-        # rebuild indices
-        for i, nm in enumerate(self._ids):
-            self._index[nm] = i
+        with self.world_lock:
+            if dof_id not in self._index:
+                raise DofNotInWorldStateError(dof_id)
+            idx = self._index.pop(dof_id)
+            self._ids.pop(idx)
+            # remove column from data
+            self.data = np.delete(self.data, idx, axis=1)
+            # rebuild indices
+            for i, nm in enumerate(self._ids):
+                self._index[nm] = i
 
     def __iter__(self) -> Iterator[UUID]:
         return iter(self._ids)
@@ -194,7 +204,8 @@ class WorldState(MutableMapping[UUID, WorldStateEntryView]):
         ]
 
     def values(self) -> List[np.ndarray]:
-        return [self.data[:, self._index[dof_id]].copy() for dof_id in self._ids]
+        with self.world_lock:
+            return [self.data[:, self._index[dof_id]].copy() for dof_id in self._ids]
 
     def __contains__(self, dof_or_uuid: Union[DegreeOfFreedom, UUID]) -> bool:
         dof_id = (
@@ -218,33 +229,39 @@ class WorldState(MutableMapping[UUID, WorldStateEntryView]):
         }
 
     @property
+    def world_lock(self) -> threading.RLock:
+        return self._world._world_lock
+
+    @property
     def positions(self) -> np.ndarray:
-        return self.data[0, :]
+        return self.get_derivative(Derivatives.position)
 
     @property
     def velocities(self) -> np.ndarray:
-        return self.data[1, :]
+        return self.get_derivative(Derivatives.velocity)
 
     @property
     def accelerations(self) -> np.ndarray:
-        return self.data[2, :]
+        return self.get_derivative(Derivatives.acceleration)
 
     @property
     def jerks(self) -> np.ndarray:
-        return self.data[3, :]
+        return self.get_derivative(Derivatives.jerk)
 
     def get_derivative(self, derivative: Derivatives) -> np.ndarray:
         """
         Retrieve the data for a whole derivative row.
         """
-        return self.data[derivative, :]
+        with self.world_lock:
+            return self.data[derivative, :]
 
     def set_derivative(self, derivative: Derivatives, new_state: np.ndarray):
         """
         Overwrite the data for a whole derivative row.
         Assums that the order of the DOFs is consistent.
         """
-        self.data[derivative, :] = new_state
+        with self.world_lock:
+            self.data[derivative, :] = new_state
 
     def __deepcopy__(self, memo):
         """
@@ -354,9 +371,12 @@ class WorldStateView:
     """List of DOF ids in column order."""
     _index: Dict[UUID, int]
     """Maps DOF ids to column indices."""
+    lock: threading.RLock
 
     def __getitem__(self, dof_id: UUID) -> WorldStateEntryView:
-        return WorldStateEntryView(self._data[:, self._index[dof_id]])
+        return WorldStateEntryView(
+            data=self._data[:, self._index[dof_id]], lock=self.lock
+        )
 
     @property
     def data(self) -> np.ndarray:
