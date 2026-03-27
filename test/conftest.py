@@ -171,6 +171,9 @@ def cylinder_bot_world():
             world=world, parent=body, child=robot_world.root
         )
         world.merge_world(robot_world, connection)
+        connection = world.get_kinematic_structure_entity_by_id(
+            connection.child.id
+        ).parent_connection
         connection.has_hardware_interface = True
 
         world.collision_manager.max_avoided_bodies_rules.append(
