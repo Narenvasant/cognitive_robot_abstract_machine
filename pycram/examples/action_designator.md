@@ -60,29 +60,28 @@ from pycram.datastructures.dataclasses import Context
 from pycram.testing import setup_world
 
 world = setup_world()
-pr2_view = PR2.from_world(world)
+pr2 = PR2.from_world(world)
 
-context = Context(world, pr2_view)
+context = Context(world=world, robot=pr2)
 
 
 ```
 
 To move the robot we need to create a description which will be resolved to the actual designator. The description of navigation
 only needs a list of possible poses. In PyCRAM **every** designator needs to be part of a plan, the plan also manages the 
-world in which the designator are executed as well as the robot which executes the plan. 
+world in which the designator are executed as well as the robot which executes the plan.
 
 ```python
-from pycram.robot_plans import NavigateActionDescription
-from pycram.datastructures.pose import PoseStamped
-from pycram.language import SequentialPlan
+from pycram.robot_plans.actions.core.navigation import NavigateAction
+from pycram.plans.factories import sequential, execute_single
 
-pose = PoseStamped.from_list([1.3, 2, 0], [0, 0, 0, 1], frame=world.root)
+pose = Pose.from_xyz_quaternion(1.3, 2, 0, 0, 0, 0, 1, reference_frame=world.root)
 
 # This is the Designator Description
-navigate_description = NavigateActionDescription(target_location=[pose])
+navigate_description = NavigateAction(target_location=pose)
 
 # The plan containing the navigation designator
-plan = SequentialPlan(context, navigate_description)
+plan = execute_single(navigate_description, context=context).plan
 ```
 
 What we now did was: create the pose where we want to move the robot, create a description describing a navigation with
@@ -113,16 +112,15 @@ We start again by creating a description and resolving it to a designator. After
 a {meth}`~pycram.process_module.simulated_robot` environment.
 
 ```python
-from pycram.robot_plans import MoveTorsoActionDescription
+from pycram.robot_plans.actions.core.robot_body import MoveTorsoAction
 from pycram.motion_executor import simulated_robot
 from semantic_digital_twin.datastructures.definitions import TorsoState
-from pycram.language import SequentialPlan
 
 torso_pose = TorsoState.HIGH
 
-torso_desig = MoveTorsoActionDescription([torso_pose])
+torso_desig = MoveTorsoAction(torso_pose)
 
-plan = SequentialPlan(context, torso_desig)
+plan = execute_single(torso_desig, context=context).plan
 
 with simulated_robot:
     plan.perform()
@@ -153,13 +151,13 @@ with simulated_robot:
 Park arms is used to move one or both arms into the default parking position.
 
 ```python
-from pycram.robot_plans import ParkArmsActionDescription
+from pycram.robot_plans.actions.core.robot_body import ParkArmsAction
 from pycram.motion_executor import simulated_robot
 from pycram.datastructures.enums import Arms
-from pycram.language import SequentialPlan
+
 
 with simulated_robot:
-    SequentialPlan(context, ParkArmsActionDescription(Arms.BOTH)).perform()
+    execute_single(ParkArmsAction(Arms.BOTH), context_context).perform()
 ```
 
 ## Pick Up and Place
