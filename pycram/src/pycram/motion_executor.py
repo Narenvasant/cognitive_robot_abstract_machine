@@ -98,7 +98,7 @@ class MotionExecutor:
             raise e
 
     def _execute_for_real(self):
-        from giskardpy_ros.python_interface.python_interface import GiskardWrapper
+        from giskardpy.middleware.ros2.python_interface import GiskardWrapper
 
         giskard = GiskardWrapper(self.ros_node)
         giskard.execute(self.motion_state_chart)
