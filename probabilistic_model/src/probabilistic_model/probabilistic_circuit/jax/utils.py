@@ -1,11 +1,10 @@
-import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental.sparse import BCOO, BCSR
+from random_events.interval import SimpleInterval, Bound
+import jax
 from scipy.sparse import csr_array, csc_array
 from typing_extensions import Tuple
-
-from random_events.interval import SimpleInterval, Bound
 
 
 def copy_bcoo(x: BCOO) -> BCOO:

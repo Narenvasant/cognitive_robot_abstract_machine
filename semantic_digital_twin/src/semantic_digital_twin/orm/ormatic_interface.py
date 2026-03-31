@@ -35,6 +35,7 @@ import semantic_digital_twin.exceptions
 import semantic_digital_twin.mixin
 import semantic_digital_twin.orm.exceptions
 import semantic_digital_twin.orm.model
+import semantic_digital_twin.pipeline.gltf_loader
 import semantic_digital_twin.pipeline.mesh_decomposer
 import semantic_digital_twin.pipeline.pipeline
 import semantic_digital_twin.reasoning.predicates
@@ -2991,6 +2992,35 @@ class NoJointStateWithTypeDAO(
     )
 
 
+class NodeProcessingResultDAO(
+    Base,
+    DataAccessObject[semantic_digital_twin.pipeline.gltf_loader.NodeProcessingResult],
+):
+
+    __tablename__ = "NodeProcessingResultDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        Integer, primary_key=True, use_existing_column=True
+    )
+
+    visited_nodes: Mapped[typing.Set[builtins.str]] = mapped_column(
+        JSON, nullable=False, use_existing_column=True
+    )
+    children_to_visit: Mapped[typing.Set[builtins.str]] = mapped_column(
+        JSON, nullable=False, use_existing_column=True
+    )
+
+    body_id: Mapped[int] = mapped_column(
+        ForeignKey("BodyDAO.database_id", use_alter=True),
+        nullable=True,
+        use_existing_column=True,
+    )
+
+    body: Mapped[BodyDAO] = relationship(
+        "BodyDAO", uselist=False, foreign_keys=[body_id], post_update=True
+    )
+
+
 class NonMonotonicTimeErrorDAO(
     LogicalErrorDAO,
     DataAccessObject[semantic_digital_twin.exceptions.NonMonotonicTimeError],
@@ -3265,6 +3295,23 @@ class QPProblemDAO(
         uselist=False,
         foreign_keys=[target_id],
         post_update=True,
+    )
+
+
+class RootNodeNotFoundErrorDAO(
+    Base, DataAccessObject[semantic_digital_twin.exceptions.RootNodeNotFoundError]
+):
+
+    __tablename__ = "RootNodeNotFoundErrorDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        Integer, primary_key=True, use_existing_column=True
+    )
+
+    message: Mapped[builtins.str] = mapped_column(String(255), use_existing_column=True)
+
+    candidates: Mapped[typing.List[builtins.str]] = mapped_column(
+        JSON, nullable=False, use_existing_column=True
     )
 
 
@@ -3882,6 +3929,29 @@ class CenterLocalGeometryAndPreserveWorldPoseDAO(
 
     __mapper_args__ = {
         "polymorphic_identity": "CenterLocalGeometryAndPreserveWorldPoseDAO",
+        "inherit_condition": database_id == StepDAO.database_id,
+    }
+
+
+class GLTFLoaderDAO(
+    StepDAO, DataAccessObject[semantic_digital_twin.pipeline.gltf_loader.GLTFLoader]
+):
+
+    __tablename__ = "GLTFLoaderDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        ForeignKey(StepDAO.database_id), primary_key=True, use_existing_column=True
+    )
+
+    file_path: Mapped[builtins.str] = mapped_column(
+        String(255), use_existing_column=True
+    )
+    max_grouping_iterations: Mapped[builtins.int] = mapped_column(
+        use_existing_column=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "GLTFLoaderDAO",
         "inherit_condition": database_id == StepDAO.database_id,
     }
 

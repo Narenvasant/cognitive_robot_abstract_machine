@@ -233,7 +233,9 @@ class BoundingBoxCollection(ShapeCollection):
         """
         :return: The bounding boxes as a random event.
         """
-        return Event(*[box.simple_event for box in self.bounding_boxes])
+        return Event.from_simple_sets(
+            *[box.simple_event for box in self.bounding_boxes]
+        )
 
     def merge(self, other: BoundingBoxCollection) -> BoundingBoxCollection:
         """

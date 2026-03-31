@@ -291,11 +291,9 @@ class GLTFLoader(Step):
         if existing_node is not None:
             # Merge meshes from new body into existing body
             existing_body = world_elements[existing_node]
-            merged_shapes = (
-                list(existing_body.visual.shapes) + list(body.visual.shapes)
-            )
-            merged_collision = (
-                list(existing_body.collision.shapes) + list(body.collision.shapes)
+            merged_shapes = list(existing_body.visual.shapes) + list(body.visual.shapes)
+            merged_collision = list(existing_body.collision.shapes) + list(
+                body.collision.shapes
             )
             existing_body.visual = ShapeCollection(merged_shapes)
             existing_body.collision = ShapeCollection(merged_collision)
@@ -325,7 +323,9 @@ class GLTFLoader(Step):
             if node in visited_nodes:
                 continue
 
-            result, children_to_visit = self._process_node(node, body_parent, visited_nodes)
+            result, children_to_visit = self._process_node(
+                node, body_parent, visited_nodes
+            )
 
             if result is not None:
                 # Node created a body

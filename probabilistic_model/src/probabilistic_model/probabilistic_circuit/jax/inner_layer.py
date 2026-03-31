@@ -4,7 +4,6 @@ import inspect
 import math
 from abc import abstractmethod, ABC
 from dataclasses import dataclass
-
 import equinox as eqx
 import jax
 import tqdm
@@ -12,8 +11,9 @@ from jax import numpy as jnp
 from jax.experimental.sparse import BCOO, bcoo_concatenate
 from jax.scipy.special import logsumexp
 from jax.tree_util import tree_flatten
-from jaxtyping import Int
-from random_events.utils import recursive_subclasses, SubclassJSONSerializer
+from jaxtyping import Int, Array
+from krrood.adapters.json_serializer import recursive_subclasses, SubclassJSONSerializer
+from probabilistic_model.exceptions import ShapeMismatchError
 from random_events.variable import Variable
 from sortedcontainers import SortedSet
 from typing_extensions import (
@@ -33,14 +33,14 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     SumUnit,
     ProductUnit,
     Unit,
-    ProbabilisticCircuit as NXProbabilisticCircuit,
+    ProbabilisticCircuit as RustworkxProbabilisticCircuit,
 )
 
 
 def inverse_class_of(clazz: Type[Unit]) -> Type[Layer]:
     for subclass in recursive_subclasses(Layer):
         if not inspect.isabstract(subclass):
-            if issubclass(clazz, subclass.nx_classes()):
+            if issubclass(clazz, subclass.rustworkx_classes()):
                 return subclass
 
     raise TypeError(f"Could not find class for {clazz}")
@@ -53,7 +53,7 @@ class Layer(eqx.Module, SubclassJSONSerializer, ABC):
     Layers have the same scope (set of variables) for every node in them.
     """
 
-    _variables: Optional[jnp.array] = eqx.field(static=False, default=None)
+    _variables: Optional[Array] = eqx.field(static=False, default=None)
     """
     The variable indices of the layer.
     """
@@ -66,16 +66,15 @@ class Layer(eqx.Module, SubclassJSONSerializer, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def log_likelihood_of_nodes_single(self, x: jnp.array) -> jnp.array:
+    def log_likelihood_of_nodes_single(self, x: Array) -> Array:
         """
         Calculate the log-likelihood of the distribution.
 
         :param x: The input vector.
         :return: The log-likelihood of every node in the layer for x.
         """
-        raise NotImplementedError
 
-    def log_likelihood_of_nodes(self, x: jnp.array) -> jnp.array:
+    def log_likelihood_of_nodes(self, x: Array) -> Array:
         """
         Vectorized version of :meth:`log_likelihood_of_nodes_single`
         """
@@ -115,16 +114,16 @@ class Layer(eqx.Module, SubclassJSONSerializer, ABC):
         raise NotImplementedError
 
     @classmethod
-    def nx_classes(cls) -> Tuple[Type, ...]:
+    def rustworkx_classes(cls) -> Tuple[Type, ...]:
         """
         :return: The tuple of matching classes of the layer in the probabilistic_model.probabilistic_circuit.rx package.
         """
         return tuple()
 
-    def to_nx(
+    def to_rustworkx(
         self,
         variables: SortedSet[Variable],
-        result: NXProbabilisticCircuit,
+        result: RustworkxProbabilisticCircuit,
         progress_bar: Optional[tqdm.tqdm] = None,
     ) -> List[Unit]:
         """
@@ -144,9 +143,9 @@ class Layer(eqx.Module, SubclassJSONSerializer, ABC):
     @staticmethod
     def create_layers_from_nodes(
         nodes: List[Unit],
-        child_layers: List[NXConverterLayer],
+        child_layers: List[RustworkxLayerConverter],
         progress_bar: bool = True,
-    ) -> List[NXConverterLayer]:
+    ) -> List[RustworkxLayerConverter]:
         """
         Create a layer from a list of nodes.
         """
@@ -193,9 +192,9 @@ class Layer(eqx.Module, SubclassJSONSerializer, ABC):
     def create_layer_from_nodes_with_same_type_and_scope(
         cls,
         nodes: List[Unit],
-        child_layers: List[NXConverterLayer],
+        child_layers: List[RustworkxLayerConverter],
         progress_bar: bool = True,
-    ) -> NXConverterLayer:
+    ) -> RustworkxLayerConverter:
         """
         Create a layer from a list of nodes with the same type and scope.
         """
@@ -315,17 +314,15 @@ class SumLayer(InnerLayer, ABC):
 
     def validate(self):
         for log_weights in self.log_weights:
-            assert (
-                log_weights.shape[0] == self.number_of_nodes
-            ), "The number of nodes must match the number of log_weights."
+            if not log_weights.shape[0] == self.number_of_nodes:
+                raise ShapeMismatchError(self.number_of_nodes, log_weights.shape[0])
 
         for log_weights, child_layer in self.log_weighted_child_layers:
-            assert (
-                log_weights.shape[1] == child_layer.number_of_nodes
-            ), "The number of nodes must match the number of log_weights."
-            assert (
-                child_layer.variables == self.variables
-            ).all(), "The variables must match."
+            if not log_weights.shape[1] == child_layer.number_of_nodes:
+                raise ShapeMismatchError(
+                    child_layer.number_of_nodes,
+                    log_weights.shape[1],
+                )
 
     @property
     def log_weighted_child_layers(self) -> Iterator[Tuple[BCOO, Layer]]:
@@ -349,7 +346,7 @@ class SparseSumLayer(SumLayer):
     log_weights: List[BCOO]
 
     @classmethod
-    def nx_classes(cls) -> Tuple[Type, ...]:
+    def rustworkx_classes(cls) -> Tuple[Type, ...]:
         return (SumUnit,)
 
     @property
@@ -428,7 +425,7 @@ class SparseSumLayer(SumLayer):
         return result
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         child_layer = [
             Layer.from_json(child_layer) for child_layer in data["child_layers"]
         ]
@@ -447,9 +444,9 @@ class SparseSumLayer(SumLayer):
     def create_layer_from_nodes_with_same_type_and_scope(
         cls,
         nodes: List[SumUnit],
-        child_layers: List[NXConverterLayer],
+        child_layers: List[RustworkxLayerConverter],
         progress_bar: bool = True,
-    ) -> NXConverterLayer:
+    ) -> RustworkxLayerConverter:
 
         result_hash_remap = {hash(node): index for index, node in enumerate(nodes)}
         variables = jnp.array(
@@ -498,12 +495,12 @@ class SparseSumLayer(SumLayer):
             )
 
         sum_layer = cls([cl.layer for cl in filtered_child_layers], log_weights)
-        return NXConverterLayer(sum_layer, nodes, result_hash_remap)
+        return RustworkxLayerConverter(sum_layer, nodes, result_hash_remap)
 
-    def to_nx(
+    def to_rustworkx(
         self,
         variables: SortedSet[Variable],
-        result: NXProbabilisticCircuit,
+        result: RustworkxProbabilisticCircuit,
         progress_bar: Optional[tqdm.tqdm] = None,
     ) -> List[Unit]:
 
@@ -518,11 +515,11 @@ class SparseSumLayer(SumLayer):
             SumUnit(probabilistic_circuit=result) for _ in range(self.number_of_nodes)
         ]
 
-        child_layer_nx = [
-            cl.to_nx(variables, result, progress_bar) for cl in self.child_layers
+        child_layer_rustworkx = [
+            cl.to_rustworkx(variables, result, progress_bar) for cl in self.child_layers
         ]
 
-        for log_weights, child_layer in zip(self.log_weights, child_layer_nx):
+        for log_weights, child_layer in zip(self.log_weights, child_layer_rustworkx):
 
             # extract the log_weights for the child layer
             for (row, col), log_weight in zip(log_weights.indices, log_weights.data):
@@ -543,23 +540,23 @@ class DenseSumLayer(SumLayer):
     def create_layer_from_nodes_with_same_type_and_scope(
         cls,
         nodes: List[Unit],
-        child_layers: List[NXConverterLayer],
+        child_layers: List[RustworkxLayerConverter],
         progress_bar: bool = True,
-    ) -> NXConverterLayer:
+    ) -> RustworkxLayerConverter:
         raise NotImplementedError
 
     @property
-    def number_of_components(self) -> int:
+    def number_of_components(self) -> float:
         return sum([cl.number_of_components for cl in self.child_layers]) + sum(
             [math.prod(lw.shape) for lw in self.log_weights]
         )
 
     @classmethod
-    def nx_classes(cls) -> Tuple[Type, ...]:
+    def rustworkx_classes(cls) -> Tuple[Type, ...]:
         return tuple()
 
     @property
-    def concatenated_log_weights(self) -> jnp.array:
+    def concatenated_log_weights(self) -> Array:
         """
         :return: The concatenated log_weights of the child layers for each node.
         """
@@ -613,17 +610,17 @@ class DenseSumLayer(SumLayer):
         return result
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         child_layer = [
             Layer.from_json(child_layer) for child_layer in data["child_layers"]
         ]
         log_weights = [jnp.asarray(lw) for lw in data["log_weights"]]
         return cls(child_layer, log_weights)
 
-    def to_nx(
+    def to_rustworkx(
         self,
         variables: SortedSet[Variable],
-        result: NXProbabilisticCircuit,
+        result: RustworkxProbabilisticCircuit,
         progress_bar: Optional[tqdm.tqdm] = None,
     ) -> List[Unit]:
 
@@ -638,11 +635,11 @@ class DenseSumLayer(SumLayer):
             SumUnit(probabilistic_circuit=result) for _ in range(self.number_of_nodes)
         ]
 
-        child_layer_nx = [
-            cl.to_nx(variables, result, progress_bar) for cl in self.child_layers
+        child_layer_rustworkx = [
+            cl.to_rustworkx(variables, result, progress_bar) for cl in self.child_layers
         ]
 
-        for log_weights, child_layer in zip(self.log_weights, child_layer_nx):
+        for log_weights, child_layer in zip(self.log_weights, child_layer_rustworkx):
             # extract the log_weights for the child layer
             for row in range(log_weights.shape[0]):
                 for col in range(log_weights.shape[1]):
@@ -693,17 +690,17 @@ class ProductLayer(InnerLayer):
         self.variables
 
     def validate(self):
-        assert self.edges.shape == (len(self.child_layers), self.number_of_nodes), (
-            f"The shape of the edges must be {(len(self.child_layers), self.number_of_nodes)} "
-            f"but was {self.edges.shape}."
-        )
+        if not self.edges.shape == (len(self.child_layers), self.number_of_nodes):
+            raise ShapeMismatchError(
+                (len(self.child_layers), self.number_of_nodes), self.edges.shape
+            )
 
     @property
     def number_of_nodes(self) -> int:
         return self.edges.shape[1]
 
     @classmethod
-    def nx_classes(cls) -> Tuple[Type, ...]:
+    def rustworkx_classes(cls) -> Tuple[Type, ...]:
         return (ProductUnit,)
 
     @property
@@ -763,7 +760,7 @@ class ProductLayer(InnerLayer):
         return result
 
     @classmethod
-    def _from_json(cls, data: Dict[str, Any]) -> Self:
+    def _from_json(cls, data: Dict[str, Any], **kwargs) -> Self:
         child_layer = [
             Layer.from_json(child_layer) for child_layer in data["child_layers"]
         ]
@@ -779,9 +776,9 @@ class ProductLayer(InnerLayer):
     def create_layer_from_nodes_with_same_type_and_scope(
         cls,
         nodes: List[Unit],
-        child_layers: List[NXConverterLayer],
+        child_layers: List[RustworkxLayerConverter],
         progress_bar: bool = True,
-    ) -> NXConverterLayer:
+    ) -> RustworkxLayerConverter:
 
         hash_remap = {hash(node): index for index, node in enumerate(nodes)}
         number_of_nodes = len(nodes)
@@ -824,17 +821,17 @@ class ProductLayer(InnerLayer):
             .sum_duplicates(remove_zeros=False)
         )
         layer = cls([cl.layer for cl in child_layers], edges)
-        return NXConverterLayer(layer, nodes, hash_remap)
+        return RustworkxLayerConverter(layer, nodes, hash_remap)
 
-    def to_nx(
+    def to_rustworkx(
         self,
         variables: SortedSet[Variable],
-        result: NXProbabilisticCircuit,
+        result: RustworkxProbabilisticCircuit,
         progress_bar: Optional[tqdm.tqdm] = None,
     ) -> List[Unit]:
 
         if result is None:
-            result = NXProbabilisticCircuit()
+            result = RustworkxProbabilisticCircuit()
 
         variables_ = [variables[i] for i in self.variables]
         if progress_bar:
@@ -847,11 +844,11 @@ class ProductLayer(InnerLayer):
             for _ in range(self.number_of_nodes)
         ]
 
-        child_layer_nx = [
-            cl.to_nx(variables, result, progress_bar) for cl in self.child_layers
+        child_layer_rustworkx = [
+            cl.to_rustworkx(variables, result, progress_bar) for cl in self.child_layers
         ]
         for (row, col), data in zip(self.edges.indices, self.edges.data):
-            units[col].add_subcircuit(child_layer_nx[row][data])
+            units[col].add_subcircuit(child_layer_rustworkx[row][data])
 
             if progress_bar:
                 progress_bar.update()
@@ -860,9 +857,9 @@ class ProductLayer(InnerLayer):
 
 
 @dataclass
-class NXConverterLayer:
+class RustworkxLayerConverter:
     """
-    Class used for conversion from a probabilistic circuit in networkx to a layered circuit in jax.
+    Class used for conversion from a probabilistic circuit in rustworkx to a layered circuit in jax.
     """
 
     layer: Layer

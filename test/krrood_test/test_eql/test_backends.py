@@ -70,7 +70,7 @@ def test_probabilistic_backend_with_symbolic_expression():
     )
     parameters = UnderspecifiedParameters(prob_q)
     assert parameters.variables["KRROODPosition.z"] == Symbolic(
-        "KRROODPosition.z", Set.from_iterable([1, 2, 3])
+        name="KRROODPosition.z", domain=Set.from_iterable([1, 2, 3])
     )
 
 

@@ -195,7 +195,7 @@ class Scale:
         extend_result_in_direction: Optional[Vector3] = None,
         amount: float = 0.0,
     ) -> SimpleEvent:
-        simple_event = SimpleEvent(
+        simple_event = SimpleEvent.from_data(
             {
                 SpatialVariables.x.value: closed(-self.x / 2, self.x / 2),
                 SpatialVariables.y.value: closed(-self.y / 2, self.y / 2),
@@ -824,21 +824,27 @@ class BoundingBox:
         """
         :return: The x interval of the bounding box.
         """
-        return SimpleInterval(self.min_x, self.max_x, Bound.CLOSED, Bound.CLOSED)
+        return SimpleInterval.from_data(
+            self.min_x, self.max_x, Bound.CLOSED, Bound.CLOSED
+        )
 
     @property
     def y_interval(self) -> SimpleInterval:
         """
         :return: The y interval of the bounding box.
         """
-        return SimpleInterval(self.min_y, self.max_y, Bound.CLOSED, Bound.CLOSED)
+        return SimpleInterval.from_data(
+            self.min_y, self.max_y, Bound.CLOSED, Bound.CLOSED
+        )
 
     @property
     def z_interval(self) -> SimpleInterval:
         """
         :return: The z interval of the bounding box.
         """
-        return SimpleInterval(self.min_z, self.max_z, Bound.CLOSED, Bound.CLOSED)
+        return SimpleInterval.from_data(
+            self.min_z, self.max_z, Bound.CLOSED, Bound.CLOSED
+        )
 
     @property
     def scale(self) -> Scale:
@@ -864,7 +870,7 @@ class BoundingBox:
         """
         :return: The bounding box as a random event.
         """
-        return SimpleEvent(
+        return SimpleEvent.from_data(
             {
                 SpatialVariables.x.value: self.x_interval,
                 SpatialVariables.y.value: self.y_interval,

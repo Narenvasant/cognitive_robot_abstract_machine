@@ -143,7 +143,7 @@ class ProbabilisticCostmap:
         for rectangle in self.costmap.partitioning_rectangles():
             rectangle.translate(self.origin.position.x, self.origin.position.y)
             area.simple_sets.add(
-                SimpleEvent(
+                SimpleEvent.from_data(
                     {
                         self.x: closed_open(rectangle.x_lower, rectangle.x_upper),
                         self.y: closed_open(rectangle.y_lower, rectangle.y_upper),

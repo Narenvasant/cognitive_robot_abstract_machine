@@ -512,3 +512,16 @@ class DataclassJSONSerializer(ExternalClassJSONSerializer[None]):
                 current_result = from_json(current_data, **kwargs)
             init_args[k] = current_result
         return clazz(**init_args)
+
+
+@dataclass
+class NumpyFloatJSONSerializer(ExternalClassJSONSerializer[np.float32]):
+    """External JSON serializer for numpy floats."""
+
+    @classmethod
+    def to_json(cls, obj: np.float32) -> Dict[str, Any]:
+        return {JSON_TYPE_NAME: get_full_class_name(type(obj)), "value": float(obj)}
+
+    @classmethod
+    def from_json(cls, data: Dict[str, Any], clazz: Type, **kwargs) -> Self:
+        return float(data["value"])

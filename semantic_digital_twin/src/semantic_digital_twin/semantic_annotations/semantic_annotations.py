@@ -123,7 +123,7 @@ class Handle(HasRootBody):
 
         z_interval = closed(-scale.z / 2, scale.z / 2)
 
-        return SimpleEvent(
+        return SimpleEvent.from_data(
             {
                 SpatialVariables.x.value: x_interval,
                 SpatialVariables.y.value: y_interval,
@@ -520,7 +520,7 @@ class Wall(HasApertures):
         y_interval = closed(-scale.y / 2, scale.y / 2)
         z_interval = closed(0, scale.z)
 
-        return SimpleEvent(
+        return SimpleEvent.from_data(
             {
                 SpatialVariables.x.value: x_interval,
                 SpatialVariables.y.value: y_interval,
