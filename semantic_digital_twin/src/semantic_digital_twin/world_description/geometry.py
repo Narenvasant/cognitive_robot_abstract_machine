@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import logging
 import os
+import shutil
 import tempfile
 import weakref
 from abc import ABC, abstractmethod
@@ -495,6 +496,7 @@ class Mesh(Shape):
         dirname: str = "/tmp",
         file_type: str = "obj",
     ) -> "Mesh":
+        file_type = file_type.lower()
         if origin is None:
             origin = HomogeneousTransformationMatrix()
         if scale is None:
@@ -504,44 +506,14 @@ class Mesh(Shape):
         if texture_file_path is not None:
             mesh = cls.add_texture(mesh=mesh, texture_file_path=texture_file_path)
 
-        # Capture path immediately and close handle before trimesh opens the file
-        with tempfile.NamedTemporaryFile(
-            dir=dirname, suffix=f".{file_type}", delete=False
-        ) as tmp:
-            tmp_path = tmp.name
+        # Each export gets its own subdir so material.mtl files never collide
+        subdir = tempfile.mkdtemp(dir=dirname)
+        tmp_path = os.path.join(subdir, f"mesh.{file_type}")
 
         try:
-            if file_type == "obj":
-                mesh.export(tmp_path, file_type="obj")
-
-                old_mtl_file = "material.mtl"
-                new_mtl_file = f"{os.path.basename(tmp_path)}.mtl"
-                old_mtl = os.path.join(dirname, old_mtl_file)
-                new_mtl = os.path.join(dirname, new_mtl_file)
-
-                if os.path.exists(old_mtl):
-                    os.rename(old_mtl, new_mtl)
-
-                with open(tmp_path) as f:
-                    text = f.read()
-                text = text.replace(old_mtl_file, new_mtl_file)
-                with open(tmp_path, "w") as f:
-                    f.write(text)
-
-            elif file_type == "stl":
-                mesh.export(tmp_path, file_type="stl")
-
-            else:
-                raise ValueError(f"Unsupported file type: {file_type}")
-
+            mesh.export(tmp_path, file_type=file_type)
         except Exception:
-            # Clean up temp files on failure so nothing is orphaned
-            for path in [
-                tmp_path,
-                os.path.join(dirname, f"{os.path.basename(tmp_path)}.mtl"),
-            ]:
-                if os.path.exists(path):
-                    os.remove(path)
+            shutil.rmtree(subdir, ignore_errors=True)
             raise
 
         instance = cls(
@@ -551,25 +523,20 @@ class Mesh(Shape):
         )
 
         # Tie file lifetime to the Mesh instance
-        weakref.finalize(instance, cls._cleanup_temp_files, tmp_path, dirname)
+        weakref.finalize(instance, cls._cleanup_temp_dir, subdir)
 
         return instance
 
     @staticmethod
-    def _cleanup_temp_files(tmp_path: str, dirname: str) -> None:
+    def _cleanup_temp_dir(subdir: str) -> None:
         """
-        Clean up temporary files created for the mesh.
+        Clean up the temporary subdirectory created for the mesh.
         """
-        for path in [
-            tmp_path,
-            os.path.join(dirname, f"{os.path.basename(tmp_path)}.mtl"),
-        ]:
-            logger.debug(f"Cleaning up temporary file: {path}")
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except OSError:
-                pass
+        logger.debug(f"Cleaning up temporary directory: {subdir}")
+        try:
+            shutil.rmtree(subdir, ignore_errors=True)
+        except OSError:
+            pass
 
     @classmethod
     def from_vertices_and_faces(
