@@ -18,7 +18,10 @@ from probabilistic_model.probabilistic_circuit.causal.causal_circuit import (
     CausalCircuit,
     FailureDiagnosisResult,
     MarginalDeterminismTreeNode,
+    MissingQueryVariableViolation,
+    OverlappingChildSupportsViolation,
     SupportDeterminismVerificationResult,
+    UnnormalizedSumUnitViolation,
 )
 
 
@@ -299,11 +302,12 @@ class SupportDeterminismVerificationResultTestCase(unittest.TestCase):
 
     def test_failing_result_contains_fail_and_violation_text(self):
         x = Continuous("x")
+        violation = OverlappingChildSupportsViolation(sum_unit_index=0, query_variable=x)
         result = SupportDeterminismVerificationResult(
-            passed=False, violations=["overlap on x"], checked_query_sets=[{x}], circuit_variables=[x]
+            passed=False, violations=[violation], checked_query_sets=[{x}], circuit_variables=[x]
         )
         self.assertIn("FAIL", str(result))
-        self.assertIn("overlap on x", str(result))
+        self.assertIn("overlapping", str(result))
 
     def test_string_contains_variable_name(self):
         x = Continuous("x")
@@ -398,7 +402,7 @@ class VerifySupportDeterminismVariableExistenceTestCase(unittest.TestCase):
         tree = MarginalDeterminismTreeNode(variables={self.x, ghost}, query_set={ghost})
         result = self._make_causal_circuit(tree).verify_support_determinism()
         self.assertFalse(result.passed)
-        self.assertTrue(any("ghost" in violation for violation in result.violations))
+        self.assertTrue(any("ghost" in str(violation) for violation in result.violations))
 
     def test_result_lists_all_circuit_variables(self):
         tree = MarginalDeterminismTreeNode.from_causal_graph([self.x], [self.y])
@@ -421,7 +425,7 @@ class VerifySupportDeterminismNormalizationTestCase(unittest.TestCase):
         cc = CausalCircuit.from_probabilistic_circuit(circuit, tree, [x], [y])
         result = cc.verify_support_determinism()
         self.assertFalse(result.passed)
-        self.assertTrue(any("log-weights" in violation for violation in result.violations))
+        self.assertTrue(any("log-weights" in str(violation) for violation in result.violations))
 
 
 # verify_support_determinism — Check 3: SumUnit children are support-disjoint

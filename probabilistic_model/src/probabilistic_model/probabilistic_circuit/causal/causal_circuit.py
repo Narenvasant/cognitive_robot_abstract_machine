@@ -1,9 +1,19 @@
+"""
+causal_circuit
+==============
+Provides CausalCircuit, an extension of ProbabilisticCircuit with exact,
+tractable causal inference using the marginal determinism framework (md-vtree).
+
+Also provides MarginalDeterminismTreeNode for constructing the causal graph
+structure, and dataclasses for verification and query results.
+"""
+
 from __future__ import annotations
 
 import copy
 import itertools
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
@@ -54,20 +64,25 @@ class MarginalDeterminismTreeNode(NodeMixin):
     variables: Set[Variable]
     """All Variables in this node's subtree."""
 
-    query_set: Set[Variable] = None
+    query_set: Set[Variable] = field(default=None)
     """Variables for which SumUnits at this level must be support-deterministic.
     Defaults to an empty set."""
 
-    parent: Optional[MarginalDeterminismTreeNode] = None
-    """Parent node in the tree. None for the root."""
+    parent: Optional[MarginalDeterminismTreeNode] = field(default=None, init=False)
+    """Parent node in the tree. None for the root. Set via _parent_node."""
+
+    _parent_node: Optional[MarginalDeterminismTreeNode] = field(default=None, repr=False)
+    """Init-only carrier for the parent value. Consumed by __post_init__."""
 
     def __post_init__(self) -> None:
-        _parent = self.parent
-        self.parent = None
+        # NodeMixin.__init__ must run before self.parent is assigned.
+        # parent is excluded from the dataclass __init__ (init=False) so that
+        # NodeMixin.__setattr__ only fires here, after super().__init__() has
+        # prepared NodeMixin's internal node registry.
         super().__init__()
         if self.query_set is None:
             self.query_set = set()
-        self.parent = _parent
+        self.parent = self._parent_node
 
     def find_node_for_variable(
         self, variable: Variable
@@ -136,9 +151,9 @@ class MarginalDeterminismTreeNode(NodeMixin):
         :returns: The root node of the constructed subtree.
         """
         if len(ordered) == 0:
-            return cls(variables=set(), query_set=set(), parent=parent)
+            return cls(variables=set(), query_set=set(), _parent_node=parent)
         if len(ordered) == 1:
-            return cls(variables={ordered[0]}, query_set={ordered[0]}, parent=parent)
+            return cls(variables={ordered[0]}, query_set={ordered[0]}, _parent_node=parent)
 
         primary = ordered[0]
         remaining = ordered[1:]
@@ -146,7 +161,7 @@ class MarginalDeterminismTreeNode(NodeMixin):
         left_vars = [primary] + remaining[:split]
         right_vars = remaining[split:]
 
-        node = cls(variables=set(ordered), query_set={primary}, parent=parent)
+        node = cls(variables=set(ordered), query_set={primary}, _parent_node=parent)
         cls._build_subtree(left_vars, parent=node)
         if right_vars:
             cls._build_subtree(right_vars, parent=node)
@@ -477,6 +492,10 @@ class CausalCircuit:
         :param query_variable: The query Variable to check marginal disjointness on.
         :returns: A violation if overlapping children are detected, else None.
         """
+        # Skip support events that do not cover query_variable — calling
+        # marginal() on an event that lacks the variable raises KeyError.
+        if not all(query_variable in event.variables for event in child_support_events):
+            return None
         child_marginals = [
             event.marginal([query_variable])
             for event in child_support_events
