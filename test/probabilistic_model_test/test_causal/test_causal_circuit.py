@@ -1,19 +1,3 @@
-"""
-Tests for causal_circuit.
-
-Each test class targets a single unit of behaviour. Test names describe the
-expected outcome. Every correctness test uses a circuit whose ground-truth
-answer is analytically known.
-
-Circuit inventory
------------------
-_build_independent_circuit    — ProductUnit root, P(x,y) = P(x)P(y)
-_build_three_variable_circuit — ProductUnit root, three independent variables
-_build_correlated_circuit     — SumUnit root, x fully determines y region
-_build_confounded_circuit     — SumUnit root, confounder z drives both x and y
-_build_unnormalized_circuit   — SumUnit with weights that exceed 1
-"""
-
 import math
 import unittest
 
