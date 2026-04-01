@@ -99,9 +99,6 @@ from krrood.symbolic_math.symbolic_math import (
     FloatVariable,
     shortest_angular_distance,
 )
-from semantic_digital_twin.adapters.ros.visualization.viz_marker import (
-    VizMarkerPublisher,
-)
 from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
     WorldEntityWithIDKwargsTracker,
 )
@@ -116,7 +113,6 @@ from semantic_digital_twin.robots.abstract_robot import Manipulator, AbstractRob
 from semantic_digital_twin.robots.hsrb import HSRB
 from semantic_digital_twin.robots.minimal_robot import MinimalRobot
 from semantic_digital_twin.robots.tracy import Tracy
-from semantic_digital_twin.utils import tracy_installed
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     Handle,
     Door,
