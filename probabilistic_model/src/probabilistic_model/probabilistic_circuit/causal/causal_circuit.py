@@ -262,6 +262,11 @@ class CausalCircuit:
 
     Use empty adjustment sets for independent randomised training data.
     Supply confounder Variables for correlated deployment data.
+
+    The confounder variable causally influences both the cause variable and the effect variable,
+    creating a correlation between them in observational data.
+    For example, if Z influences both X (cause) and Y (effect),
+    then the observed P(Y | X) has the true causal effect of X on Y with the indirect influence of Z.
     """
 
     probabilistic_circuit: ProbabilisticCircuit
