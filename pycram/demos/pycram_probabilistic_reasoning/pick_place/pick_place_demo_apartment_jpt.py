@@ -76,15 +76,15 @@ import sqlalchemy.types as sqlalchemy_types
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
+from krrood.ormatic.data_access_objects.helper import to_dao
 from pycram.datastructures.dataclasses import Context
 from pycram.datastructures.enums import ApproachDirection, Arms, VerticalAlignment
 from pycram.datastructures.grasp import GraspDescription
-from pycram.language import SequentialPlan
+from pycram.language import ExecutesSequentially
 from pycram.motion_executor import simulated_robot
 from pycram.orm.ormatic_interface import Base
-from pycram.robot_plans import NavigateAction, ParkArmsAction, PickUpAction, PlaceAction
 
-from krrood.ormatic.dao import to_dao
+# from krrood.ormatic.dao import to_dao
 from krrood.ormatic.utils import create_engine
 
 from jpt.distributions.univariate import Multinomial
@@ -92,11 +92,15 @@ from jpt.distributions.univariate.multinomial import OrderedDictProxy
 from jpt.trees import JPT as JointProbabilityTree
 from jpt.variables import NumericVariable, SymbolicVariable
 
-from probabilistic_model.learning.jpt.jpt import JPT as ProbModelJPT
+from probabilistic_model.learning.jpt.jpt import JointProbabilityTree
 from probabilistic_model.learning.jpt.variables import (
     Continuous as ProbContinuous,
     Symbolic as ProbSymbolic,
 )
+from pycram.robot_plans.actions.core.navigation import NavigateAction
+from pycram.robot_plans.actions.core.pick_up import PickUpAction
+from pycram.robot_plans.actions.core.placing import PlaceAction
+from pycram.robot_plans.actions.core.robot_body import ParkArmsAction
 from random_events.set import Set as RESet
 from random_events.variable import Continuous as REContinuous
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import SumUnit as _SumUnit
@@ -122,7 +126,7 @@ from semantic_digital_twin.world_description.connections import (
     FixedConnection,
     OmniDrive,
 )
-from semantic_digital_twin.world_description.geometry import BoundingBox, FileMesh
+from semantic_digital_twin.world_description.geometry import BoundingBox, Mesh
 from semantic_digital_twin.world_description.graph_of_convex_sets import GraphOfConvexSets
 from semantic_digital_twin.world_description.shape_collection import (
     BoundingBoxCollection,
@@ -465,7 +469,7 @@ def _add_localization_frames(world: World, robot: PR2) -> None:
 
 
 def _spawn_milk(world: World, milk_stl_path: Path) -> Body:
-    mesh = FileMesh.from_file(str(milk_stl_path))
+    mesh = Mesh.from_file(str(milk_stl_path))
     milk_body = Body(
         name=PrefixedName("milk_1"),
         visual=ShapeCollection([mesh]),
@@ -585,7 +589,7 @@ def _register_postgresql_numpy_scalar_coercion(engine: Any) -> None:
         return statement, parameters
 
 
-def _persist_plan(session: Session, plan: SequentialPlan) -> None:
+def _persist_plan(session: Session, plan: ExecutesSequentially) -> None:
     print("  [db] Persisting plan ...")
     session.add(to_dao(plan))
     session.commit()
@@ -921,7 +925,7 @@ def _build_causal_circuit(csv_path: str) -> CausalCircuit:
     print("  [causal] Fitting ProbModelJPT from training CSV ...")
     prob_model_variables = _build_prob_model_variables(csv_path)
     dataframe = pd.read_csv(csv_path)
-    prob_model_jpt = ProbModelJPT(
+    prob_model_jpt = JointProbabilityTree(
         variables=prob_model_variables,
         min_samples_leaf=JPT_MIN_SAMPLES_PER_LEAF,
     )
@@ -1171,7 +1175,7 @@ def _build_fixed_plan(
     milk_body:        Body,
     navigation_map:   GraphOfConvexSets,
     gcs_bounds:       np.ndarray,
-) -> SequentialPlan:
+) -> ExecutesSequentially:
     """
     Deterministic seed plan used for iteration 1.
 
@@ -1199,7 +1203,7 @@ def _build_fixed_plan(
         f"table:({TABLE_APPROACH_X},{TABLE_APPROACH_Y})  "
         f"arm:{seed_arm}"
     )
-    return SequentialPlan(
+    return ExecutesSequentially(
         planning_context,
         ParkArmsAction(arm=Arms.BOTH),
         *navigate_to_counter,
@@ -1234,7 +1238,7 @@ def _build_sampled_plan(
     gcs_bounds:       np.ndarray,
     robot_start_x:    float,
     robot_start_y:    float,
-) -> SequentialPlan:
+) -> ExecutesSequentially:
     """Build a plan from JPT-sampled (or causally corrected) approach positions."""
     manipulator = (
         robot.right_arm.manipulator
@@ -1260,7 +1264,7 @@ def _build_sampled_plan(
         f"table:({plan_parameters.table_approach_x:.3f},{plan_parameters.table_approach_y:.3f})  "
         f"arm:{plan_parameters.pick_arm}"
     )
-    return SequentialPlan(
+    return ExecutesSequentially(
         planning_context,
         ParkArmsAction(arm=Arms.BOTH),
         *navigate_to_counter,
@@ -1323,7 +1327,7 @@ def _navigate_back_to_start(
         print("  [return] Robot position will be read fresh at the next iteration.")
         return
 
-    return_plan = SequentialPlan(planning_context, *return_actions)
+    return_plan = ExecutesSequentially(planning_context, *return_actions)
     with simulated_robot:
         try:
             return_plan.perform()
