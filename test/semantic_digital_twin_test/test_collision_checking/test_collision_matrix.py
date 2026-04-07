@@ -478,7 +478,7 @@ class TestCollisionGroups:
         def on_collision_matrix_update(self): ...
 
     @pytest.mark.parametrize(
-        "fix_name", ["pr2_world_state_reset", "cylinder_bot_world"]
+        "fix_name", ["pr2_world_state_reset", "cylinder_bot_world", "tracy_world"]
     )
     def test_collision_groups(self, fix_name, request):
         world = request.getfixturevalue(fix_name)
@@ -513,16 +513,20 @@ class TestCollisionGroups:
             except AssertionError:
                 pass
 
-        # every non-root group root must be either controlled or have collision geometry
+        # the parent connection of every group is controlled, or the parent body belongs to a different AbstractRobot
+        body_to_robot = {}
+        for r in world.get_semantic_annotations_by_type(AbstractRobot):
+            for b in r.bodies:
+                body_to_robot[b] = r
         for group in collision_group_consumer.collision_groups:
             if group.root == world.root:
                 continue
-            assert (
-                group.root.parent_connection.is_controlled or group.root.has_collision()
-            ), (
-                f"group root {group.root.name} has neither a controlled parent connection "
-                f"nor collision geometry"
-            )
+            parent = group.root.parent_connection.parent
+            assert group.root.parent_connection.is_controlled or body_to_robot.get(
+                parent
+            ) != body_to_robot.get(
+                group.root
+            ), f"group root {group.root.name} does not have a controlled parent connection and is not an ownership boundary"
 
         # no group body should be in another group body
         for group1, group2 in combinations(

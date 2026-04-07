@@ -99,9 +99,11 @@ class CollisionGroupConsumer(CollisionConsumer, ABC):
         Updates the collision groups based on the kinematic structure of the world.
         :param world: Reference to the updated world.
         """
-        robot_bodies: set[Body] = set()
-        for robot in world.get_semantic_annotations_by_type(AbstractRobot):
-            robot_bodies.update(robot.bodies_with_collision)
+        body_to_robot: dict[KinematicStructureEntity, AbstractRobot] = {
+            body: robot
+            for robot in world.get_semantic_annotations_by_type(AbstractRobot)
+            for body in robot.bodies
+        }
 
         self.collision_groups = [CollisionGroup(world.root)]
         for parent, children in rustworkx.bfs_successors(
@@ -109,7 +111,9 @@ class CollisionGroupConsumer(CollisionConsumer, ABC):
         ):
             for child in children:
                 parent_C_child = world.get_connection(parent, child)
-                if parent_C_child.is_controlled or child in robot_bodies:
+                if parent_C_child.is_controlled or body_to_robot.get(
+                    parent
+                ) != body_to_robot.get(child):
                     self.collision_groups.append(CollisionGroup(child))
                 else:
                     collision_group = self.get_collision_group(parent)
