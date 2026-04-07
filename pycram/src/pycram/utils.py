@@ -10,22 +10,11 @@ GeneratorList -- implementation of generator list wrappers.
 from __future__ import annotations
 
 import math
-import os
 from copy import deepcopy
-from enum import Enum
 from inspect import isgeneratorfunction
 from typing import Union, Iterator
 
 import numpy as np
-from matplotlib import pyplot as plt
-import matplotlib.colors as mcolors
-from semantic_digital_twin.world_description.world_entity import Body
-
-from pycram.tf_transformations import (
-    quaternion_about_axis,
-    quaternion_multiply,
-    quaternion_matrix,
-)
 from typing_extensions import (
     Tuple,
     Callable,
@@ -35,14 +24,13 @@ from typing_extensions import (
     Sequence,
     Any,
     Iterable,
-    Type,
 )
 
+from pycram.datastructures.pose import PoseStamped
 from semantic_digital_twin.world_description.world_entity import (
     Body,
 )
-from pycram.datastructures.pose import PoseStamped
-from .tf_transformations import (
+from pycram.tf_transformations import (
     quaternion_about_axis,
     quaternion_multiply,
     quaternion_matrix,

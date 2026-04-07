@@ -2111,6 +2111,7 @@ class TestDiffDriveBaseGoal:
             goal_pose,
             atol=1e-2,
         )
+        # The reference frame is reset to avoid memory leaks that occour because of weird pytest caching
         goal_pose.reference_frame = None
 
 

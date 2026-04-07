@@ -23,6 +23,7 @@ from pycram.robot_plans.actions.core.pick_up import ReachActionDescription, Pick
 from pycram.robot_plans.motions.gripper import MoveTCPMotion, MoveGripperMotion
 from pycram.view_manager import ViewManager
 from semantic_digital_twin.datastructures.definitions import GripperState
+from semantic_digital_twin.reasoning.predicates import allclose
 from semantic_digital_twin.reasoning.robot_predicates import is_body_in_gripper
 from semantic_digital_twin.world_description.connections import Connection6DoF
 from semantic_digital_twin.world_description.world_entity import Body
@@ -121,7 +122,7 @@ class PlaceAction(ActionDescription):
         return and_(
             GripperIsFree(manipulator),
             is_body_in_gripper(kwargs["object_designator"], manipulator) < 0.1,
-            np.allclose(
+            allclose(
                 kwargs["object_designator"].global_pose,
                 kwargs["target_location"].to_spatial_type(),
                 atol=0.03,

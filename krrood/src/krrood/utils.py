@@ -99,6 +99,9 @@ T = TypeVar("T", bound=Callable[..., Any])
 
 
 def memoize(function: T) -> T:
+    """
+    Caches the return value of a function call at the instance level.
+    """
 
     @wraps(function)
     def wrapper(self, *args: Any, **kwargs: Any) -> T:
@@ -118,6 +121,9 @@ def memoize(function: T) -> T:
 
 
 def copy_memoize(function: T) -> T:
+    """
+    Caches the return value of a function call at the instance level but returns a deepcopy of the value.
+    """
 
     @wraps(function)
     def wrapper(self, *args, **kwargs):
@@ -137,5 +143,8 @@ def copy_memoize(function: T) -> T:
 
 
 def clear_memoization_cache(instance):
+    """
+    Clears the memoization cache of an instance.
+    """
     if hasattr(instance, "__memo__"):
         instance.__memo__.clear()

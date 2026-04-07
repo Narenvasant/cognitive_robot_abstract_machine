@@ -51,12 +51,8 @@ class ActionDescription(DesignatorDescription, ABC):
             self.evaluate_pre_condition()
 
         result = None
-        try:
-            result = self.execute()
-        except PlanFailure as e:
-            raise e
-        finally:
-            pass
+
+        result = self.execute()
 
         return result
 
@@ -69,13 +65,13 @@ class ActionDescription(DesignatorDescription, ABC):
 
     @staticmethod
     def pre_condition(
-        variables, context: Context, kwargs: Dict[str, Any]
+        variables: Dict[str, Variable], context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression:
         return True
 
     @staticmethod
     def post_condition(
-        variables, context: Context, kwargs: Dict[str, Any]
+        variables: Dict[str, Variable], context: Context, kwargs: Dict[str, Any]
     ) -> SymbolicExpression:
         return True
 

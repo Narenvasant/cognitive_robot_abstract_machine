@@ -1,7 +1,6 @@
 import logging
 from copy import deepcopy
 
-import rclpy
 from typing_extensions import List, Union
 
 from giskardpy.executor import Executor
@@ -12,19 +11,11 @@ from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from giskardpy.motion_statechart.tasks.cartesian_tasks import CartesianPose
 from giskardpy.qp.qp_controller_config import QPControllerConfig
 from krrood.entity_query_language.predicate import symbolic_function
-from semantic_digital_twin.adapters.ros.visualization.viz_marker import (
-    VizMarkerPublisher,
-)
+from pycram.datastructures.pose import PoseStamped
 from semantic_digital_twin.collision_checking.collision_detector import (
     ClosestPoints,
 )
-from semantic_digital_twin.collision_checking.collision_matrix import (
-    CollisionMatrix,
-)
 from semantic_digital_twin.collision_checking.collision_rules import (
-    AvoidExternalCollisions,
-    AllowCollisionBetweenGroups,
-    AvoidSelfCollisions,
     AllowSelfCollisions,
 )
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -37,14 +28,12 @@ from semantic_digital_twin.world_description.world_entity import (
     Body,
     KinematicStructureEntity,
 )
-from .alternative_motion_mapping import AlternativeMotion
-from .datastructures.dataclasses import Context
-from .datastructures.enums import Arms
-from .datastructures.pose import PoseStamped
-from .plan import PlanNode, Plan
-from .robot_plans.motions.gripper import MoveTCPMotion
-from .view_manager import ViewManager
-from pycram.datastructures.pose import PoseStamped
+from pycram.alternative_motion_mapping import AlternativeMotion
+from pycram.datastructures.dataclasses import Context
+from pycram.datastructures.enums import Arms
+from pycram.plan import PlanNode, Plan
+from pycram.robot_plans.motions.gripper import MoveTCPMotion
+from pycram.view_manager import ViewManager
 
 logger = logging.getLogger("pycram")
 

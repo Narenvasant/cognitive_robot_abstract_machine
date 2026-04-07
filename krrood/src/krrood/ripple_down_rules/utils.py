@@ -96,7 +96,6 @@ class IDGenerator:
     The counter of the unique IDs.
     """
 
-    # @memoize
     def __call__(self, obj: Any) -> int:
         """
         Creates a unique ID and caches it for every object this is called on.

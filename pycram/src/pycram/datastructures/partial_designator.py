@@ -131,11 +131,6 @@ class PartialDesignator(Iterable[T]):
         missing = {k: v for k, v in self.kwargs.items() if v is None or v == Ellipsis}
         return list(missing.keys())
 
-
-    def create_unbound_variables(self):
-        return self.plan.parameter_infeerer.plan_domain.designator_domains[self].create_variables()
-
-
     def resolve(self) -> T:
         """
         Returns the Designator with the first set of parameters

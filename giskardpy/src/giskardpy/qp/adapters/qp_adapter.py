@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from typing import Tuple, List, Dict, TYPE_CHECKING, DefaultDict, Type
 
 import numpy as np
-from line_profiler import profile
 
 import krrood.symbolic_math.symbolic_math as sm
 from giskardpy.qp.constraint import (
@@ -269,7 +268,6 @@ class ProblemDataPart(ABC):
         return best_jerk_limit
 
     @memoize
-    @profile
     def b_profile(
         self,
         dof_symbols: DerivativeMap[sm.FloatVariable],

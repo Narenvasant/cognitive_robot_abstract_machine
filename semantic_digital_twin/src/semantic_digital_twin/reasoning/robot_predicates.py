@@ -1,47 +1,34 @@
 from __future__ import annotations
 
-import itertools
 from typing import Optional, List
 
 import trimesh.sample
+
 from krrood.entity_query_language.factories import (
     entity,
     variable,
-    and_,
-    not_,
     contains,
     an,
     the,
 )
 from krrood.entity_query_language.predicate import symbolic_function
-from .predicates import is_place_occupied
-
 from semantic_digital_twin.collision_checking.collision_detector import (
     ClosestPoints,
-    CollisionCheck,
 )
-from semantic_digital_twin.collision_checking.collision_manager import CollisionManager
-from semantic_digital_twin.collision_checking.collision_matrix import CollisionMatrix
 from semantic_digital_twin.collision_checking.collision_rules import (
     AllowCollisionBetweenGroups,
     AvoidExternalCollisions,
     AllowSelfCollisions,
-)
-from semantic_digital_twin.collision_checking.pybullet_collision_detector import (
-    BulletCollisionDetector,
-)
-from semantic_digital_twin.collision_checking.trimesh_collision_detector import (
-    FCLCollisionDetector,
 )
 from semantic_digital_twin.robots.abstract_robot import (
     AbstractRobot,
     ParallelGripper,
     Manipulator,
 )
-from semantic_digital_twin.spatial_computations.raytracer import RayTracer
 from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
-from ..world_description.geometry import BoundingBox
 from semantic_digital_twin.world_description.world_entity import Body
+from semantic_digital_twin.reasoning.predicates import is_place_occupied
+from semantic_digital_twin.world_description.geometry import BoundingBox
 
 
 @symbolic_function
