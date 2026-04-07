@@ -17,10 +17,11 @@ JPT variable mapping (open-world → apartment):
 Causal failure diagnosis with active correction
 ------------------------------------------------
 On each failed iteration, CausalCircuit.diagnose_failure() identifies the
-primary causal variable and recommends a corrective value. The demo then
+primary causal variable and recommends a corrective region. The demo then
 applies a CausalSamplingCorrection for the immediately following iteration:
-the primary cause variable is clamped to the recommended region, while all
-other variables are still drawn freely from the JPT joint distribution.
+the primary cause variable is clamped to the midpoint of the recommended
+region, while all other variables are still drawn freely from the JPT joint
+distribution.
 
 This closes the feedback loop:
     failure → causal diagnosis → parameter correction → re-attempt
@@ -51,8 +52,8 @@ routes that crossed the kitchen counter.
 
 CausalCircuit is built once at startup from a ProbModelJPT (probabilistic_model
 variant), which exposes the .probabilistic_circuit attribute required by
-CausalCircuit.from_jpt(). The pyjpt model is kept separately for sampling
-because it is faster at inference time.
+CausalCircuit.from_probabilistic_circuit(). The pyjpt model is kept separately
+for sampling because it is faster at inference time.
 """
 
 from __future__ import annotations
@@ -97,12 +98,14 @@ from probabilistic_model.learning.jpt.variables import (
     Symbolic as ProbSymbolic,
 )
 from random_events.set import Set as RESet
+from random_events.variable import Continuous as REContinuous
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import SumUnit as _SumUnit
 
 from probabilistic_model.probabilistic_circuit.causal.causal_circuit import (
     CausalCircuit,
     FailureDiagnosisResult,
-    MdVtreeNode,
+    MarginalDeterminismTreeNode,
+    SupportDeterminismVerificationResult,
 )
 
 from semantic_digital_twin.adapters.ros.tf_publisher import TFPublisher
@@ -215,23 +218,29 @@ JPT_MODEL_PATH:           str = os.path.join(os.path.dirname(__file__), "pick_an
 TRAINING_CSV_PATH:        str = os.path.join(os.path.dirname(__file__), "pick_and_place_dataframe.csv")
 JPT_MIN_SAMPLES_PER_LEAF: int = 25
 
-CAUSAL_VARIABLE_NAMES: List[str] = [
-    "pick_approach_x",
-    "pick_approach_y",
-    "place_approach_x",
-    "place_approach_y",
-    "pick_arm",
+# Variable objects used by CausalCircuit — the current API takes Variable
+# objects, not string names. Continuous from random_events is used here
+# because ProbModelJPT exposes its variables as random_events Continuous
+# instances after fitting.
+CAUSAL_VARIABLES: List[REContinuous] = [
+    REContinuous("pick_approach_x"),
+    REContinuous("pick_approach_y"),
+    REContinuous("place_approach_x"),
+    REContinuous("place_approach_y"),
+    REContinuous("pick_arm"),
 ]
 
-CAUSAL_PRIORITY_ORDER: List[str] = [
-    "pick_approach_x",    # rank 1 — ATE_norm 1.714
-    "place_approach_x",   # rank 2 — ATE_norm 1.511
-    "pick_arm",           # rank 3 — CT4 moderator
-    "pick_approach_y",    # rank 4
-    "place_approach_y",   # rank 5
+CAUSAL_PRIORITY_ORDER: List[REContinuous] = [
+    REContinuous("pick_approach_x"),    # rank 1 — ATE_norm 1.714
+    REContinuous("place_approach_x"),   # rank 2 — ATE_norm 1.511
+    REContinuous("pick_arm"),           # rank 3 — CT4 moderator
+    REContinuous("pick_approach_y"),    # rank 4
+    REContinuous("place_approach_y"),   # rank 5
 ]
 
-EFFECT_VARIABLE_NAMES: List[str] = ["milk_end_z"]
+EFFECT_VARIABLES: List[REContinuous] = [
+    REContinuous("milk_end_z"),
+]
 
 CAUSAL_QUERY_RESOLUTION: float = 0.005
 
@@ -322,9 +331,9 @@ class CausalSamplingCorrection:
          (analogous to _sample_plan_parameters() here) to convert JPT-space
          recommendations back to the task's world coordinates.
 
-      Everything else — the CausalCircuit, MdVtreeNode, diagnose_failure(),
-      _diagnose_and_log(), _build_correction_from_diagnosis(), and the main
-      loop correction logic — is reused completely unchanged.
+      Everything else — the CausalCircuit, MarginalDeterminismTreeNode,
+      diagnose_failure(), _diagnose_and_log(), _build_correction_from_diagnosis(),
+      and the main loop correction logic — is reused completely unchanged.
 
     Fields
     ------
@@ -334,7 +343,8 @@ class CausalSamplingCorrection:
         The variable to correct, in JPT coordinate space.
     recommended_value
         Midpoint of the highest-probability cause region from the
-        interventional circuit, in JPT coordinate space.
+        interventional circuit, in JPT coordinate space. Derived from
+        recommended_region on FailureDiagnosisResult.
     correction_window
         Half-width of the interval around the recommended value.
         The corrected sample lies in [recommended_value ± correction_window].
@@ -903,6 +913,10 @@ def _build_causal_circuit(csv_path: str) -> CausalCircuit:
     A separate ProbModelJPT is used rather than pyjpt because CausalCircuit
     requires a ProbabilisticCircuit object exposed via .probabilistic_circuit
     after fit(). The pyjpt model is retained separately for faster sampling.
+
+    The MarginalDeterminismTreeNode is built from Variable objects matching
+    those exposed by the fitted ProbModelJPT, using from_causal_graph() with
+    the priority-ordered cause variables and the effect variables.
     """
     print("  [causal] Fitting ProbModelJPT from training CSV ...")
     prob_model_variables = _build_prob_model_variables(csv_path)
@@ -915,29 +929,72 @@ def _build_causal_circuit(csv_path: str) -> CausalCircuit:
     leaf_count = len(list(prob_model_jpt.probabilistic_circuit.leaves))
     print(f"  [causal] ProbModelJPT fitted. Leaves: {leaf_count}")
 
-    md_vtree = MdVtreeNode.from_causal_graph(
-        causal_variable_names=CAUSAL_VARIABLE_NAMES,
-        effect_variable_names=EFFECT_VARIABLE_NAMES,
-        causal_priority_order=CAUSAL_PRIORITY_ORDER,
+    # Resolve Variable objects from the fitted circuit so that CausalCircuit
+    # receives the exact same Variable instances that the circuit was built with.
+    # This is required because Variable equality is identity-based in random_events.
+    circuit_variables_by_name = {
+        variable.name: variable
+        for variable in prob_model_jpt.probabilistic_circuit.variables
+    }
+    causal_variables = [
+        circuit_variables_by_name[variable.name]
+        for variable in CAUSAL_VARIABLES
+    ]
+    effect_variables = [
+        circuit_variables_by_name[variable.name]
+        for variable in EFFECT_VARIABLES
+    ]
+    causal_priority_order = [
+        circuit_variables_by_name[variable.name]
+        for variable in CAUSAL_PRIORITY_ORDER
+    ]
+
+    marginal_determinism_tree = MarginalDeterminismTreeNode.from_causal_graph(
+        causal_variables=causal_variables,
+        effect_variables=effect_variables,
+        causal_priority_order=causal_priority_order,
     )
-    causal_circuit = CausalCircuit.from_jpt(
-        fitted_jpt=prob_model_jpt,
-        mdvtree=md_vtree,
-        causal_variable_names=CAUSAL_VARIABLE_NAMES,
-        effect_variable_names=EFFECT_VARIABLE_NAMES,
+    causal_circuit = CausalCircuit.from_probabilistic_circuit(
+        circuit=prob_model_jpt.probabilistic_circuit,
+        marginal_determinism_tree=marginal_determinism_tree,
+        causal_variables=causal_variables,
+        effect_variables=effect_variables,
     )
-    verification_result = causal_circuit.verify_q_determinism()
-    if verification_result.passed:
-        print("  [causal] CausalCircuit ready. Q-determinism: PASS")
-    else:
-        violation_summary = "; ".join(verification_result.violations)
-        print(f"  [causal] CausalCircuit ready. Q-determinism: FAIL — {violation_summary}")
+
+    # verify_support_determinism() returns the result when passing and raises
+    # SupportDeterminismVerificationResult when any violations are found.
+    try:
+        verification_result = causal_circuit.verify_support_determinism()
+        print("  [causal] CausalCircuit ready. Support determinism: PASS")
+    except SupportDeterminismVerificationResult as verification_result:
+        violation_summary = "; ".join(str(v) for v in verification_result.violations)
+        print(f"  [causal] CausalCircuit ready. Support determinism: FAIL — {violation_summary}")
+
     return causal_circuit
 
 
 # ---------------------------------------------------------------------------
 # Failure diagnosis and correction construction
 # ---------------------------------------------------------------------------
+
+def _region_midpoint(region: Any, cause_variable: Any) -> float:
+    """
+    Extract the midpoint of the highest-probability cause region.
+
+    FailureDiagnosisResult.recommended_region is a composite set event —
+    the full interval is stored so callers retain the bounds. The correction
+    pipeline needs a single float to clamp the JPT sample, so the midpoint
+    is derived here from the region bounds.
+    """
+    simple_set = region.simple_sets[0]
+    interval_set = simple_set[cause_variable]
+    interval = (
+        interval_set.simple_sets[0]
+        if hasattr(interval_set, "simple_sets")
+        else interval_set
+    )
+    return (float(interval.lower) + float(interval.upper)) / 2.0
+
 
 def _diagnose_and_log(
     causal_circuit:   CausalCircuit,
@@ -954,17 +1011,31 @@ def _diagnose_and_log(
     converts absolute apartment positions to the lateral offsets that the JPT
     learned during Batch 1 training.
 
+    diagnose_failure() takes a Dict[Variable, float] keyed by the same Variable
+    objects that the CausalCircuit was built with, and a Variable object for the
+    effect. String-keyed dicts are no longer accepted by the current API.
+
     Returns None if diagnosis raises an exception, allowing the caller to skip
     correction safely without crashing.
     """
-    observed_parameter_values = {
-        "pick_approach_x":  plan_parameters.counter_approach_x,
-        "pick_approach_y":  plan_parameters.counter_approach_y - MILK_SPAWN_Y,
-        "place_approach_x": plan_parameters.table_approach_x - (
+    # Build a name→Variable lookup from the circuit's registered cause variables
+    # so the observed values can be passed as Dict[Variable, float].
+    cause_variable_by_name = {
+        variable.name: variable
+        for variable in causal_circuit.causal_variables
+    }
+    effect_variable_by_name = {
+        variable.name: variable
+        for variable in causal_circuit.effect_variables
+    }
+
+    observed_values = {
+        cause_variable_by_name["pick_approach_x"]:  plan_parameters.counter_approach_x,
+        cause_variable_by_name["pick_approach_y"]:  plan_parameters.counter_approach_y - MILK_SPAWN_Y,
+        cause_variable_by_name["place_approach_x"]: plan_parameters.table_approach_x - (
             PLACE_TARGET_X - OPEN_WORLD_PLACE_TARGET_X
         ),
-        "place_approach_y": plan_parameters.table_approach_y - PLACE_TARGET_Y,
-        "pick_arm":         plan_parameters.pick_arm.name,
+        cause_variable_by_name["place_approach_y"]: plan_parameters.table_approach_y - PLACE_TARGET_Y,
     }
 
     apartment_variable_name_map = {
@@ -976,14 +1047,15 @@ def _diagnose_and_log(
 
     try:
         diagnosis = causal_circuit.diagnose_failure(
-            observed_parameter_values=observed_parameter_values,
-            effect_variable_name="milk_end_z",
+            observed_values=observed_values,
+            effect_variable=effect_variable_by_name["milk_end_z"],
             query_resolution=CAUSAL_QUERY_RESOLUTION,
         )
 
+        # primary_cause_variable is now a Variable object, not a string.
+        primary_cause_name = diagnosis.primary_cause_variable.name
         primary_cause_display_name = apartment_variable_name_map.get(
-            diagnosis.primary_cause_variable_name,
-            diagnosis.primary_cause_variable_name,
+            primary_cause_name, primary_cause_name,
         )
         out_of_support_marker = (
             "  ← OUT OF TRAINING SUPPORT"
@@ -991,21 +1063,33 @@ def _diagnose_and_log(
             else ""
         )
 
+        # recommended_region is a composite set event; derive midpoint for display.
+        recommended_midpoint = (
+            _region_midpoint(diagnosis.recommended_region, diagnosis.primary_cause_variable)
+            if diagnosis.recommended_region is not None
+            else None
+        )
+
         print(f"\n  ┌─ CAUSAL FAILURE DIAGNOSIS  (iteration {iteration_number}) {'─' * 30}")
         print(f"  │  Primary cause:    {primary_cause_display_name}")
         print(f"  │  Observed value:   {diagnosis.actual_value:.4f}")
         print(f"  │  P(success|do):    {diagnosis.interventional_probability_at_failure:.4f}"
               f"{out_of_support_marker}")
-        if diagnosis.recommended_value is not None:
-            print(f"  │  Recommended:      {diagnosis.recommended_value:.4f}")
+        if recommended_midpoint is not None:
+            print(f"  │  Recommended:      {recommended_midpoint:.4f}  "
+                  f"(region midpoint)")
             print(f"  │  P(success|rec):   {diagnosis.interventional_probability_at_recommendation:.4f}")
         print(f"  │")
         print(f"  │  All variables:")
-        for jpt_variable_name, variable_result in diagnosis.all_variable_results.items():
-            display_name = apartment_variable_name_map.get(jpt_variable_name, jpt_variable_name)
+
+        # all_variable_results is now keyed by Variable objects, not strings.
+        for cause_variable, variable_result in diagnosis.all_variable_results.items():
+            display_name = apartment_variable_name_map.get(
+                cause_variable.name, cause_variable.name
+            )
             primary_marker = (
                 "  ← PRIMARY CAUSE"
-                if jpt_variable_name == diagnosis.primary_cause_variable_name
+                if cause_variable == diagnosis.primary_cause_variable
                 else ""
             )
             out_of_support = (
@@ -1034,34 +1118,43 @@ def _build_correction_from_diagnosis(
     """
     Construct a CausalSamplingCorrection from a FailureDiagnosisResult.
 
-    Returns None if no recommendation is available — for example when the
-    primary cause variable has no high-probability region in the interventional
-    circuit (the variable is entirely out of training support).
+    recommended_region is a composite set event on the current API. The
+    midpoint is derived here for use as the correction target value, since
+    the sampling pipeline clamps around a single float. If no region is
+    available the correction is skipped.
 
     This function is the only bridge between the task-agnostic CausalCircuit
     output and the task-specific sampling pipeline. To reuse for a different
     task, replace APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE with bounds for
     that task's JPT coordinate space.
     """
-    if diagnosis.recommended_value is None:
+    if diagnosis.recommended_region is None:
         print("  [correction] No recommendation available — skipping correction.")
         return None
 
+    # Derive the midpoint from the recommended region for use as the
+    # correction target. The full region is stored on FailureDiagnosisResult;
+    # the midpoint is only needed here for the sampling clamp.
+    recommended_midpoint = _region_midpoint(
+        diagnosis.recommended_region, diagnosis.primary_cause_variable
+    )
+
+    primary_cause_name = diagnosis.primary_cause_variable.name
     variable_bounds = APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE.get(
-        diagnosis.primary_cause_variable_name,
+        primary_cause_name,
         (float("-inf"), float("inf")),
     )
     correction = CausalSamplingCorrection(
         active=True,
-        jpt_variable_name=diagnosis.primary_cause_variable_name,
-        recommended_value=diagnosis.recommended_value,
+        jpt_variable_name=primary_cause_name,
+        recommended_value=recommended_midpoint,
         correction_window=CAUSAL_CORRECTION_WINDOW,
         variable_bounds=variable_bounds,
         source_iteration=iteration_number,
     )
     print(
-        f"  [correction] Scheduled: {diagnosis.primary_cause_variable_name} → "
-        f"{diagnosis.recommended_value:.4f}  "
+        f"  [correction] Scheduled: {primary_cause_name} → "
+        f"{recommended_midpoint:.4f}  "
         f"(window ±{CAUSAL_CORRECTION_WINDOW},  bounds {variable_bounds})"
     )
     return correction
@@ -1317,10 +1410,10 @@ def pick_and_place_demo_apartment_jpt() -> None:
     sample jointly from the open-world JPT.
 
     When a plan fails, CausalCircuit.diagnose_failure() identifies the primary
-    causal variable and recommends a corrective value. A CausalSamplingCorrection
+    causal variable and recommends a corrective region. A CausalSamplingCorrection
     is then applied to the immediately following iteration, clamping the primary
-    cause variable near the recommended value while all other variables are still
-    drawn freely from the JPT joint distribution.
+    cause variable near the midpoint of the recommended region while all other
+    variables are still drawn freely from the JPT joint distribution.
 
     If the corrected attempt also fails, sampling reverts to the unconstrained
     JPT on the next iteration — correction chains on bad recommendations are
@@ -1396,9 +1489,10 @@ def pick_and_place_demo_apartment_jpt() -> None:
             )
 
             plan = None
+            current_parameters = None
+
             if iteration_number == 1:
                 print("  Mode: FIXED")
-                current_parameters = None
                 try:
                     plan = _build_fixed_plan(
                         planning_context, world, robot, milk_body,
