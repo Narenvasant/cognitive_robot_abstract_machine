@@ -678,62 +678,137 @@ def get_scope_from_imports(
     """
     if tree is None and file_path is None and source is None:
         raise ValueError("Either file_path, tree, or source must be provided")
+
+    # Ensure we have source and a parsed AST
     if file_path and source is None:
         with open(file_path, "r") as f:
             source = f.read()
-    tree = tree or ast.parse(source, filename=file_path)
+    parsed_tree = tree or (ast.parse(source) if file_path is None else ast.parse(source, filename=file_path))
 
-    scope = {}
+    scope: Dict[str, Any] = {}
 
-    for node in ast.walk(tree):
+    for node in ast.walk(parsed_tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                module_name = alias.name
-                asname = alias.asname or alias.name
-                try:
-                    scope[asname] = importlib.import_module(
-                        module_name, package=package_name
-                    )
-                except ImportError as e:
-                    logger.warning(f"Could not import {module_name}: {e}")
+            _handle_import_node(node, scope, package_name)
         elif isinstance(node, ast.ImportFrom):
-            module_name = node.module
-            for alias in node.names:
-                name = alias.name
-                asname = alias.asname or name
-                try:
-                    if node.level > 0:  # Handle relative imports
-                        package_name = get_import_path_from_path(
-                            Path(
-                                os.path.join(file_path, *[".."] * node.level)
-                            ).resolve()
-                        )
-                    if (
-                        package_name is not None and node.level > 0
-                    ):  # Handle relative imports
-                        module_rel_path = Path(
-                            os.path.join(file_path, *[".."] * node.level, module_name)
-                        ).resolve()
-                        idx = str(module_rel_path).rfind(package_name)
-                        if idx != -1:
-                            module_name = str(module_rel_path)[idx:].replace(
-                                os.path.sep, "."
-                            )
-                    try:
-                        module = importlib.import_module(
-                            module_name, package=package_name
-                        )
-                    except ModuleNotFoundError:
-                        module = importlib.import_module(
-                            f"{package_name}.{module_name}"
-                        )
-                    if name == "*":
-                        scope.update(module.__dict__)
-                    else:
-                        scope[asname] = getattr(module, name)
-                except (ImportError, AttributeError) as e:
-                    logger.warning(
-                        f"Could not import {module_name}: {e} while extracting imports from {file_path}"
-                    )
+            package_name = _handle_import_from_node(
+                node=node,
+                scope=scope,
+                file_path=file_path,
+                package_name=package_name,
+            )
 
     return scope
+
+
+
+def _import_module_safely(module_name: str, package_name: Optional[str]) -> Optional[types.ModuleType]:
+    """
+    Attempt to import a module with an optional package context and return the module or None on failure.
+    """
+    try:
+        return importlib.import_module(module_name, package=package_name)
+    except ModuleNotFoundError:
+        if package_name:
+            try:
+                return importlib.import_module(f"{package_name}.{module_name}")
+            except Exception:
+                return None
+        return None
+    except ImportError:
+        return None
+
+
+def _resolve_relative_import(
+    file_path: Optional[str], node: ast.ImportFrom, module_name: Optional[str], package_name: Optional[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Resolve relative import context and possibly adjust module and package names based on file location.
+    Returns a tuple of (resolved_module_name, resolved_package_name).
+    """
+    resolved_module = module_name
+    resolved_package = package_name
+
+    if node.level > 0 and file_path is not None:
+        try:
+            resolved_package = get_import_path_from_path(
+                Path(os.path.join(file_path, *[".."] * node.level)).resolve()
+            )
+        except Exception:
+            # Keep original package if resolution fails
+            pass
+
+        if resolved_package is not None and module_name is not None:
+            try:
+                module_rel_path = Path(
+                    os.path.join(file_path, *[".."] * node.level, module_name)
+                ).resolve()
+                idx = str(module_rel_path).rfind(resolved_package)
+                if idx != -1:
+                    resolved_module = str(module_rel_path)[idx:].replace(os.path.sep, ".")
+            except Exception:
+                # Fall back to original module name
+                pass
+
+    return resolved_module, resolved_package
+
+
+def _handle_import_node(node: ast.Import, scope: Dict[str, Any], package_name: Optional[str]) -> None:
+    """
+    Process a standard import node and update the provided scope mapping.
+    """
+    for alias in node.names:
+        module_name = alias.name
+        asname = alias.asname or alias.name
+        module = _import_module_safely(module_name, package_name)
+        if module is not None:
+            scope[asname] = module
+        else:
+            logger.warning(f"Could not import {module_name}")
+
+
+def _handle_import_from_node(
+    node: ast.ImportFrom, scope: Dict[str, Any], file_path: Optional[str], package_name: Optional[str]
+) -> Optional[str]:
+    """
+    Process a from-import node and update the provided scope mapping.
+    Returns the (possibly) updated package_name to mimic original behavior.
+    """
+    module_name = node.module
+
+    # Resolve relative imports (may update package_name and module_name)
+    resolved_module_name, resolved_package_name = _resolve_relative_import(
+        file_path=file_path, node=node, module_name=module_name, package_name=package_name
+    )
+
+    # Mimic original behavior: allow package_name to be overwritten for subsequent iterations
+    package_name = resolved_package_name
+
+    module = None
+    if resolved_module_name is not None:
+        module = _import_module_safely(resolved_module_name, package_name)
+
+    if module is None and resolved_package_name and resolved_module_name:
+        # Fallback already attempted in _import_module_safely; keep for parity
+        module = _import_module_safely(f"{resolved_package_name}.{resolved_module_name}", None)
+
+    if module is None:
+        logger.warning(
+            f"Could not import {resolved_module_name} while extracting imports from {file_path}"
+        )
+        return package_name
+
+    for alias in node.names:
+        name = alias.name
+        asname = alias.asname or name
+        try:
+            if name == "*":
+                scope.update(module.__dict__)
+            else:
+                scope[asname] = getattr(module, name)
+        except AttributeError as e:
+            logger.warning(
+                f"Could not import {resolved_module_name}: {e} while extracting imports from {file_path}"
+            )
+
+    return package_name

@@ -21,6 +21,7 @@ from krrood.utils import recursive_subclasses
 try:
     from pycram.datastructures.dataclasses import Context  # type: ignore
 except ImportError as e:
+    # Adds ROS dependency
     pass
 from semantic_digital_twin.adapters.mesh import STLParser
 from semantic_digital_twin.adapters.urdf import URDFParser
