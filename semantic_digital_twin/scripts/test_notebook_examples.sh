@@ -19,9 +19,9 @@ mv ./*.ipynb test_tmp/
 cd test_tmp
 
 # Debug: show interpreter + key packages (helps catch env/kernel mismatches)
-python -c "import sys; print('python:', sys.executable)"
-python -c "import ipykernel; print('ipykernel:', ipykernel.__version__)" || true
-python -c "import nbclient; print('nbclient:', nbclient.__version__)" || true
+python3 -c "import sys; print('python:', sys.executable)"
+python3 -c "import ipykernel; print('ipykernel:', ipykernel.__version__)" || true
+python3 -c "import nbclient; print('nbclient:', nbclient.__version__)" || true
 
 # Run notebooks sequentially to reduce flakiness / resource spikes and to pinpoint failures.
 # Also add a timeout so a stuck cell doesn't hang CI forever.
@@ -38,5 +38,5 @@ for nb in "${notebooks[@]}"; do
   echo "============================================================"
   echo "Executing notebook: $nb"
   echo "============================================================"
-  treon --thread 1 -v "$nb"
+  timeout "$NOTEBOOK_TIMEOUT_SECONDS" treon --thread 1 -v "$nb"
 done
