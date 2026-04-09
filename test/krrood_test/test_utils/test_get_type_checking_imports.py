@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 from collections import defaultdict
-import pytest
 import sys
 from krrood.utils import get_scope_from_imports
 

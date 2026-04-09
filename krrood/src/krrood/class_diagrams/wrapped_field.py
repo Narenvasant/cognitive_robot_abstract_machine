@@ -27,7 +27,7 @@ from typing_extensions import (
 
 from krrood.class_diagrams.exceptions import MissingContainedTypeOfContainer
 from krrood.class_diagrams.utils import behaves_like_a_built_in_class
-from krrood.utils import module_and_class_name
+from krrood.utils import module_and_class_name, is_builtin_type
 
 if TYPE_CHECKING:
     from krrood.class_diagrams.class_diagram import WrappedClass
@@ -149,7 +149,7 @@ class WrappedField:
 
     @cached_property
     def is_builtin_type(self) -> bool:
-        return self.type_endpoint in [int, float, str, bool, datetime, NoneType]
+        return is_builtin_type(self.type_endpoint) or self.type_endpoint in [datetime, NoneType]
 
     @cached_property
     def is_container(self) -> bool:

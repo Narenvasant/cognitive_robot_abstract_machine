@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, fields, Field, MISSING
 from functools import lru_cache
 from importlib.util import resolve_name
 from inspect import isclass
+from os import PathLike
 from os.path import dirname
 from pathlib import Path
 from typing import Union, Type, Optional, Callable, Tuple, List, Iterable, Dict, Any
@@ -56,6 +57,62 @@ class DataclassException(Exception):
 
     def __post_init__(self):
         super().__init__(self.message)
+
+
+@dataclass
+class InputError(DataclassException):
+    """
+    Raised when there is an error with user input.
+    """
+
+
+@dataclass
+class NoSourceDataToParseImportsFrom(InputError):
+    """
+    Raised when there is no source data given to parse imports from.
+    """
+
+
+@dataclass
+class NoModuleSourceProvided(InputError):
+    """
+    Raised when there is no source module data given to parse imports from.
+    """
+
+
+@dataclass
+class NoDefaultValueFound(DataclassException):
+    """
+    Raised when no default value for a given field in a dataclass is found.
+    """
+
+
+@dataclass
+class PackageNameNotFoundError(DataclassException):
+    """
+    Raised when a package name is not found in a given path.
+    """
+
+
+@dataclass
+class PathMissingRequiredComponentsError(DataclassException):
+    """
+    Raised when a path does not contain all required components.
+    """
+
+
+@dataclass
+class SubprocessExecutionError(DataclassException):
+    """
+    Raised when a subprocess execution fails.
+    """
+
+
+@dataclass
+class SourceDataNotProvided(InputError):
+    """
+    Raised when no source data is provided.
+    """
 
 
 def get_full_class_name(cls):
@@ -132,7 +189,7 @@ def get_default_value(dataclass_type, field_name):
         elif f.default_factory is not MISSING:  # handles mutable defaults
             return f.default_factory()
         else:
-            raise KeyError(f"No default value for field '{field_name}'")
+            raise NoDefaultValueFound(message=f"No default value for field '{field_name}'")
     return None
 
 
@@ -176,9 +233,7 @@ def extract_imports_from(
     """
     exclude_libraries = exclude_libraries or []
     if module is None and source is None and file_path is None and ast_tree is None:
-        raise ValueError(
-            "Either module, source, file_path or ast_tree must be provided"
-        )
+        raise NoSourceDataToParseImportsFrom(message="Either module, source, file_path or ast_tree must be provided")
     if module:
         source = inspect.getsource(module)
     elif file_path:
@@ -444,7 +499,7 @@ def get_method_file_name(method: Callable) -> str:
 
 
 def get_relative_import(
-    target_file_path,
+    target_file_path: str | PathLike[str],
     imported_module_path: Optional[str] = None,
     module: Optional[str] = None,
     package_name: Optional[str] = None,
@@ -462,7 +517,7 @@ def get_relative_import(
     if module is not None:
         imported_module_path = sys.modules[module].__file__
     if imported_module_path is None:
-        raise ValueError("Either imported_module_path or module must be provided")
+        raise NoModuleSourceProvided(message="Either imported_module_path or module must be provided")
     target_path = Path(target_file_path).resolve()
     imported_file_name = Path(imported_module_path).name
     target_file_name = Path(target_file_path).name
@@ -503,13 +558,14 @@ def get_path_starting_from_latest_encounter_of(
 
     :param path: The full path to the file.
     :param package_name: The name of the package to start from.
-    :param should_contain: The names of the files or directorys to look for.
+    :param should_contain: The names of the files or directories to look for.
     :return: The path starting from the package name that contains all the names in should_contain, otherwise raise an error.
-    :raise ValueError: If the path does not contain all the names in should_contain.
+    :raise PackageNameNotFoundError: If the package name could not be found in the path.
+    :raise PathMissingRequiredComponentsError: If the path does not contain all the names in should_contain.
     """
     path_parts = path.split(os.path.sep)
     if package_name not in path_parts:
-        raise ValueError(f"Could not find {package_name} in {path}")
+        raise PackageNameNotFoundError(message=f"Could not find {package_name} in {path}")
     idx = path_parts.index(package_name)
     prev_idx = idx
     while all(sc in path_parts[idx:] for sc in should_contain):
@@ -522,7 +578,7 @@ def get_path_starting_from_latest_encounter_of(
         path_parts = path_parts[prev_idx:]
         return os.path.join(*path_parts)
     else:
-        raise ValueError(f"Could not find {should_contain} in {path}")
+        raise PathMissingRequiredComponentsError(message=f"Could not find {should_contain} in {path}")
 
 
 def get_imports_from_types(
@@ -598,13 +654,13 @@ def run_subprocess_on_file(command: List[str]):
     Run a subprocess command and handle errors.
 
     :param command: The command to run as a list of arguments.
-    :raises RuntimeError: If the subprocess command fails.
+    :raises SubprocessExecutionError: If the subprocess command fails.
     """
     try:
         result = subprocess.run(command, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"Ruff failed with code {e.returncode}\n"
+        raise SubprocessExecutionError(
+            message=f"command: {command} failed with code {e.returncode}\n"
             f"STDOUT:\n{e.stdout}\n"
             f"STDERR:\n{e.stderr}"
         ) from e
@@ -651,7 +707,7 @@ def get_scope_from_imports(
     :return: A dictionary representing the scope with imported modules and their attributes.
     """
     if tree is None and file_path is None and source is None:
-        raise ValueError("Either file_path, tree, or source must be provided")
+        raise SourceDataNotProvided(message="Either file_path, tree, or source must be provided")
 
     # Ensure we have source and a parsed AST
     if file_path and source is None:
