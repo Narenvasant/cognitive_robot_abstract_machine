@@ -563,6 +563,34 @@ class GenericClassDAO(
     }
 
 
+class GenericClass_floatDAO(
+    GenericClassDAO,
+    DataAccessObject[test.krrood_test.dataset.example_classes.GenericClass[float]],
+):
+
+    __tablename__ = "GenericClass_floatDAO"
+
+    database_id: Mapped[builtins.int] = mapped_column(
+        ForeignKey(GenericClassDAO.database_id),
+        primary_key=True,
+        use_existing_column=True,
+    )
+
+    value: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+    optional_value: Mapped[typing.Optional[builtins.float]] = mapped_column(
+        use_existing_column=True
+    )
+
+    container: Mapped[typing.List[builtins.float]] = mapped_column(
+        JSON, nullable=False, use_existing_column=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "GenericClass_floatDAO",
+        "inherit_condition": database_id == GenericClassDAO.database_id,
+    }
+
+
 class GenericClass_KRROODPositionDAO(
     GenericClassDAO,
     DataAccessObject[
@@ -611,31 +639,6 @@ class GenericClass_KRROODPositionDAO(
 
     __mapper_args__ = {
         "polymorphic_identity": "GenericClass_KRROODPositionDAO",
-        "inherit_condition": database_id == GenericClassDAO.database_id,
-    }
-
-
-class GenericClass_floatDAO(
-    GenericClassDAO,
-    DataAccessObject[test.krrood_test.dataset.example_classes.GenericClass[float]],
-):
-
-    __tablename__ = "GenericClass_floatDAO"
-
-    database_id: Mapped[builtins.int] = mapped_column(
-        ForeignKey(GenericClassDAO.database_id),
-        primary_key=True,
-        use_existing_column=True,
-    )
-
-    value: Mapped[builtins.float] = mapped_column(use_existing_column=True)
-
-    container: Mapped[typing.List[builtins.float]] = mapped_column(
-        JSON, nullable=False, use_existing_column=True
-    )
-
-    __mapper_args__ = {
-        "polymorphic_identity": "GenericClass_floatDAO",
         "inherit_condition": database_id == GenericClassDAO.database_id,
     }
 
@@ -1444,6 +1447,7 @@ class KRROODOrientationDAO(
     x: Mapped[builtins.float] = mapped_column(use_existing_column=True)
     y: Mapped[builtins.float] = mapped_column(use_existing_column=True)
     z: Mapped[builtins.float] = mapped_column(use_existing_column=True)
+    w: Mapped[typing.Optional[builtins.float]] = mapped_column(use_existing_column=True)
 
     __mapper_args__ = {
         "polymorphic_identity": "KRROODOrientationDAO",
@@ -2556,6 +2560,10 @@ class DrawerDAO(
         ForeignKey(ViewDAO.database_id), primary_key=True, use_existing_column=True
     )
 
+    correct: Mapped[typing.Optional[builtins.bool]] = mapped_column(
+        use_existing_column=True
+    )
+
     handle_id: Mapped[int] = mapped_column(
         ForeignKey("HandleDAO.database_id", use_alter=True),
         nullable=True,
@@ -2662,5 +2670,8 @@ class FunctionMappingDAO(
         sqlalchemy.sql.sqltypes.Text, use_existing_column=True
     )
     function_name: Mapped[builtins.str] = mapped_column(
+        sqlalchemy.sql.sqltypes.Text, use_existing_column=True
+    )
+    class_name: Mapped[typing.Optional[builtins.str]] = mapped_column(
         sqlalchemy.sql.sqltypes.Text, use_existing_column=True
     )
