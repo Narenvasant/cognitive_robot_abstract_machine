@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import importlib
 import inspect
 import os
@@ -407,7 +408,8 @@ def is_builtin_type(type_object: Any):
     :param type_object: A type object to check.
     :return: True if the type is a built-in type, False otherwise.
     """
-    return isinstance(type_object, type) and type_object.__module__ == "builtins"
+    return isinstance(type_object, type) and type_object.__module__ == "builtins" and hasattr(builtins,
+                                                                                              type_object.__name__)
 
 
 def get_import_path_from_path(path: str) -> Optional[str]:

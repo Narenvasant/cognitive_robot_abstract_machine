@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import builtins
 import enum
-import importlib
 import inspect
 import logging
 import sys
@@ -26,12 +24,12 @@ from typing_extensions import (
     Union,
 )
 
-from krrood.class_diagrams.exceptions import MissingContainedTypeOfContainer, CouldNotResolveType
+from krrood.class_diagrams.exceptions import MissingContainedTypeOfContainer
 from krrood.class_diagrams.utils import behaves_like_a_built_in_class, get_type_hints_of_object
 from krrood.utils import module_and_class_name, is_builtin_type
 
 if TYPE_CHECKING:
-    from krrood.class_diagrams.class_diagram import WrappedClass, resolve_type
+    from krrood.class_diagrams.class_diagram import WrappedClass
     from krrood.ontomatic.property_descriptor import PropertyDescriptor
 
 
@@ -139,16 +137,12 @@ class WrappedField:
         if class_diagram is not None:
             for wrapped_class in class_diagram.wrapped_classes:
                 if wrapped_class.clazz.__name__ == class_name:
-                    return wrapped_class.clazz
+                    return wrapped_class.clazzs
         return manually_search_for_class_name(class_name)
 
     @cached_property
     def is_builtin_type(self) -> bool:
-        if is_builtin_type(self.resolved_type) and hasattr(builtins, self.resolved_type.__name__):
-            return True
-        elif self.resolved_type in [datetime, NoneType]:
-            return True
-        return False
+        return is_builtin_type(self.type_endpoint) or (self.type_endpoint in [datetime, NoneType])
 
     @cached_property
     def is_container(self) -> bool:
