@@ -21,10 +21,8 @@ from probabilistic_model.probabilistic_circuit.causal.causal_circuit import (
 )
 
 from probabilistic_model.probabilistic_circuit.causal.exceptions import (
-    MissingQueryVariableViolation,
     OverlappingChildSupportsViolation,
     SupportDeterminismVerificationResult,
-    UnnormalizedSumUnitViolation,
     UnregisteredVariableError,
     NoCauseVariablesError,
 )

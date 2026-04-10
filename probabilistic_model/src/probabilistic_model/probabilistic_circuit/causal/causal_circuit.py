@@ -17,7 +17,6 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit,
     ProductUnit,
     SumUnit,
-    leaf,
 )
 
 from tabulate import tabulate
