@@ -126,6 +126,11 @@ def pose_sequence_reachability_validator(
     :param world: The world in which the visibility should be validated.
     :param use_fullbody_ik: If true the base will be used in trying to reach the poses
     """
+    # TODO: does not work for the moment since casadi has problems with hashes
+    # logger.debug(
+    #     f"Hash of input for pose_sequence_reachability_validator: {hash((*target_sequence, tip_link, robot_view, world, use_fullbody_ik))}"
+    # )
+
     old_state = deepcopy(world.state._data)
     root = robot_view.root if not use_fullbody_ik else world.root
 

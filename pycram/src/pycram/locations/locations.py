@@ -18,6 +18,7 @@ from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from giskardpy.motion_statechart.tasks.cartesian_tasks import CartesianPose
 from giskardpy.qp.exceptions import InfeasibleException
 from giskardpy.qp.qp_controller_config import QPControllerConfig
+from krrood.adapters.json_serializer import list_like_classes
 from pycram.config.action_conf import ActionConfig
 from pycram.datastructures.dataclasses import Context
 from pycram.datastructures.enums import (
@@ -174,6 +175,27 @@ class CostmapLocation(Location):
 
         return final_map
 
+    def get_object_in_hand(
+        self, test_robot: AbstractRobot, test_world: World
+    ) -> List[Body]:
+
+        manipulator = ViewManager.get_end_effector_view(
+            self.reachable_arm if self.reachable_arm is not None else Arms.BOTH,
+            test_robot,
+        )
+        manipulators = (
+            [manipulator]
+            if not isinstance(manipulator, list_like_classes)
+            else manipulator
+        )
+        objs = set()
+        for man in manipulators:
+            objs.update(
+                test_world.get_kinematic_structure_entities_of_branch(man.tool_frame)
+            )
+            objs.remove(man.tool_frame)
+        return list(objs)
+
     def __iter__(self) -> Iterator[Pose]:
         """
         Generates positions for a given set of constrains from a costmap and returns
@@ -201,10 +223,7 @@ class CostmapLocation(Location):
 
         test_robot = robot.from_world(test_world)
 
-        objects_in_hand = list(
-            set(test_world.get_kinematic_structure_entities_of_branch(test_robot.root))
-            - set(test_robot.bodies)
-        )
+        objects_in_hand = self.get_object_in_hand(test_robot, test_world)
         object_in_hand = objects_in_hand[0] if objects_in_hand else None
 
         final_map = self.setup_costmaps(self.target, self.visible, self.reachable)

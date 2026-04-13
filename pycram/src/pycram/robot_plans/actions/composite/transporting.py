@@ -129,9 +129,6 @@ class TransportAction(ActionDescription):
                     ),
                     ParkArmsAction(Arms.BOTH),
                     MoveTorsoAction(TorsoState.HIGH),
-                    self._make_navigate_action_for_placing(
-                        pickup_pose.grasp_description
-                    ),
                 ]
             )
         ).perform()
@@ -143,9 +140,7 @@ class TransportAction(ActionDescription):
         return sequential(
             children=[
                 self._make_navigate_action_for_placing(pickup_pose.grasp_description),
-                PlaceAction(
-                    self.object_designator, self.target_location, pickup_pose.arm
-                ),
+                PlaceAction(self.object_designator, self.target_location, self.arm),
                 ParkArmsAction(Arms.BOTH),
             ]
         )

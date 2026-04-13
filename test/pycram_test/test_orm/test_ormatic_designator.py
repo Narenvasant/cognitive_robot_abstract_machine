@@ -96,7 +96,7 @@ def complex_plan(mutable_model_world):
         TransportAction(
             object_designator=world.get_body_by_name("milk.stl"),
             target_location=Pose.from_xyz_quaternion(
-                2.1, 2.5, 1, 0, 0, 0, 1, reference_frame=world.root
+                2.4, 2.8, 1, 0, 0, 0, 1, reference_frame=world.root
             ),
             arm=Arms.LEFT,
         ),
