@@ -16,13 +16,13 @@ Motion Statecharts address these issues by using a state machine-based approach 
 
 ### Key Concepts
 
-- **Nodes**: The fundamental building blocks of a statechart. Every state or component in the statechart is a node. Nodes are specialized into:
-    - **Tasks**: Atomic units of motion that define what the robot should do at a low level by adding specific motion constraints (e.g., "maintain this Cartesian pose" or "stay within these joint limits").
-    - **Goals**: Composite nodes that encapsulate multiple other Nodes (Tasks, Goals, or Monitors). They allow for hierarchical organization and complex behavior patterns (e.g., a "Grasp Goal" that includes pre-grasp, reach, and close gripper steps).
-    - **Monitors**: Nodes that check for specific conditions in the environment or robot state (e.g., "is the goal reached?" or "is a collision imminent?").
-- **Transitions**: Transitions define the flow of execution. A transition is triggered by a condition (usually from a Monitor) and leads to another Node or ends the motion.
-- **Hierarchical Composition**: Statecharts are inherently hierarchical. Goals can contain other Goals, allowing complex behaviors to be built from simpler, reusable components.
-- **Parallel and Sequential Execution**: Using nodes like `Parallel` and `Sequence` (which are types of Goals), you can specify which tasks/goals should be pursued simultaneously and which must follow one another.
+A Motion Statechart comprises multiple **nodes**, which may be one of the following
+types:
+- **Task**: A specific, single-purpose segment of the overall motion. These nodes add constraints to the motion problem and monitor their progress. For example, a Cartesian position task will monitor if the distance to the target is below a threshold.
+- **Monitor**: Nodes that observe certain conditions or events without controlling motion. For example, monitoring the distance between the robot’s gripper and a goal point without actively controlling the motion.
+- **Termination Node**: Nodes that signal the end of motion execution upon reaching a specific observation state. For example, a node that terminates the motion when a specific condition is met, such as reaching the final destination. There are two termination nodes, **EndMotion** and **CancelMotion**.
+- **Goal**: Nodes that encapsulate reusable, parameterized designs for Motion Statechart patterns. For example, a combination of monitors and motion tasks to open a door can be encapsulated into a template for
+reuse in different contexts.
 
 ### Benefits
 
