@@ -4,27 +4,30 @@ import copy
 import itertools
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
-from tabulate import tabulate
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from anytree import NodeMixin, PreOrderIter, findall
 from scipy.special import logsumexp
-
-from krrood.utils import DataclassException
 from random_events.interval import closed
-from random_events.product_algebra import SimpleEvent
+from random_events.product_algebra import SimpleEvent, Event
 from random_events.variable import Variable
+from tabulate import tabulate
+
 
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
     ProbabilisticCircuit,
     ProductUnit,
     SumUnit,
-    leaf,
 )
 
-from probabilistic_model.probabilistic_circuit.causal.utils import (
-    attach_marginal_circuit,
-    sum_unit_is_normalized,
+
+from probabilistic_model.probabilistic_circuit.causal.exceptions import (
+    SupportDeterminismViolation,
+    MissingQueryVariableViolation,
+    UnnormalizedSumUnitViolation,
+    OverlappingChildSupportsViolation,
+    SupportDeterminismVerificationResult, UnregisteredVariableError, EmptyInterventionalCircuitError,
+    NoCauseVariablesError,
 )
 
 
@@ -153,147 +156,6 @@ class MarginalDeterminismTreeNode(NodeMixin):
         return node
 
 
-@dataclass
-class SupportDeterminismViolation(DataclassException):
-    """
-    Base class for all violations produced by verify_support_determinism().
-
-    Inherits from DataclassException so each violation is also a raiseable
-    exception. Subclasses set self.message in __post_init__ before calling
-    super().__post_init__().
-    """
-
-
-@dataclass
-class MissingQueryVariableViolation(SupportDeterminismViolation):
-    """
-    Violation raised when a Variable declared in a query_set is absent from the circuit.
-
-    Produced by Check 1 of verify_support_determinism().
-    """
-
-    missing_variables: List[Variable]
-    """Variables present in the query_set but not in the circuit."""
-
-    available_variables: List[Variable]
-    """All Variables currently registered in the circuit."""
-
-    def __post_init__(self) -> None:
-        missing = [v.name for v in self.missing_variables]
-        available = [v.name for v in self.available_variables]
-        self.message = (
-            f"Query-set Variables {missing} not found in circuit. "
-            f"Available: {available}"
-        )
-        super().__post_init__()
-
-    def __str__(self) -> str:
-        return self.message
-
-
-@dataclass
-class UnnormalizedSumUnitViolation(SupportDeterminismViolation):
-    """
-    Violation raised when a SumUnit's log-weights do not sum to log(1).
-
-    Produced by Check 2 of verify_support_determinism().
-    Unnormalized SumUnits produce incorrect backdoor adjustment probabilities.
-    """
-
-    sum_unit_index: int
-    """Graph index of the offending SumUnit."""
-
-    actual_log_weight_sum: float
-    """The actual sum of log-weights, which should be 0.0."""
-
-    def __post_init__(self) -> None:
-        self.message = (
-            f"SumUnit (index={self.sum_unit_index}) log-weights sum to "
-            f"{self.actual_log_weight_sum:.6f}, expected 0.0. "
-            f"Unnormalized circuits produce incorrect backdoor probabilities."
-        )
-        super().__post_init__()
-
-    def __str__(self) -> str:
-        return self.message
-
-
-@dataclass
-class OverlappingChildSupportsViolation(SupportDeterminismViolation):
-    """
-    Violation raised when a SumUnit's children have overlapping marginal support
-    on a declared query Variable.
-
-    Produced by Check 3 of verify_support_determinism().
-    Overlapping supports violate the support-determinism property required for
-    tractable backdoor adjustment.
-    """
-
-    sum_unit_index: int
-    """Graph index of the offending SumUnit."""
-
-    query_variable: Variable
-    """The declared query Variable on which the overlap was detected."""
-
-    def __post_init__(self) -> None:
-        self.message = (
-            f"SumUnit (index={self.sum_unit_index}) has overlapping children supports "
-            f"on declared query Variable '{self.query_variable.name}': children are not "
-            f"support-deterministic for this Variable."
-        )
-        super().__post_init__()
-
-    def __str__(self) -> str:
-        return self.message
-
-
-@dataclass
-class SupportDeterminismVerificationResult(DataclassException):
-    """
-    Result of verifying support determinism of a circuit against its
-    Marginal Determinism Variable Tree.
-
-    Support determinism requires that for each declared cause Variable,
-    SumUnit children have disjoint support regions — i.e. each child
-    exclusively owns a non-overlapping partition of that Variable's domain.
-    This structural property is required for tractable backdoor adjustment.
-
-    Based on the Q-determinism condition from:
-        Broadrick et al. (2023), Tractable Probabilistic Circuits
-        https://arxiv.org/abs/2304.07438
-    """
-
-    passed: bool
-    """True if all three checks passed with no violations."""
-
-    violations: List[SupportDeterminismViolation]
-    """Typed violations found, in check order. Empty when passed is True."""
-
-    checked_query_sets: List[Set[Variable]]
-    """All non-empty query_sets from the Marginal Determinism Variable Tree."""
-
-    circuit_variables: List[Variable]
-    """All Variables present in the circuit at verification time."""
-
-    def __post_init__(self) -> None:
-        self.message = str(self)
-        super().__post_init__()
-
-    def __str__(self) -> str:
-        status = "PASS" if self.passed else "FAIL"
-        checked_names = [{v.name for v in qs} for qs in self.checked_query_sets]
-        circuit_names = [v.name for v in self.circuit_variables]
-        lines = [
-            f"Support determinism verification: {status}",
-            f"  Checked query_sets: {checked_names}",
-            f"  Circuit variables:  {circuit_names}",
-        ]
-        if self.violations:
-            lines.append("  Violations:")
-            for violation in self.violations:
-                lines.append(f"    - {str(violation)}")
-        return "\n".join(lines)
-
 
 @dataclass
 class FailureDiagnosisResult:
@@ -318,7 +180,7 @@ class FailureDiagnosisResult:
     """P(cause in training support at observed value) from the interventional circuit.
     Zero indicates the observed value lies entirely outside the training distribution."""
 
-    recommended_region: Any
+    recommended_region: Optional[Event]
     """The cause support region with the highest interventional probability,
     as a composite set event. None if no regions were found. The caller can
     derive a point recommendation from region.simple_sets[0][cause_variable]."""
@@ -331,6 +193,18 @@ class FailureDiagnosisResult:
     actual_value, interventional_probability, and recommended_region."""
 
     def __str__(self) -> str:
+        """
+        Format the diagnosis as a two-section plain-text table.
+
+        The header section shows the primary cause variable, its observed
+        value, the interventional probability at that value, the recommended
+        region as a [lower, upper] interval, and the interventional probability
+        at the recommendation. The all-variables section lists every diagnosed
+        cause variable with its observed value and interventional probability,
+        marking the primary cause.
+
+        :returns: Multi-line tabulated string suitable for console output.
+        """
         if self.recommended_region is not None:
             simple_set = self.recommended_region.simple_sets[0]
             interval_set = simple_set[self.primary_cause_variable]
@@ -447,7 +321,7 @@ class CausalCircuit:
         """
         violations: List[UnnormalizedSumUnitViolation] = []
         for node in self.probabilistic_circuit.nodes():
-            if isinstance(node, SumUnit) and not sum_unit_is_normalized(node):
+            if isinstance(node, SumUnit) and not node.is_normalized():
                 violations.append(
                     UnnormalizedSumUnitViolation(
                         sum_unit_index=node.index,
@@ -508,7 +382,6 @@ class CausalCircuit:
         :param query_variable: The query Variable to check marginal disjointness on.
         :returns: A violation if overlapping children are detected, else None.
         """
-
         if not all(query_variable in event.variables for event in child_support_events):
             return None
         child_marginals = [
@@ -525,21 +398,22 @@ class CausalCircuit:
         return None
 
     def _check_support_disjointness(
-            self, all_query_variables: Set[Variable]
+        self, all_query_variables: Set[Variable]
     ) -> List[OverlappingChildSupportsViolation]:
         """
         Check that for each declared query Variable, no SumUnit that splits on
         that Variable has children with overlapping marginal support.
 
-        Calls self.probabilistic_circuit.support exactly once to populate
-        result_of_current_query on every node via a bottom-up traversal, then
-        delegates per-node, per-variable inspection to _check_sum_unit_for_variable.
+        Calls self.probabilistic_circuit.support once as a side-effecting
+        traversal that populates result_of_current_query on every node bottom-up.
+        The returned event is discarded; only the per-node side effect matters.
+        Delegates per-node, per-variable inspection to _check_sum_unit_for_variable.
 
         :param all_query_variables: Union of all Variables across all query_sets.
         :returns: List of violations, empty if all split nodes are support-disjoint.
         """
         violations: List[OverlappingChildSupportsViolation] = []
-        self.probabilistic_circuit.support
+        _ = self.probabilistic_circuit.support
 
         for layer in self.probabilistic_circuit.layers:
             for node in layer:
@@ -569,13 +443,19 @@ class CausalCircuit:
         normalization, and pairwise support disjointness for all declared query
         Variables. Returns early after Check 1 if any Variables are missing, since
         Variable objects are required for marginalisation in Check 3.
+
+        :returns: SupportDeterminismVerificationResult when all checks pass.
+        :raises SupportDeterminismVerificationResult: Containing all collected
+            violations when any check fails. Raising the result rather than a
+            separate exception type keeps all diagnostic information — violation
+            list, checked query sets, circuit variables — in one object.
         """
         checked_query_sets = self.marginal_determinism_tree.all_query_sets()
         all_query_variables: Set[Variable] = {v for qs in checked_query_sets for v in qs}
 
         violations: List[SupportDeterminismViolation] = self._check_query_variables_exist(all_query_variables)
         if violations:
-            return SupportDeterminismVerificationResult(
+            raise SupportDeterminismVerificationResult(
                 passed=False,
                 violations=violations,
                 checked_query_sets=checked_query_sets,
@@ -585,12 +465,15 @@ class CausalCircuit:
         violations += self._check_sum_units_normalized()
         violations += self._check_support_disjointness(all_query_variables)
 
-        return SupportDeterminismVerificationResult(
+        result = SupportDeterminismVerificationResult(
             passed=len(violations) == 0,
             violations=violations,
             checked_query_sets=checked_query_sets,
             circuit_variables=list(self.probabilistic_circuit.variables),
         )
+        if violations:
+            raise result
+        return result
 
     def backdoor_adjustment(
         self,
@@ -620,14 +503,16 @@ class CausalCircuit:
         :returns: Joint interventional circuit over (cause, effect).
         """
         if cause_variable not in self.causal_variables:
-            raise ValueError(
-                f"'{cause_variable.name}' is not a registered cause Variable. "
-                f"Registered: {[v.name for v in self.causal_variables]}."
+            raise UnregisteredVariableError(
+                variable_name=cause_variable.name,
+                registered_names=[v.name for v in self.causal_variables],
+                role="cause",
             )
         if effect_variable not in self.effect_variables:
-            raise ValueError(
-                f"'{effect_variable.name}' is not a registered effect Variable. "
-                f"Registered: {[v.name for v in self.effect_variables]}."
+            raise UnregisteredVariableError(
+                variable_name=effect_variable.name,
+                registered_names=[v.name for v in self.effect_variables],
+                role="effect",
             )
         if adjustment_variables is None:
             adjustment_variables = []
@@ -666,7 +551,7 @@ class CausalCircuit:
         :param output_circuit: Circuit to attach the new ProductUnit to.
         :param root_sum_unit: SumUnit to attach the weighted ProductUnit to.
         :returns: True if the ProductUnit was successfully added, False if
-            truncation produced an empty circuit.
+            cause truncation produced an empty circuit.
         """
         truncated_circuit, _ = copy.deepcopy(conditioned_circuit).log_truncated_in_place(
             cause_event.fill_missing_variables_pure(conditioned_circuit.variables)
@@ -684,16 +569,16 @@ class CausalCircuit:
             return False
 
         product_unit = ProductUnit(probabilistic_circuit=output_circuit)
-        attach_marginal_circuit(cause_region_circuit, product_unit, output_circuit)
-        attach_marginal_circuit(effect_marginal_circuit, product_unit, output_circuit)
+        product_unit.attach_marginal_circuit(cause_region_circuit, output_circuit)
+        product_unit.attach_marginal_circuit(effect_marginal_circuit, output_circuit)
         root_sum_unit.add_subcircuit(product_unit, math.log(cause_weight))
         return True
 
     def _compute_interventional_circuit_without_adjustment(
-            self,
-            cause_variable: Variable,
-            effect_variable: Variable,
-            query_resolution: float,
+        self,
+        cause_variable: Variable,
+        effect_variable: Variable,
+        query_resolution: float,
     ) -> ProbabilisticCircuit:
         """
         Compute P(cause, effect | do(cause)) with an empty adjustment set.
@@ -731,9 +616,9 @@ class CausalCircuit:
         )
 
         if regions_added == 0:
-            raise ValueError(
-                f"Interventional circuit is empty for cause '{cause_variable.name}'. "
-                f"Ensure the circuit was trained on data covering this Variable's domain."
+            raise EmptyInterventionalCircuitError(
+                cause_variable_name=cause_variable.name,
+                adjustment_variable_names=[],
             )
         return output_circuit
 
@@ -800,11 +685,11 @@ class CausalCircuit:
         return regions_added
 
     def _compute_interventional_circuit_with_adjustment(
-            self,
-            cause_variable: Variable,
-            effect_variable: Variable,
-            adjustment_variables: List[Variable],
-            query_resolution: float,
+        self,
+        cause_variable: Variable,
+        effect_variable: Variable,
+        adjustment_variables: List[Variable],
+        query_resolution: float,
     ) -> ProbabilisticCircuit:
         """
         Compute P(cause, effect | do(cause)) with a non-empty adjustment set Z.
@@ -838,10 +723,9 @@ class CausalCircuit:
         )
 
         if regions_added == 0:
-            raise ValueError(
-                f"Interventional circuit with adjustment is empty. "
-                f"cause='{cause_variable.name}', "
-                f"adjustment={[v.name for v in adjustment_variables]}."
+            raise EmptyInterventionalCircuitError(
+                cause_variable_name=cause_variable.name,
+                adjustment_variable_names=[v.name for v in adjustment_variables],
             )
         return output_circuit
 
@@ -923,7 +807,7 @@ class CausalCircuit:
         self,
         cause_variable: Variable,
         interventional_circuit: ProbabilisticCircuit,
-    ) -> Optional[Any]:
+    ) -> Optional[Event]:
         """
         Return the cause support region with the highest interventional probability,
         or None if no regions are found.
@@ -936,7 +820,7 @@ class CausalCircuit:
         :returns: Composite set event of the highest-probability region, or None.
         """
         best_probability = -1.0
-        best_region: Optional[Any] = None
+        best_region: Optional[Event] = None
         for region_event, _ in self._extract_leaf_regions_for_variable(cause_variable):
             region_probability = float(
                 interventional_circuit.probability(
@@ -1031,9 +915,8 @@ class CausalCircuit:
             interventional_circuits_by_cause[cause_variable] = interventional_circuit
 
         if not all_variable_results:
-            raise ValueError(
-                f"No cause Variables found in observed_values. "
-                f"Expected at least one of: {[v.name for v in self.causal_variables]}"
+            raise NoCauseVariablesError(
+                registered_cause_names=[v.name for v in self.causal_variables],
             )
 
         primary_cause_variable = min(
