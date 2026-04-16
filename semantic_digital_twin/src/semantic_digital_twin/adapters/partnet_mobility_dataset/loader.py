@@ -3,9 +3,8 @@ import os
 import subprocess
 import sys
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import field
 from pathlib import Path
-from typing import Set
 from xml.etree import ElementTree as ET
 
 import jinja2
@@ -13,13 +12,9 @@ from typing_extensions import List
 
 from krrood.utils import recursive_subclasses
 from semantic_digital_twin.adapters.package_resolver import FileUriResolver
-from semantic_digital_twin.adapters.partnet_mobility_dataset.semantic_annotations import (
-    PartNetLabel,
-)
+from semantic_digital_twin.adapters.partnet_mobility_dataset.generated_semantic_annotations import *  # type: ignore
 from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.world import World
-
-from semantic_digital_twin.adapters.partnet_mobility_dataset.generated_semantic_annotations import *  # type: ignore
 
 logger = logging.getLogger(__name__)
 
