@@ -1,6 +1,5 @@
 """
-Apartment world: JPT-guided pick-and-place with GCS navigation and
-causal failure diagnosis with active parameter correction.
+Apartment world: JPT-guided pick-and-place with GCS navigation.
 
 Uses the open-world JPT (pick_and_place_jpt.json), trained on 1742 successful
 open-world Batch 1 plans, to guide approach-position and arm sampling in the
@@ -13,64 +12,31 @@ JPT variable mapping (open-world → apartment):
     place_approach_x/y  →  table_approach_x/y
     milk_end_x/y/z      →  unchanged
     pick_arm            →  unchanged
-
-Causal failure diagnosis with active correction
-------------------------------------------------
-On each failed iteration, CausalCircuit.diagnose_failure() identifies the
-primary causal variable and recommends a corrective region. The demo then
-applies a CausalSamplingCorrection for the immediately following iteration:
-the primary cause variable is clamped to the midpoint of the recommended
-region, while all other variables are still drawn freely from the JPT joint
-distribution.
-
-This closes the feedback loop:
-    failure → causal diagnosis → parameter correction → re-attempt
-
-The CausalSamplingCorrection is designed to be reusable for any JPT-based
-robot plan that uses a CausalCircuit. It is task-agnostic — it operates on
-variable names and recommended values without any knowledge of the specific
-action being planned.
-
-Correction strategy
--------------------
-- After a failure, one corrected sample is attempted immediately.
-- If the corrected attempt succeeds, sampling reverts to the unconstrained JPT.
-- If the corrected attempt also fails, sampling reverts to the unconstrained JPT
-  rather than recursively correcting — this prevents the system from getting
-  stuck following a bad recommendation.
-- Corrections are tracked separately in the run statistics so the contribution
-  of the causal circuit to the overall success rate can be measured directly.
-
-GCS return navigation
----------------------
-After every iteration (success or failure), the robot navigates back to the
-fixed start zone using a single GCS call from the robot's actual current
-position in the world. This avoids the previous two-leg approach
-(table → counter → start) which used phantom planned positions as the GCS
-start point, causing path planning failures and incorrect fallback straight-line
-routes that crossed the kitchen counter.
-
-CausalCircuit is built once at startup from a ProbModelJPT (probabilistic_model
-variant), which exposes the .probabilistic_circuit attribute required by
-CausalCircuit.from_probabilistic_circuit(). The pyjpt model is kept separately
-for sampling because it is faster at inference time.
 """
 
 from __future__ import annotations
 
+import sys
+from unittest.mock import MagicMock
+
+# nav2_msgs is not installed; mock it before giskardpy tries to use it
+# via pycram.orm.ormatic_interface → giskardpy.motion_statechart.ros2_nodes.ros_tasks
+_nav2_mock = MagicMock()
+sys.modules["nav2_msgs"]                       = _nav2_mock
+sys.modules["nav2_msgs.action"]                = _nav2_mock.action
+sys.modules["nav2_msgs.action.NavigateToPose"] = _nav2_mock.action.NavigateToPose
+
 import hashlib
 import inspect
 import os
-import sys
 import threading
 import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 import numpy as np
-import pandas as pd
 import rclpy
 import sqlalchemy.types as sqlalchemy_types
 from sqlalchemy import event, text
@@ -80,11 +46,10 @@ from krrood.ormatic.data_access_objects.helper import to_dao
 from pycram.datastructures.dataclasses import Context
 from pycram.datastructures.enums import ApproachDirection, Arms, VerticalAlignment
 from pycram.datastructures.grasp import GraspDescription
-from pycram.language import ExecutesSequentially
+from pycram.language import ExecutesSequentially, SequentialNode
 from pycram.motion_executor import simulated_robot
 from pycram.orm.ormatic_interface import Base
 
-# from krrood.ormatic.dao import to_dao
 from krrood.ormatic.utils import create_engine
 
 from jpt.distributions.univariate import Multinomial
@@ -92,25 +57,10 @@ from jpt.distributions.univariate.multinomial import OrderedDictProxy
 from jpt.trees import JPT as JointProbabilityTree
 from jpt.variables import NumericVariable, SymbolicVariable
 
-from probabilistic_model.learning.jpt.jpt import JointProbabilityTree
-from probabilistic_model.learning.jpt.variables import (
-    Continuous as ProbContinuous,
-    Symbolic as ProbSymbolic,
-)
-from pycram.robot_plans.actions.core.navigation import NavigateAction
+from pycram.robot_plans.actions.core.navigation import NavigateAction as _NavigateActionBase
 from pycram.robot_plans.actions.core.pick_up import PickUpAction
 from pycram.robot_plans.actions.core.placing import PlaceAction
 from pycram.robot_plans.actions.core.robot_body import ParkArmsAction
-from random_events.set import Set as RESet
-from random_events.variable import Continuous as REContinuous
-from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import SumUnit as _SumUnit
-
-from probabilistic_model.probabilistic_circuit.causal.causal_circuit import (
-    CausalCircuit,
-    FailureDiagnosisResult,
-    MarginalDeterminismTreeNode,
-    SupportDeterminismVerificationResult,
-)
 
 from semantic_digital_twin.adapters.ros.tf_publisher import TFPublisher
 from semantic_digital_twin.adapters.ros.visualization.viz_marker import VizMarkerPublisher
@@ -135,37 +85,97 @@ from semantic_digital_twin.world_description.shape_collection import (
 from semantic_digital_twin.world_description.world_entity import Body
 
 
+
 # ---------------------------------------------------------------------------
-# Library patch: SumUnit.simplify() version mismatch
+# Patch: fix _migrate_nodes_from_plan stale-index bug
 #
-# This version of probabilistic_model calls self.add_subcircuit(..., mount=False)
-# but add_subcircuit() does not accept a mount= keyword argument.
-# Patched here to avoid modifying the library source.
+# Plan._migrate_nodes_from_plan() clears other.plan_graph after snapshotting
+# edges, but does not update node.index for single-node plans (no edges to
+# re-add). This leaves the migrated root with a stale index, causing IndexError
+# in rustworkx on the next graph access (e.g. NavigateAction.execute()).
 # ---------------------------------------------------------------------------
 
-def _patched_sum_simplify(self) -> None:
-    import numpy as _np
-    if len(self.subcircuits) == 1:
-        for parent, _, edge_data in list(self.probabilistic_circuit.in_edges(self)):
-            self.probabilistic_circuit.add_edge(parent, self.subcircuits[0], edge_data)
-        self.probabilistic_circuit.remove_node(self)
-        return
-    for log_weight, subcircuit in self.log_weighted_subcircuits:
-        if log_weight == -_np.inf:
-            self.probabilistic_circuit.remove_edge(self, subcircuit)
-        if type(subcircuit) is type(self):
-            for child_log_weight, child_subcircuit in subcircuit.log_weighted_subcircuits:
-                self.add_subcircuit(child_subcircuit, child_log_weight + log_weight)
-            self.probabilistic_circuit.remove_node(subcircuit)
+def _patched_migrate_nodes_from_plan(self, other):
+    # Snapshot everything before touching the graph
+    all_other_nodes = list(other.all_nodes)
+    other_edges = list(other.edges)
+    # Find root by in-degree (avoids calling .parent which uses stale indices)
+    root_ref = None
+    if all_other_nodes:
+        for candidate in all_other_nodes:
+            preds = other.plan_graph.predecessors(candidate.index)
+            if len(preds) == 0:
+                root_ref = candidate
+                break
+    # Now clear and re-register all nodes in self with fresh indices
+    other.plan_graph.clear()
+    for node in all_other_nodes:
+        node.index = None
+        node.plan = None
+    for node in all_other_nodes:
+        self.add_node(node)
+    for edge in other_edges:
+        self.add_edge(edge[0], edge[1])
+    return root_ref
 
-_SumUnit.simplify = _patched_sum_simplify
+
+from pycram.plans.plan import Plan as _Plan
+_Plan._migrate_nodes_from_plan = _patched_migrate_nodes_from_plan
+
+# Re-alias NavigateAction now that the patch is applied
+NavigateAction = _NavigateActionBase
+
+# Patch ActiveConnection1DOF.raw_dof to redirect stale _world references.
+# After merge_world_at_pose clears pr2_world, RevoluteConnection objects stored
+# in JointState.connections still have self._world = pr2_world (empty/cleared).
+# raw_dof calls self._world.get_degree_of_freedom_by_id — which fails on the
+# empty pr2_world. We keep a module-level reference to the apartment world and
+# redirect the lookup when self._world has an empty hash table.
+_APARTMENT_WORLD = None  # set after world construction
+
+from semantic_digital_twin.world_description.connections import ActiveConnection1DOF as _AC1DOF
+_orig_raw_dof = _AC1DOF.raw_dof.fget
+
+def _robust_raw_dof(self):
+    # If self._world has no DOFs registered (cleared world), redirect to apartment world
+    target_world = self._world
+    if (target_world is None or
+            len(target_world._world_entity_hash_table) == 0 or
+            len(target_world.degrees_of_freedom) == 0):
+        if _APARTMENT_WORLD is not None:
+            target_world = _APARTMENT_WORLD
+            self._world = target_world  # repair in place
+    return target_world.get_degree_of_freedom_by_id(self.dof_id)
+
+_AC1DOF.raw_dof = property(_robust_raw_dof)
+
+
+
+# Patch add_subplan to ensure context propagates correctly after migration.
+# execute_single() creates Plan(context=None); after _migrate_nodes_from_plan
+# the nodes move into self.plan (which has context), but if any node's plan
+# attribute still points to the old None-context plan, world/robot access fails.
+from pycram.robot_plans.actions.base import ActionDescription as _ActionDescription
+_original_add_subplan = _ActionDescription.add_subplan
+
+def _patched_add_subplan(self, subplan_root):
+    subplan_root = self.plan._migrate_nodes_from_plan(subplan_root.plan)
+    self.plan.add_edge(self.plan_node, subplan_root)
+    # Ensure all migrated nodes have the correct plan reference with context
+    for node in self.plan.all_nodes:
+        if node.plan is not self.plan:
+            node.plan = self.plan
+    return subplan_root
+
+_ActionDescription.add_subplan = _patched_add_subplan
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-NUMBER_OF_ITERATIONS: int = 5000
+NUMBER_OF_ITERATIONS:    int = 5000
+MAX_RESAMPLE_ATTEMPTS:   int = 10   # max JPT resamples per iteration before hard failure
 
 DATABASE_URI: str = os.environ.get(
     "SEMANTIC_DIGITAL_TWIN_DATABASE_URI",
@@ -204,9 +214,6 @@ GCS_SEARCH_MIN_Z: float =  0.0
 GCS_SEARCH_MAX_Z: float =  0.1
 GCS_OBSTACLE_BLOAT: float = 0.3
 
-# Robot start position — in the open aisle south of the kitchen counter.
-# Verified to be inside the GCS free-space graph for the apartment world.
-# The kitchen counter occupies roughly y∈[1.5,3.5]; the aisle is at y<1.2.
 ROBOT_INIT_X: float = 1.0
 ROBOT_INIT_Y: float = 0.5
 
@@ -214,64 +221,12 @@ GRASP_MANIPULATION_OFFSET: float = 0.06
 
 OPEN_WORLD_PLACE_TARGET_X: float = 4.1
 
-_RESOURCE_PATH:       Path = Path(__file__).resolve().parents[3] / "resources"
-APARTMENT_URDF_PATH:  Path = _RESOURCE_PATH / "worlds" / "apartment.urdf"
-MILK_STL_PATH:        Path = _RESOURCE_PATH / "objects" / "milk.stl"
+_RESOURCE_PATH:      Path = Path(__file__).resolve().parents[3] / "resources"
+APARTMENT_URDF_PATH: Path = _RESOURCE_PATH / "worlds" / "apartment.urdf"
+MILK_STL_PATH:       Path = _RESOURCE_PATH / "objects" / "milk.stl"
 
 JPT_MODEL_PATH:           str = os.path.join(os.path.dirname(__file__), "pick_and_place_jpt.json")
-TRAINING_CSV_PATH:        str = os.path.join(os.path.dirname(__file__), "pick_and_place_dataframe.csv")
 JPT_MIN_SAMPLES_PER_LEAF: int = 25
-
-# Variable objects used by CausalCircuit — the current API takes Variable
-# objects, not string names. Continuous from random_events is used here
-# because ProbModelJPT exposes its variables as random_events Continuous
-# instances after fitting.
-CAUSAL_VARIABLES: List[REContinuous] = [
-    REContinuous("pick_approach_x"),
-    REContinuous("pick_approach_y"),
-    REContinuous("place_approach_x"),
-    REContinuous("place_approach_y"),
-    REContinuous("pick_arm"),
-]
-
-CAUSAL_PRIORITY_ORDER: List[REContinuous] = [
-    REContinuous("pick_approach_x"),    # rank 1 — ATE_norm 1.714
-    REContinuous("place_approach_x"),   # rank 2 — ATE_norm 1.511
-    REContinuous("pick_arm"),           # rank 3 — CT4 moderator
-    REContinuous("pick_approach_y"),    # rank 4
-    REContinuous("place_approach_y"),   # rank 5
-]
-
-EFFECT_VARIABLES: List[REContinuous] = [
-    REContinuous("milk_end_z"),
-]
-
-CAUSAL_QUERY_RESOLUTION: float = 0.005
-
-# Width of the correction window applied to the primary cause variable.
-# Set to one JPT leaf width (10x the variable precision of 0.005).
-# Wide enough to draw valid samples, narrow enough to stay near the recommendation.
-CAUSAL_CORRECTION_WINDOW: float = 0.05
-
-# Apartment approach variable bounds in JPT coordinate space (after offset remapping).
-# Used to clip corrected values to the physically reachable zone.
-# Keyed by JPT variable name. To reuse this correction framework for a different
-# task, replace this dict with bounds appropriate for that task's JPT coordinate space.
-APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE: Dict[str, tuple] = {
-    "pick_approach_x":  (COUNTER_APPROACH_MIN_X, COUNTER_APPROACH_MAX_X),
-    "pick_approach_y":  (
-        COUNTER_APPROACH_MIN_Y - MILK_SPAWN_Y,
-        COUNTER_APPROACH_MAX_Y - MILK_SPAWN_Y,
-    ),
-    "place_approach_x": (
-        TABLE_APPROACH_MIN_X - (PLACE_TARGET_X - OPEN_WORLD_PLACE_TARGET_X),
-        TABLE_APPROACH_MAX_X - (PLACE_TARGET_X - OPEN_WORLD_PLACE_TARGET_X),
-    ),
-    "place_approach_y": (
-        TABLE_APPROACH_MIN_Y - PLACE_TARGET_Y,
-        TABLE_APPROACH_MAX_Y - PLACE_TARGET_Y,
-    ),
-}
 
 
 # ---------------------------------------------------------------------------
@@ -314,72 +269,30 @@ class PlanParameters:
 
 
 @dataclass
-class CausalSamplingCorrection:
-    """
-    A one-shot correction applied to the next JPT sample after a causal failure.
-
-    This class is intentionally task-agnostic. It holds the JPT variable name
-    and recommended value from a FailureDiagnosisResult, plus the correction
-    window and task-specific variable bounds.
-
-    Generalisation note
-    -------------------
-    To reuse this correction framework for a different robot action (door opening,
-    object handover, pouring, etc.), the only task-specific changes required are:
-
-      1. Define a variable_bounds dict mapping JPT variable names to (min, max)
-         in that task's JPT coordinate space — analogous to
-         APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE here.
-
-      2. Implement the coordinate remapping in the task's sample function
-         (analogous to _sample_plan_parameters() here) to convert JPT-space
-         recommendations back to the task's world coordinates.
-
-      Everything else — the CausalCircuit, MarginalDeterminismTreeNode,
-      diagnose_failure(), _diagnose_and_log(), _build_correction_from_diagnosis(),
-      and the main loop correction logic — is reused completely unchanged.
-
-    Fields
-    ------
-    active
-        Whether a correction is pending for the next sample.
-    jpt_variable_name
-        The variable to correct, in JPT coordinate space.
-    recommended_value
-        Midpoint of the highest-probability cause region from the
-        interventional circuit, in JPT coordinate space. Derived from
-        recommended_region on FailureDiagnosisResult.
-    correction_window
-        Half-width of the interval around the recommended value.
-        The corrected sample lies in [recommended_value ± correction_window].
-    variable_bounds
-        Task-specific (min, max) bounds in JPT space for clipping.
-    source_iteration
-        The iteration that produced this correction, for logging.
-    """
-    active:            bool  = False
-    jpt_variable_name: str   = ""
-    recommended_value: float = 0.0
-    correction_window: float = CAUSAL_CORRECTION_WINDOW
-    variable_bounds:   tuple = (float("-inf"), float("inf"))
-    source_iteration:  int   = 0
+class ResamplingRecord:
+    """One iteration that required JPT resampling before success."""
+    iteration:  int
+    attempts:   int    # total attempts including the one that succeeded
+    elapsed_s:  float  # wall-clock seconds for the whole resampling loop
 
 
 @dataclass
 class RunStatistics:
-    """
-    Tracks success and failure counts, separating corrected-attempt outcomes
-    from baseline outcomes.
+    """Tracks success, failure, and JPT-resampling stats across all iterations."""
+    successful_count:   int = 0
+    failed_count:       int = 0
+    hard_failure_count: int = 0   # iterations that exhausted all MAX_RESAMPLE_ATTEMPTS
+    # Iterations that succeeded only after >=2 JPT resampling attempts
+    resampling_records: list = None
 
-    The separation is the key measurement: it lets you directly compare the
-    success rate of causally corrected iterations against the baseline JPT
-    success rate, quantifying the causal circuit's contribution to improvement.
-    """
-    successful_count:        int = 0
-    failed_count:            int = 0
-    corrected_attempt_count: int = 0
-    corrected_success_count: int = 0
-    corrected_failure_count: int = 0
+    def __post_init__(self):
+        if self.resampling_records is None:
+            self.resampling_records = []
+
+    def record_resampling(self, iteration: int, attempts: int, elapsed_s: float):
+        self.resampling_records.append(
+            ResamplingRecord(iteration=iteration, attempts=attempts, elapsed_s=elapsed_s)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -387,11 +300,6 @@ class RunStatistics:
 # ---------------------------------------------------------------------------
 
 def _patch_orm_numpy_array_type() -> None:
-    """
-    Patch the PyCRAM ORM numpy TypeDecorator so that None values are passed
-    through without calling .astype(), which raises AttributeError when a plan
-    action has no associated array data.
-    """
     target_class = None
     for module_name in list(sys.modules):
         if "pycram" not in module_name and "orm" not in module_name:
@@ -430,19 +338,70 @@ _patch_orm_numpy_array_type()
 # ---------------------------------------------------------------------------
 
 def _build_world(apartment_urdf_path: Path) -> tuple[World, PR2]:
+    # Parse the apartment world — it already has a root body, so
+    # merge_world_at_pose can safely use self.root.
     world = URDFParser.from_file(str(apartment_urdf_path)).parse()
     pr2_world = URDFParser.from_file(
         "package://iai_pr2_description/robots/pr2_with_ft2_cableguide.xacro"
     ).parse()
     robot = PR2.from_world(pr2_world)
-    with world.modify_world():
-        world.merge_world_at_pose(
-            pr2_world,
-            HomogeneousTransformationMatrix.from_xyz_rpy(ROBOT_INIT_X, ROBOT_INIT_Y, 0.0, 0, 0, 0),
-        )
+    world.merge_world_at_pose(
+        pr2_world,
+        HomogeneousTransformationMatrix.from_xyz_rpy(ROBOT_INIT_X, ROBOT_INIT_Y, 0.0, 0, 0, 0),
+    )
     with world.modify_world():
         world.add_semantic_annotation(Table(root=world.get_body_by_name("table_area_main")))
+    # After merge_world_at_pose, pr2_world.clear() sets _world=None on all
+    # semantic annotations that were in pr2_world. Fix them so that
+    # robot.manipulator._world, robot.right_arm._world, etc. all point to world.
+    _fix_robot_world_refs(robot, world)
     return world, robot
+
+
+def _fix_robot_world_refs(robot: PR2, world: World) -> None:
+    """
+    After merge_world_at_pose clears pr2_world, all WorldEntity objects
+    (connections, DOFs, bodies, semantic annotations) that were part of
+    pr2_world still have _world pointing to the now-empty cleared world.
+    Fix ALL connections in the apartment world that have a stale _world
+    reference, plus all semantic annotations reachable from the robot.
+    """
+    from semantic_digital_twin.world_description.world_entity import (
+        SemanticAnnotation, WorldEntity,
+    )
+    from dataclasses import fields as _fields, is_dataclass
+
+    # Fix all connections and their DOFs in the apartment world
+    for connection in world.connections:
+        if connection._world is not world:
+            connection._world = world
+    for body in world.bodies:
+        if body._world is not world:
+            body._world = world
+            world._world_entity_hash_table[hash(body)] = body
+    for dof in world.degrees_of_freedom:
+        if dof._world is not world:
+            dof._world = world
+            world._world_entity_hash_table[hash(dof)] = dof
+
+    # Also fix semantic annotations reachable from the robot
+    visited: set = set()
+    def _fix_annotation(obj):
+        if id(obj) in visited or obj is None:
+            return
+        visited.add(id(obj))
+        if isinstance(obj, SemanticAnnotation):
+            obj._world = world
+            if is_dataclass(obj):
+                for f in _fields(obj):
+                    val = getattr(obj, f.name, None)
+                    if isinstance(val, SemanticAnnotation):
+                        _fix_annotation(val)
+                    elif isinstance(val, list):
+                        for item in val:
+                            if isinstance(item, SemanticAnnotation):
+                                _fix_annotation(item)
+    _fix_annotation(robot)
 
 
 def _add_localization_frames(world: World, robot: PR2) -> None:
@@ -490,10 +449,7 @@ def _spawn_milk(world: World, milk_stl_path: Path) -> Body:
 
 
 def _respawn_milk(world: World, milk_body: Body) -> None:
-    """
-    Reset the milk carton to its original spawn pose, re-attaching it to the
-    world root if it was attached to the robot gripper during pick-up.
-    """
+    """Reset the milk carton to its original spawn pose."""
     spawn_pose = HomogeneousTransformationMatrix.from_xyz_rpy(
         MILK_SPAWN_X, MILK_SPAWN_Y, MILK_SPAWN_Z, 0, 0, 0
     )
@@ -515,13 +471,6 @@ def _respawn_milk(world: World, milk_body: Body) -> None:
             world.add_connection(free_connection)
             free_connection.origin = spawn_pose
     print(f"  [respawn] Milk reset to ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
-
-
-# Robot position is tracked explicitly in the main loop via robot_x / robot_y
-# variables rather than reading from the world transform chain. This avoids
-# the ambiguity between the odom_combined local frame and the apartment world
-# frame, which caused incorrect (0,0) readings when the OmniDrive connection
-# origin was read directly.
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +518,9 @@ def _register_postgresql_numpy_scalar_coercion(engine: Any) -> None:
         if isinstance(value, numpy.floating): return float(value)
         if isinstance(value, numpy.integer):  return int(value)
         if isinstance(value, numpy.bool_):    return bool(value)
+        # Coerce Python enums (e.g. DefaultWeights) to their underlying value
+        import enum
+        if isinstance(value, enum.Enum):       return value.value
         return value
 
     def _coerce_parameter_dict(parameters: Any) -> Any:
@@ -589,7 +541,7 @@ def _register_postgresql_numpy_scalar_coercion(engine: Any) -> None:
         return statement, parameters
 
 
-def _persist_plan(session: Session, plan: ExecutesSequentially) -> None:
+def _persist_plan(session: Session, plan: SequentialNode) -> None:
     print("  [db] Persisting plan ...")
     session.add(to_dao(plan))
     session.commit()
@@ -625,17 +577,7 @@ def _build_navigation_map(world: World) -> GraphOfConvexSets:
 
 
 def _build_gcs_bounds_array(navigation_map: GraphOfConvexSets) -> np.ndarray:
-    """
-    Build a fast (N, 6) numpy array of world-frame GCS node bounds.
-
-    Uses node.simple_event to extract world-frame interval bounds, which is
-    the same coordinate system that path_from_to uses internally. This is
-    correct regardless of the BoundingBox origin transform, because
-    simple_event accesses the event representation that GCS builds from the
-    free-space computation (world coordinates).
-
-    Returns array with columns: [min_x, min_y, min_z, max_x, max_y, max_z].
-    """
+    """Build a fast (N, 6) numpy array of world-frame GCS node bounds."""
     from semantic_digital_twin.datastructures.variables import SpatialVariables
     rows = []
     for node in navigation_map.graph.nodes():
@@ -654,7 +596,6 @@ def _build_gcs_bounds_array(navigation_map: GraphOfConvexSets) -> np.ndarray:
 
 
 def _point_in_free_space(bounds: np.ndarray, x: float, y: float, z: float) -> bool:
-    """Vectorised O(N) free-space check using precomputed world-frame bounds."""
     return bool(
         ((bounds[:, 0] <= x) & (x <= bounds[:, 3]) &
          (bounds[:, 1] <= y) & (y <= bounds[:, 4]) &
@@ -672,13 +613,6 @@ def _snap_to_free_space(
     radial_step:   float = 0.05,
     angular_steps: int   = 16,
 ) -> Optional[Point3]:
-    """
-    Return a Point3 in GCS free space at or near (x, y, z).
-
-    Uses the precomputed world-frame bounds array for fast O(N) checks
-    instead of the O(N) Python loop in node_of_point(). Spirals outward
-    until a free cell is found or search_radius is exceeded.
-    """
     if _point_in_free_space(gcs_bounds, x, y, z):
         return Point3(x, y, z, reference_frame=world.root)
 
@@ -704,62 +638,36 @@ def _make_pose(x: float, y: float, z: float, reference_frame: Any) -> Pose:
     )
 
 
-def _path_to_navigate_actions(
-    path:              List[Point3],
-    world_frame:       Any,
-    keep_joint_states: bool,
-) -> List[NavigateAction]:
-    return [
-        NavigateAction(
-            target_location=Pose(
-                position=Point3(
-                    x=float(waypoint.x), y=float(waypoint.y), z=0.0,
-                    reference_frame=world_frame,
-                ),
-                orientation=Quaternion(x=0, y=0, z=0, w=1, reference_frame=world_frame),
-                reference_frame=world_frame,
-            ),
-        )
-        for waypoint in path[1:]
-    ]
-
-
 def _navigate_via_gcs(
-    context:           Context,
-    navigation_map:    GraphOfConvexSets,
-    gcs_bounds:        np.ndarray,
-    start_x:           float,
-    start_y:           float,
-    goal_x:            float,
-    goal_y:            float,
-    world:             World,
-    keep_joint_states: bool = False,
+    context:        Context,
+    navigation_map: GraphOfConvexSets,
+    gcs_bounds:     np.ndarray,
+    start_x:        float,
+    start_y:        float,
+    goal_x:         float,
+    goal_y:         float,
+    world:          World,
 ) -> List[NavigateAction]:
     """
-    Plan a collision-free path via GCS and return it as a list of NavigateActions.
+    Return one NavigateAction per GCS waypoint along the collision-free path.
 
-    Both start and goal are snapped into GCS free space using the precomputed
-    world-frame bounds array (fast vectorised O(N) check). path_from_to is
-    then called on the snapped points.
-
-    Raises ValueError if either point cannot be placed in free space or if
-    path_from_to returns no path. There is no silent straight-line fallback —
-    any straight line through the apartment crosses the kitchen counter.
+    The plan graph patches (_patched_migrate_nodes_from_plan, _robust_raw_dof)
+    resolve the rustworkx stale-index and stale-_world issues that previously
+    forced single-waypoint navigation. Restoring multi-waypoint navigation
+    gives RViz smooth step-by-step base movement matching the original demo.
     """
     midpoint_z = (GCS_SEARCH_MIN_Z + GCS_SEARCH_MAX_Z) / 2.0
 
     snapped_start = _snap_to_free_space(gcs_bounds, start_x, start_y, midpoint_z, world)
     if snapped_start is None:
         raise ValueError(
-            f"GCS: cannot place start ({start_x:.3f},{start_y:.3f}) in free space. "
-            f"The position may be inside an obstacle or outside the search space."
+            f"GCS: cannot place start ({start_x:.3f},{start_y:.3f}) in free space."
         )
 
     snapped_goal = _snap_to_free_space(gcs_bounds, goal_x, goal_y, midpoint_z, world)
     if snapped_goal is None:
         raise ValueError(
-            f"GCS: cannot place goal ({goal_x:.3f},{goal_y:.3f}) in free space. "
-            f"The target may be inside an obstacle or outside the search space."
+            f"GCS: cannot place goal ({goal_x:.3f},{goal_y:.3f}) in free space."
         )
 
     try:
@@ -770,20 +678,25 @@ def _navigate_via_gcs(
             f"to ({goal_x:.3f},{goal_y:.3f}): {path_error}"
         ) from path_error
 
-    if path is None or len(path) < 2:
+    if path is None or len(path) < 1:
         raise ValueError(
             f"GCS: no path found from ({start_x:.3f},{start_y:.3f}) "
             f"to ({goal_x:.3f},{goal_y:.3f})."
         )
 
-    navigate_actions = _path_to_navigate_actions(path, world.root, keep_joint_states)
+    # Build one NavigateAction per waypoint (skip the start point at index 0).
+    # Each waypoint is a collision-free intermediate position along the GCS path.
+    navigate_actions = [
+        NavigateAction(
+            target_location=_make_pose(float(wp.x), float(wp.y), 0.0, world.root)
+        )
+        for wp in path[1:]
+    ]
+
     print(
         f"    [GCS] ({start_x:.2f},{start_y:.2f}) -> ({goal_x:.2f},{goal_y:.2f}): "
-        f"{len(navigate_actions)} waypoint(s)"
+        f"{len(path)} nodes, {len(navigate_actions)} NavigateAction(s)"
     )
-    for index, action in enumerate(navigate_actions):
-        position = action.target_location.to_position()
-        print(f"           waypoint {index + 1}: ({float(position.x):.3f}, {float(position.y):.3f})")
     return navigate_actions
 
 
@@ -803,57 +716,23 @@ def _load_joint_probability_tree(model_path: str) -> JointProbabilityTree:
 
 def _sample_plan_parameters(
     joint_probability_tree: JointProbabilityTree,
-    correction:             Optional[CausalSamplingCorrection] = None,
 ) -> PlanParameters:
     """
-    Draw one joint sample from the JPT and map it to PlanParameters.
+    Draw one joint sample from the JPT and map it to apartment PlanParameters.
 
-    If a CausalSamplingCorrection is active, the primary cause variable is
-    overridden with the recommended value clamped to the correction window and
-    the task's variable bounds. All other variables are drawn freely from the
-    joint distribution, preserving inter-variable correlations.
-
-    The correction is applied in JPT coordinate space before the coordinate
-    remapping to apartment absolute positions. This ordering is essential:
-    the CausalCircuit recommendation is in JPT space (open-world offsets),
-    so it must be applied before the offset addition that produces apartment
-    absolute coordinates.
-
-    To adapt this function for a different robot action, replace the coordinate
-    remapping block with the mapping appropriate for that task's world geometry.
-    The correction logic above the remapping block is completely task-agnostic.
+    The JPT was trained with milk at y=0 and place target at x=OPEN_WORLD_PLACE_TARGET_X.
+    The apartment milk is at y=MILK_SPAWN_Y and place target at x=PLACE_TARGET_X.
+    Adding back the respective offsets recovers absolute apartment coordinates.
     """
     sample_row     = joint_probability_tree.sample(1)[0]
     sample_by_name = {variable.name: sample_row[index]
                       for index, variable in enumerate(JPT_VARIABLES)}
-
-    # Apply causal correction in JPT coordinate space if active.
-    if correction is not None and correction.active:
-        lower_bound = correction.recommended_value - correction.correction_window
-        upper_bound = correction.recommended_value + correction.correction_window
-        if correction.variable_bounds != (float("-inf"), float("inf")):
-            lower_bound = max(lower_bound, correction.variable_bounds[0])
-            upper_bound = min(upper_bound, correction.variable_bounds[1])
-        corrected_value = float(
-            np.clip(correction.recommended_value, lower_bound, upper_bound)
-        )
-        sample_by_name[correction.jpt_variable_name] = corrected_value
-        print(
-            f"  [correction] {correction.jpt_variable_name}: "
-            f"{corrected_value:.4f}  "
-            f"(window [{lower_bound:.4f}, {upper_bound:.4f}], "
-            f"from iteration {correction.source_iteration})"
-        )
 
     arm_label = sample_by_name["pick_arm"]
     if isinstance(arm_label, (int, float)):
         arm_label = ArmChoiceDomain.labels[int(arm_label)]
     pick_arm = Arms.LEFT if arm_label == "LEFT" else Arms.RIGHT
 
-    # Coordinate remapping: JPT open-world offsets → apartment absolute positions.
-    # The JPT was trained with milk at y=0 and place target at x=OPEN_WORLD_PLACE_TARGET_X.
-    # The apartment milk is at y=MILK_SPAWN_Y and place target at x=PLACE_TARGET_X.
-    # Adding back the respective offsets recovers absolute apartment coordinates.
     counter_approach_x = float(np.clip(
         sample_by_name["pick_approach_x"],
         COUNTER_APPROACH_MIN_X, COUNTER_APPROACH_MAX_X,
@@ -881,292 +760,29 @@ def _sample_plan_parameters(
 
 
 # ---------------------------------------------------------------------------
-# CausalCircuit construction
-# ---------------------------------------------------------------------------
-
-def _build_prob_model_variables(csv_path: str) -> list:
-    """
-    Build probabilistic_model variable definitions from training CSV statistics.
-
-    ProbModelJPT requires its own Continuous/Symbolic types from random_events,
-    which are separate from pyjpt's NumericVariable. Mean and std initialise
-    the Continuous variables as required by the fitting procedure.
-    """
-    dataframe = pd.read_csv(csv_path)
-
-    def column_mean_and_std(column_name: str):
-        return float(dataframe[column_name].mean()), float(dataframe[column_name].std())
-
-    return [
-        ProbContinuous("pick_approach_x",  *column_mean_and_std("pick_approach_x")),
-        ProbContinuous("pick_approach_y",  *column_mean_and_std("pick_approach_y")),
-        ProbContinuous("place_approach_x", *column_mean_and_std("place_approach_x")),
-        ProbContinuous("place_approach_y", *column_mean_and_std("place_approach_y")),
-        ProbContinuous("milk_end_x",       *column_mean_and_std("milk_end_x")),
-        ProbContinuous("milk_end_y",       *column_mean_and_std("milk_end_y")),
-        ProbContinuous("milk_end_z",       *column_mean_and_std("milk_end_z")),
-        ProbSymbolic("pick_arm", RESet.from_iterable(["LEFT", "RIGHT"])),
-    ]
-
-
-def _build_causal_circuit(csv_path: str) -> CausalCircuit:
-    """
-    Fit a ProbModelJPT and construct a CausalCircuit from it.
-
-    The CausalCircuit is built once at startup and reused across all iterations.
-    A separate ProbModelJPT is used rather than pyjpt because CausalCircuit
-    requires a ProbabilisticCircuit object exposed via .probabilistic_circuit
-    after fit(). The pyjpt model is retained separately for faster sampling.
-
-    The MarginalDeterminismTreeNode is built from Variable objects matching
-    those exposed by the fitted ProbModelJPT, using from_causal_graph() with
-    the priority-ordered cause variables and the effect variables.
-    """
-    print("  [causal] Fitting ProbModelJPT from training CSV ...")
-    prob_model_variables = _build_prob_model_variables(csv_path)
-    dataframe = pd.read_csv(csv_path)
-    prob_model_jpt = JointProbabilityTree(
-        variables=prob_model_variables,
-        min_samples_leaf=JPT_MIN_SAMPLES_PER_LEAF,
-    )
-    prob_model_jpt.fit(dataframe[[variable.name for variable in prob_model_variables]])
-    leaf_count = len(list(prob_model_jpt.probabilistic_circuit.leaves))
-    print(f"  [causal] ProbModelJPT fitted. Leaves: {leaf_count}")
-
-    # Resolve Variable objects from the fitted circuit so that CausalCircuit
-    # receives the exact same Variable instances that the circuit was built with.
-    # This is required because Variable equality is identity-based in random_events.
-    circuit_variables_by_name = {
-        variable.name: variable
-        for variable in prob_model_jpt.probabilistic_circuit.variables
-    }
-    causal_variables = [
-        circuit_variables_by_name[variable.name]
-        for variable in CAUSAL_VARIABLES
-    ]
-    effect_variables = [
-        circuit_variables_by_name[variable.name]
-        for variable in EFFECT_VARIABLES
-    ]
-    causal_priority_order = [
-        circuit_variables_by_name[variable.name]
-        for variable in CAUSAL_PRIORITY_ORDER
-    ]
-
-    marginal_determinism_tree = MarginalDeterminismTreeNode.from_causal_graph(
-        causal_variables=causal_variables,
-        effect_variables=effect_variables,
-        causal_priority_order=causal_priority_order,
-    )
-    causal_circuit = CausalCircuit.from_probabilistic_circuit(
-        circuit=prob_model_jpt.probabilistic_circuit,
-        marginal_determinism_tree=marginal_determinism_tree,
-        causal_variables=causal_variables,
-        effect_variables=effect_variables,
-    )
-
-    # verify_support_determinism() returns the result when passing and raises
-    # SupportDeterminismVerificationResult when any violations are found.
-    try:
-        verification_result = causal_circuit.verify_support_determinism()
-        print("  [causal] CausalCircuit ready. Support determinism: PASS")
-    except SupportDeterminismVerificationResult as verification_result:
-        violation_summary = "; ".join(str(v) for v in verification_result.violations)
-        print(f"  [causal] CausalCircuit ready. Support determinism: FAIL — {violation_summary}")
-
-    return causal_circuit
-
-
-# ---------------------------------------------------------------------------
-# Failure diagnosis and correction construction
-# ---------------------------------------------------------------------------
-
-def _region_midpoint(region: Any, cause_variable: Any) -> float:
-    """
-    Extract the midpoint of the highest-probability cause region.
-
-    FailureDiagnosisResult.recommended_region is a composite set event —
-    the full interval is stored so callers retain the bounds. The correction
-    pipeline needs a single float to clamp the JPT sample, so the midpoint
-    is derived here from the region bounds.
-    """
-    simple_set = region.simple_sets[0]
-    interval_set = simple_set[cause_variable]
-    interval = (
-        interval_set.simple_sets[0]
-        if hasattr(interval_set, "simple_sets")
-        else interval_set
-    )
-    return (float(interval.lower) + float(interval.upper)) / 2.0
-
-
-def _diagnose_and_log(
-    causal_circuit:   CausalCircuit,
-    plan_parameters:  PlanParameters,
-    iteration_number: int,
-) -> Optional[FailureDiagnosisResult]:
-    """
-    Run causal failure diagnosis, print a structured report, and return the
-    FailureDiagnosisResult so the caller can construct a CausalSamplingCorrection.
-
-    Apartment approach coordinates are remapped to open-world JPT space before
-    calling diagnose_failure(), because the JPT was trained with the milk at
-    y=0 and the place target at x=OPEN_WORLD_PLACE_TARGET_X. The remapping
-    converts absolute apartment positions to the lateral offsets that the JPT
-    learned during Batch 1 training.
-
-    diagnose_failure() takes a Dict[Variable, float] keyed by the same Variable
-    objects that the CausalCircuit was built with, and a Variable object for the
-    effect. String-keyed dicts are no longer accepted by the current API.
-
-    Returns None if diagnosis raises an exception, allowing the caller to skip
-    correction safely without crashing.
-    """
-    # Build a name→Variable lookup from the circuit's registered cause variables
-    # so the observed values can be passed as Dict[Variable, float].
-    cause_variable_by_name = {
-        variable.name: variable
-        for variable in causal_circuit.causal_variables
-    }
-    effect_variable_by_name = {
-        variable.name: variable
-        for variable in causal_circuit.effect_variables
-    }
-
-    observed_values = {
-        cause_variable_by_name["pick_approach_x"]:  plan_parameters.counter_approach_x,
-        cause_variable_by_name["pick_approach_y"]:  plan_parameters.counter_approach_y - MILK_SPAWN_Y,
-        cause_variable_by_name["place_approach_x"]: plan_parameters.table_approach_x - (
-            PLACE_TARGET_X - OPEN_WORLD_PLACE_TARGET_X
-        ),
-        cause_variable_by_name["place_approach_y"]: plan_parameters.table_approach_y - PLACE_TARGET_Y,
-    }
-
-    apartment_variable_name_map = {
-        "pick_approach_x":  "counter_approach_x",
-        "pick_approach_y":  "counter_approach_y",
-        "place_approach_x": "table_approach_x",
-        "place_approach_y": "table_approach_y",
-    }
-
-    try:
-        diagnosis = causal_circuit.diagnose_failure(
-            observed_values=observed_values,
-            effect_variable=effect_variable_by_name["milk_end_z"],
-            query_resolution=CAUSAL_QUERY_RESOLUTION,
-        )
-
-        # primary_cause_variable is now a Variable object, not a string.
-        primary_cause_name = diagnosis.primary_cause_variable.name
-        primary_cause_display_name = apartment_variable_name_map.get(
-            primary_cause_name, primary_cause_name,
-        )
-        out_of_support_marker = (
-            "  ← OUT OF TRAINING SUPPORT"
-            if diagnosis.interventional_probability_at_failure == 0.0
-            else ""
-        )
-
-        # recommended_region is a composite set event; derive midpoint for display.
-        recommended_midpoint = (
-            _region_midpoint(diagnosis.recommended_region, diagnosis.primary_cause_variable)
-            if diagnosis.recommended_region is not None
-            else None
-        )
-
-        print(f"\n  ┌─ CAUSAL FAILURE DIAGNOSIS  (iteration {iteration_number}) {'─' * 30}")
-        print(f"  │  Primary cause:    {primary_cause_display_name}")
-        print(f"  │  Observed value:   {diagnosis.actual_value:.4f}")
-        print(f"  │  P(success|do):    {diagnosis.interventional_probability_at_failure:.4f}"
-              f"{out_of_support_marker}")
-        if recommended_midpoint is not None:
-            print(f"  │  Recommended:      {recommended_midpoint:.4f}  "
-                  f"(region midpoint)")
-            print(f"  │  P(success|rec):   {diagnosis.interventional_probability_at_recommendation:.4f}")
-        print(f"  │")
-        print(f"  │  All variables:")
-
-        # all_variable_results is now keyed by Variable objects, not strings.
-        for cause_variable, variable_result in diagnosis.all_variable_results.items():
-            display_name = apartment_variable_name_map.get(
-                cause_variable.name, cause_variable.name
-            )
-            primary_marker = (
-                "  ← PRIMARY CAUSE"
-                if cause_variable == diagnosis.primary_cause_variable
-                else ""
-            )
-            out_of_support = (
-                "  [OUT OF SUPPORT]"
-                if variable_result["interventional_probability"] == 0.0
-                else ""
-            )
-            print(
-                f"  │    {display_name:<24}  "
-                f"actual={variable_result['actual_value']:.4f}  "
-                f"P={variable_result['interventional_probability']:.4f}"
-                f"{out_of_support}{primary_marker}"
-            )
-        print(f"  └{'─' * 60}")
-        return diagnosis
-
-    except Exception as diagnosis_error:
-        print(f"  [causal] Diagnosis failed (iteration {iteration_number}): {diagnosis_error}")
-        return None
-
-
-def _build_correction_from_diagnosis(
-    diagnosis:        FailureDiagnosisResult,
-    iteration_number: int,
-) -> Optional[CausalSamplingCorrection]:
-    """
-    Construct a CausalSamplingCorrection from a FailureDiagnosisResult.
-
-    recommended_region is a composite set event on the current API. The
-    midpoint is derived here for use as the correction target value, since
-    the sampling pipeline clamps around a single float. If no region is
-    available the correction is skipped.
-
-    This function is the only bridge between the task-agnostic CausalCircuit
-    output and the task-specific sampling pipeline. To reuse for a different
-    task, replace APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE with bounds for
-    that task's JPT coordinate space.
-    """
-    if diagnosis.recommended_region is None:
-        print("  [correction] No recommendation available — skipping correction.")
-        return None
-
-    # Derive the midpoint from the recommended region for use as the
-    # correction target. The full region is stored on FailureDiagnosisResult;
-    # the midpoint is only needed here for the sampling clamp.
-    recommended_midpoint = _region_midpoint(
-        diagnosis.recommended_region, diagnosis.primary_cause_variable
-    )
-
-    primary_cause_name = diagnosis.primary_cause_variable.name
-    variable_bounds = APARTMENT_VARIABLE_BOUNDS_IN_JPT_SPACE.get(
-        primary_cause_name,
-        (float("-inf"), float("inf")),
-    )
-    correction = CausalSamplingCorrection(
-        active=True,
-        jpt_variable_name=primary_cause_name,
-        recommended_value=recommended_midpoint,
-        correction_window=CAUSAL_CORRECTION_WINDOW,
-        variable_bounds=variable_bounds,
-        source_iteration=iteration_number,
-    )
-    print(
-        f"  [correction] Scheduled: {primary_cause_name} → "
-        f"{recommended_midpoint:.4f}  "
-        f"(window ±{CAUSAL_CORRECTION_WINDOW},  bounds {variable_bounds})"
-    )
-    return correction
-
-
-# ---------------------------------------------------------------------------
 # Plan construction
 # ---------------------------------------------------------------------------
+
+def _actions_to_sequential_plan(
+    planning_context: Context,
+    actions: List[Any],
+) -> SequentialNode:
+    """
+    Build a SequentialNode from an arbitrary-length action list.
+
+    Uses the framework factory sequential(children, context) which:
+      - creates a Plan(context) graph container
+      - wraps each child via make_node() (ActionDescription → ActionNode, etc.)
+      - calls mount_subplan() for nested language nodes
+      - calls plan.simplify() to flatten redundant nesting
+
+    This is the only correct construction path — building the graph manually
+    does not correctly wire plan_node references needed by ActionDescription
+    methods such as add_subplan(), which NavigateAction calls in execute().
+    """
+    from pycram.plans.factories import sequential
+    return sequential(actions, context=planning_context)
+
 
 def _build_fixed_plan(
     planning_context: Context,
@@ -1175,14 +791,8 @@ def _build_fixed_plan(
     milk_body:        Body,
     navigation_map:   GraphOfConvexSets,
     gcs_bounds:       np.ndarray,
-) -> ExecutesSequentially:
-    """
-    Deterministic seed plan used for iteration 1.
-
-    Using known-good fixed parameters on the first iteration confirms that
-    the world, robot, and database are correctly initialised before
-    probabilistic sampling begins.
-    """
+) -> SequentialNode:
+    """Deterministic seed plan used for iteration 1."""
     seed_arm = Arms.RIGHT
     navigate_to_counter = _navigate_via_gcs(
         planning_context, navigation_map, gcs_bounds,
@@ -1194,7 +804,7 @@ def _build_fixed_plan(
         planning_context, navigation_map, gcs_bounds,
         start_x=COUNTER_APPROACH_X, start_y=COUNTER_APPROACH_Y,
         goal_x=TABLE_APPROACH_X,    goal_y=TABLE_APPROACH_Y,
-        world=world, keep_joint_states=True,
+        world=world,
     )
     place_pose = _make_pose(PLACE_TARGET_X, PLACE_TARGET_Y, PLACE_TARGET_Z, world.root)
     print(
@@ -1203,8 +813,7 @@ def _build_fixed_plan(
         f"table:({TABLE_APPROACH_X},{TABLE_APPROACH_Y})  "
         f"arm:{seed_arm}"
     )
-    return ExecutesSequentially(
-        planning_context,
+    all_actions = [
         ParkArmsAction(arm=Arms.BOTH),
         *navigate_to_counter,
         PickUpAction(
@@ -1225,7 +834,8 @@ def _build_fixed_plan(
             arm=seed_arm,
         ),
         ParkArmsAction(arm=Arms.BOTH),
-    )
+    ]
+    return _actions_to_sequential_plan(planning_context, all_actions)
 
 
 def _build_sampled_plan(
@@ -1238,8 +848,8 @@ def _build_sampled_plan(
     gcs_bounds:       np.ndarray,
     robot_start_x:    float,
     robot_start_y:    float,
-) -> ExecutesSequentially:
-    """Build a plan from JPT-sampled (or causally corrected) approach positions."""
+) -> SequentialNode:
+    """Build a plan from JPT-sampled approach positions."""
     manipulator = (
         robot.right_arm.manipulator
         if plan_parameters.pick_arm == Arms.RIGHT
@@ -1247,15 +857,15 @@ def _build_sampled_plan(
     )
     navigate_to_counter = _navigate_via_gcs(
         planning_context, navigation_map, gcs_bounds,
-        start_x=robot_start_x,                    start_y=robot_start_y,
-        goal_x=plan_parameters.counter_approach_x, goal_y=plan_parameters.counter_approach_y,
+        start_x=robot_start_x,                     start_y=robot_start_y,
+        goal_x=plan_parameters.counter_approach_x,  goal_y=plan_parameters.counter_approach_y,
         world=world,
     )
     navigate_to_table = _navigate_via_gcs(
         planning_context, navigation_map, gcs_bounds,
         start_x=plan_parameters.counter_approach_x, start_y=plan_parameters.counter_approach_y,
         goal_x=plan_parameters.table_approach_x,    goal_y=plan_parameters.table_approach_y,
-        world=world, keep_joint_states=True,
+        world=world,
     )
     place_pose = _make_pose(PLACE_TARGET_X, PLACE_TARGET_Y, PLACE_TARGET_Z, world.root)
     print(
@@ -1264,8 +874,7 @@ def _build_sampled_plan(
         f"table:({plan_parameters.table_approach_x:.3f},{plan_parameters.table_approach_y:.3f})  "
         f"arm:{plan_parameters.pick_arm}"
     )
-    return ExecutesSequentially(
-        planning_context,
+    all_actions = [
         ParkArmsAction(arm=Arms.BOTH),
         *navigate_to_counter,
         PickUpAction(
@@ -1286,7 +895,8 @@ def _build_sampled_plan(
             arm=plan_parameters.pick_arm,
         ),
         ParkArmsAction(arm=Arms.BOTH),
-    )
+    ]
+    return _actions_to_sequential_plan(planning_context, all_actions)
 
 
 def _navigate_back_to_start(
@@ -1297,107 +907,30 @@ def _navigate_back_to_start(
     robot_x:          float,
     robot_y:          float,
 ) -> None:
-    """
-    Return the robot to the fixed start zone from its actual current position.
-
-    Reads the robot ground-truth position from the world state rather than
-    using planned approach coordinates. This is correct regardless of where the
-    robot stopped — after a complete successful plan it will be near the table
-    approach zone; after a mid-plan failure it may be anywhere.
-
-    If GCS cannot plan a path (robot is deeply inside an obstacle or the graph
-    is disconnected at that position), the failure is logged and the next
-    iteration reads the robot position fresh, so this is non-fatal.
-    There is no straight-line fallback — routing through the counter is never
-    acceptable and would cause the next iteration to start from a wrong position.
-    """
+    """Return the robot to the fixed start zone from its actual current position."""
     print(
-        f"  [return] robot position ({robot_x:.2f},{robot_y:.2f}) -> "
-        f"start ({COUNTER_APPROACH_X},{COUNTER_APPROACH_Y})"
+        f"  [return] ({robot_x:.2f},{robot_y:.2f}) -> "
+        f"start ({ROBOT_INIT_X},{ROBOT_INIT_Y})"
     )
     try:
         return_actions = _navigate_via_gcs(
             planning_context, navigation_map, gcs_bounds,
-            start_x=robot_x,           start_y=robot_y,
-            goal_x=COUNTER_APPROACH_X, goal_y=COUNTER_APPROACH_Y,
+            start_x=robot_x,      start_y=robot_y,
+            goal_x=ROBOT_INIT_X,  goal_y=ROBOT_INIT_Y,
             world=world,
         )
     except ValueError as gcs_error:
         print(f"  [return] WARNING: GCS path planning failed: {gcs_error}")
-        print("  [return] Robot position will be read fresh at the next iteration.")
         return
 
-    return_plan = ExecutesSequentially(planning_context, *return_actions)
+    from pycram.plans.factories import sequential
+    return_plan = sequential(return_actions, context=planning_context)
     with simulated_robot:
         try:
             return_plan.perform()
             print("  [return] Robot at start position.")
         except Exception as return_error:
-            print(f"  [return] WARNING: return navigation execution failed: {return_error}")
-
-# ---------------------------------------------------------------------------
-# Run summary
-# ---------------------------------------------------------------------------
-
-def _print_run_summary(
-    statistics:           RunStatistics,
-    number_of_iterations: int,
-    database_session:     Session,
-) -> None:
-    """
-    Print the final run summary including the causal correction contribution.
-
-    The summary separates corrected-attempt statistics from baseline statistics
-    so the direct impact of the CausalCircuit can be read off immediately.
-    The lift metric is the corrected success rate minus the baseline rate.
-    """
-    overall_success_rate        = 100 * statistics.successful_count // number_of_iterations
-    uncorrected_iteration_count = number_of_iterations - statistics.corrected_attempt_count
-    uncorrected_success_count   = (
-        statistics.successful_count - statistics.corrected_success_count
-    )
-    baseline_rate = (
-        100 * uncorrected_success_count // max(uncorrected_iteration_count, 1)
-    )
-
-    print(f"\n{'=' * 64}")
-    print(f"  Run complete.")
-    print(f"  {'─' * 60}")
-    print(f"  Overall results")
-    print(f"    Iterations        : {number_of_iterations}")
-    print(f"    Successful        : {statistics.successful_count}  ({overall_success_rate}%)")
-    print(f"    Failed            : {statistics.failed_count}")
-    print(f"  {'─' * 60}")
-    print(f"  Causal correction breakdown")
-    print(f"    Corrected attempts  : {statistics.corrected_attempt_count}")
-
-    if statistics.corrected_attempt_count > 0:
-        corrected_rate = (
-            100 * statistics.corrected_success_count
-            // statistics.corrected_attempt_count
-        )
-        lift = corrected_rate - baseline_rate
-        print(
-            f"    Corrected successes : {statistics.corrected_success_count}  "
-            f"({corrected_rate}%)"
-        )
-        print(f"    Corrected failures  : {statistics.corrected_failure_count}")
-        print(f"  {'─' * 60}")
-        print(f"  Baseline success rate (uncorrected)  : {baseline_rate}%")
-        print(f"  Corrected success rate               : {corrected_rate}%")
-        print(f"  Causal correction lift               : {lift:+d}%")
-    else:
-        print("    No corrected attempts recorded.")
-
-    print(f"{'=' * 64}")
-
-    try:
-        row_count = database_session.execute(
-            text('SELECT COUNT(*) FROM "SequentialPlanDAO"')
-        ).scalar()
-        print(f"  DB rows (SequentialPlanDAO): {row_count}")
-    except Exception as count_error:
-        print(f"  [db] Could not read row count: {count_error}")
+            print(f"  [return] WARNING: return navigation failed: {return_error}")
 
 
 # ---------------------------------------------------------------------------
@@ -1406,57 +939,38 @@ def _print_run_summary(
 
 def pick_and_place_demo_apartment_jpt() -> None:
     """
-    Apartment world Batch 2: 5000 iterations of JPT-guided pick-and-place
-    with causal failure diagnosis and active parameter correction.
+    Apartment world: 5000 iterations of JPT-guided pick-and-place with GCS navigation.
 
-    Iteration 1 uses fixed deterministic parameters to confirm the world,
-    robot, and database are correctly initialised. Subsequent iterations
-    sample jointly from the open-world JPT.
-
-    When a plan fails, CausalCircuit.diagnose_failure() identifies the primary
-    causal variable and recommends a corrective region. A CausalSamplingCorrection
-    is then applied to the immediately following iteration, clamping the primary
-    cause variable near the midpoint of the recommended region while all other
-    variables are still drawn freely from the JPT joint distribution.
-
-    If the corrected attempt also fails, sampling reverts to the unconstrained
-    JPT on the next iteration — correction chains on bad recommendations are
-    prevented by design.
-
-    After every iteration, the robot navigates back to the start zone from its
-    actual current position using a single GCS call, avoiding the previously
-    broken two-leg return that used phantom planned positions as start points.
-
-    The final run summary reports baseline and corrected success rates separately,
-    quantifying the direct contribution of the causal circuit to improvement.
+    Iteration 1 uses fixed deterministic parameters to confirm the world, robot,
+    and database are correctly initialised. Subsequent iterations sample jointly
+    from the open-world JPT. On failure the next iteration simply draws a fresh
+    sample from the JPT — no causal correction is applied.
     """
     print("=" * 64)
-    print("  pick_and_place_demo_apartment_jpt  (Batch 2 / JPT + Causal)")
-    print(f"  Iterations        : {NUMBER_OF_ITERATIONS}")
-    print(f"  Place target      : ({PLACE_TARGET_X}, {PLACE_TARGET_Y}, {PLACE_TARGET_Z})")
-    print(f"  JPT model         : {JPT_MODEL_PATH}")
-    print(f"  Database          : {DATABASE_URI}")
-    print(f"  Correction window : ±{CAUSAL_CORRECTION_WINDOW}")
+    print("  pick_and_place_demo_apartment_jpt  (JPT)")
+    print(f"  Iterations    : {NUMBER_OF_ITERATIONS}")
+    print(f"  Place target  : ({PLACE_TARGET_X}, {PLACE_TARGET_Y}, {PLACE_TARGET_Z})")
+    print(f"  JPT model     : {JPT_MODEL_PATH}")
+    print(f"  Database      : {DATABASE_URI}")
     print("=" * 64)
 
-    print("\n[1/6] Building apartment world ...")
+    print("\n[1/5] Building apartment world ...")
     world, robot = _build_world(APARTMENT_URDF_PATH)
+    global _APARTMENT_WORLD
+    _APARTMENT_WORLD = world
     _add_localization_frames(world, robot)
     milk_body = _spawn_milk(world, MILK_STL_PATH)
     print(f"  Milk at ({MILK_SPAWN_X}, {MILK_SPAWN_Y}, {MILK_SPAWN_Z})")
     navigation_map = _build_navigation_map(world)
     gcs_bounds     = _build_gcs_bounds_array(navigation_map)
 
-    print("\n[2/6] Connecting to database ...")
+    print("\n[2/5] Connecting to database ...")
     database_session = _create_database_session(DATABASE_URI)
 
-    print("\n[3/6] Loading pyjpt model (for sampling) ...")
+    print("\n[3/5] Loading JPT model ...")
     joint_probability_tree = _load_joint_probability_tree(JPT_MODEL_PATH)
 
-    print("\n[4/6] Building CausalCircuit (for diagnosis and correction) ...")
-    causal_circuit = _build_causal_circuit(TRAINING_CSV_PATH)
-
-    print("\n[5/6] Starting ROS ...")
+    print("\n[4/5] Starting ROS ...")
     rclpy.init()
     ros_node        = rclpy.create_node("pick_and_place_apartment_jpt_node")
     ros_spin_thread = threading.Thread(target=rclpy.spin, args=(ros_node,), daemon=True)
@@ -1467,30 +981,20 @@ def pick_and_place_demo_apartment_jpt() -> None:
         TFPublisher(_world=world, node=ros_node)
         VizMarkerPublisher(_world=world, node=ros_node)
 
-        planning_context    = Context(world, robot, None)
-        statistics          = RunStatistics()
-        pending_correction: Optional[CausalSamplingCorrection] = None
-        # Explicit robot position tracking in apartment world coordinates.
-        # Updated to ROBOT_INIT after each return navigation completes.
-        robot_x: float = ROBOT_INIT_X
-        robot_y: float = ROBOT_INIT_Y
+        planning_context = Context(world, robot, None, evaluate_conditions=False)
+        statistics       = RunStatistics()
+        robot_x: float   = ROBOT_INIT_X
+        robot_y: float   = ROBOT_INIT_Y
 
-        print("\n[6/6] Running iterations ...")
+        print("\n[5/5] Running iterations ...")
 
         for iteration_number in range(1, NUMBER_OF_ITERATIONS + 1):
             print(f"\n{'=' * 64}")
             print(
                 f"  Iteration {iteration_number}/{NUMBER_OF_ITERATIONS}  "
-                f"(success={statistics.successful_count}  "
-                f"failed={statistics.failed_count}  "
-                f"corrected={statistics.corrected_success_count}/"
-                f"{statistics.corrected_attempt_count})"
+                f"(success={statistics.successful_count}  failed={statistics.failed_count})"
             )
             print(f"{'=' * 64}")
-
-            this_iteration_is_corrected = (
-                pending_correction is not None and pending_correction.active
-            )
 
             plan = None
             current_parameters = None
@@ -1505,87 +1009,76 @@ def pick_and_place_demo_apartment_jpt() -> None:
                 except ValueError as gcs_error:
                     statistics.failed_count += 1
                     print(f"  RESULT: FAILED (GCS plan build) — {gcs_error}")
-
-            elif this_iteration_is_corrected:
-                print(
-                    f"  Mode: CAUSALLY CORRECTED  "
-                    f"({pending_correction.jpt_variable_name} → "
-                    f"{pending_correction.recommended_value:.4f}, "
-                    f"from iteration {pending_correction.source_iteration})"
-                )
-                statistics.corrected_attempt_count += 1
-                current_parameters = _sample_plan_parameters(
-                    joint_probability_tree, correction=pending_correction
-                )
-                try:
-                    plan = _build_sampled_plan(
-                        planning_context, current_parameters, world, robot, milk_body,
-                        navigation_map, gcs_bounds,
-                        robot_start_x=robot_x, robot_start_y=robot_y,
-                    )
-                except ValueError as gcs_error:
-                    statistics.failed_count += 1
-                    statistics.corrected_failure_count += 1
-                    print(f"  RESULT: FAILED (GCS plan build) — {gcs_error}")
-
             else:
-                print("  Mode: JPT-SAMPLED")
-                current_parameters = _sample_plan_parameters(joint_probability_tree)
-                try:
-                    plan = _build_sampled_plan(
-                        planning_context, current_parameters, world, robot, milk_body,
-                        navigation_map, gcs_bounds,
-                        robot_start_x=robot_x, robot_start_y=robot_y,
-                    )
-                except ValueError as gcs_error:
-                    statistics.failed_count += 1
-                    print(f"  RESULT: FAILED (GCS plan build) — {gcs_error}")
-
-            # Consume the pending correction. Corrections are one-shot — the next
-            # iteration samples freely from the JPT unless a new failure triggers
-            # a new correction.
-            pending_correction = None
-
-            if plan is None:
-                # GCS failed to build a valid path during plan construction.
-                # Skip execution and reset world state for the next iteration.
-                print("  Skipping execution — plan could not be built.")
-            else:
-                print("\n  Executing plan ...")
+                print("  Mode: JPT-SAMPLED  (with resampling on failure)")
+                # ── JPT resampling loop ────────────────────────────────────
+                # If execution fails we resample ALL plan parameters jointly
+                # from the JPT and retry immediately, without resetting the
+                # world between attempts (the milk is already in its spawn
+                # pose and the robot is already at the start).
+                attempt          = 0
                 execution_succeeded = False
-                with simulated_robot:
+                resample_start   = time.time()
+
+                while not execution_succeeded and attempt < MAX_RESAMPLE_ATTEMPTS:
+                    attempt += 1
+                    current_parameters = _sample_plan_parameters(joint_probability_tree)
+
                     try:
-                        plan.perform()
-                        execution_succeeded = True
-                        print("  Execution complete.")
-                        if this_iteration_is_corrected:
-                            statistics.corrected_success_count += 1
-                            print("  [correction] Corrected attempt SUCCEEDED.")
-
-                    except Exception as execution_error:
-                        statistics.failed_count += 1
-                        print(
-                            f"  RESULT: FAILED — "
-                            f"{type(execution_error).__name__}: {execution_error}"
+                        plan = _build_sampled_plan(
+                            planning_context, current_parameters, world, robot, milk_body,
+                            navigation_map, gcs_bounds,
+                            robot_start_x=robot_x, robot_start_y=robot_y,
                         )
+                    except ValueError as gcs_error:
+                        print(
+                            f"  [attempt {attempt}] FAILED (GCS plan build) — {gcs_error}"
+                            f"  → resampling ..."
+                        )
+                        statistics.failed_count += 1
+                        continue   # resample immediately
 
-                        if this_iteration_is_corrected:
-                            statistics.corrected_failure_count += 1
+                    print(f"\n  [attempt {attempt}] Executing plan ...")
+                    with simulated_robot:
+                        try:
+                            plan.perform()
+                            execution_succeeded = True
+                            elapsed = time.time() - resample_start
                             print(
-                                "  [correction] Corrected attempt also failed — "
-                                "reverting to unconstrained JPT sampling."
+                                f"  [attempt {attempt}] Execution complete. "
+                                f"({elapsed:.1f}s elapsed)"
                             )
-                        elif current_parameters is not None:
-                            # Diagnose the failure and schedule a correction for the
-                            # next iteration. Corrected failures are never re-diagnosed
-                            # to prevent correction chains on bad recommendations.
-                            diagnosis = _diagnose_and_log(
-                                causal_circuit, current_parameters, iteration_number
+                        except Exception as execution_error:
+                            statistics.failed_count += 1
+                            print(
+                                f"  [attempt {attempt}] FAILED — "
+                                f"{type(execution_error).__name__}: {execution_error}"
+                                f"  → resampling ..."
                             )
-                            if diagnosis is not None:
-                                pending_correction = _build_correction_from_diagnosis(
-                                    diagnosis, iteration_number
-                                )
+                            # Reset milk before the next attempt so each sample
+                            # starts from the canonical world state.
+                            _respawn_milk(world, milk_body)
+                            _navigate_back_to_start(
+                                planning_context, navigation_map, gcs_bounds, world,
+                                robot_x=current_parameters.table_approach_x,
+                                robot_y=current_parameters.table_approach_y,
+                            )
+
+                elapsed = time.time() - resample_start
+                if not execution_succeeded:
+                    # All MAX_RESAMPLE_ATTEMPTS exhausted without success
+                    statistics.failed_count += 1
+                    statistics.hard_failure_count += 1
+                    print(
+                        f"  RESULT: HARD FAILURE — gave up after "
+                        f"{MAX_RESAMPLE_ATTEMPTS} attempts ({elapsed:.1f}s)"
+                    )
+                elif attempt > 1:
+                    print(
+                        f"  [resampling] Succeeded after {attempt} attempt(s) "
+                        f"in {elapsed:.1f}s"
+                    )
+                    statistics.record_resampling(iteration_number, attempt, elapsed)
 
                 if execution_succeeded:
                     try:
@@ -1599,32 +1092,70 @@ def pick_and_place_demo_apartment_jpt() -> None:
                     except Exception as database_error:
                         print(f"  [db] ERROR: {database_error}")
                         traceback.print_exc()
+                        database_session.rollback()
 
-            # Update robot position to the plan endpoint before return navigation.
-            # After a successful plan the robot is at table_approach.
-            # After a failed plan it may be at counter_approach or table_approach
-            # depending on where the failure occurred — use table_approach as the
-            # conservative estimate (the further point) so GCS plans a path that
-            # covers the full return distance even in the worst case.
-            # For iteration 1 (fixed plan) use the fixed approach coordinates.
-            if current_parameters is not None:
-                robot_x = current_parameters.table_approach_x
-                robot_y = current_parameters.table_approach_y
+            # For JPT-sampled iterations the resampling loop handles its own
+            # milk respawning and return navigation on each failed attempt.
+            # After a successful execution (fixed or sampled) we still need one
+            # final respawn + return from the table position.
+            if iteration_number == 1:
+                end_x, end_y = TABLE_APPROACH_X, TABLE_APPROACH_Y
+            elif current_parameters is not None:
+                end_x = current_parameters.table_approach_x
+                end_y = current_parameters.table_approach_y
             else:
-                robot_x = TABLE_APPROACH_X
-                robot_y = TABLE_APPROACH_Y
+                end_x, end_y = TABLE_APPROACH_X, TABLE_APPROACH_Y
 
             print("\n  Resetting ...")
             _respawn_milk(world, milk_body)
             _navigate_back_to_start(
                 planning_context, navigation_map, gcs_bounds, world,
-                robot_x=robot_x, robot_y=robot_y,
+                robot_x=end_x, robot_y=end_y,
             )
-            # After return navigation the robot is at the start zone.
             robot_x = ROBOT_INIT_X
             robot_y = ROBOT_INIT_Y
 
-        _print_run_summary(statistics, NUMBER_OF_ITERATIONS, database_session)
+        # ── Final summary ──────────────────────────────────────────────────
+        success_rate = 100 * statistics.successful_count // NUMBER_OF_ITERATIONS
+        recs = statistics.resampling_records
+        print(f"\n{'=' * 64}")
+        print(f"  Run complete.")
+        print(f"  Total iterations     : {NUMBER_OF_ITERATIONS}")
+        print(f"  Successful plans     : {statistics.successful_count}  ({success_rate}%)")
+        print(f"  Failed attempts      : {statistics.failed_count}")
+        print(f"  Hard failures (>{MAX_RESAMPLE_ATTEMPTS} attempts) : {statistics.hard_failure_count}")
+        print(f"  Database             : {DATABASE_URI}")
+
+        if recs:
+            avg_attempts = sum(r.attempts for r in recs) / len(recs)
+            avg_time     = sum(r.elapsed_s for r in recs) / len(recs)
+            max_attempts = max(r.attempts for r in recs)
+            max_time     = max(r.elapsed_s for r in recs)
+            print(f"")
+            print(f"  ── JPT Resampling Stats (iterations that needed >1 attempt) ──")
+            print(f"  Iterations requiring resampling : {len(recs)}")
+            print(f"  Avg attempts until success      : {avg_attempts:.2f}")
+            print(f"  Avg time until success          : {avg_time:.1f}s")
+            print(f"  Max attempts in one iteration   : {max_attempts}")
+            print(f"  Max time in one iteration       : {max_time:.1f}s")
+            print(f"")
+            print(f"  Per-iteration resampling detail:")
+            for r in recs:
+                print(
+                    f"    iter {r.iteration:>4d}:  "
+                    f"{r.attempts} attempt(s),  {r.elapsed_s:.1f}s"
+                )
+        else:
+            print(f"  (No iterations required resampling — first attempt always succeeded)")
+        print(f"{'=' * 64}")
+
+        try:
+            row_count = database_session.execute(
+                text('SELECT COUNT(*) FROM "SequentialPlanDAO"')
+            ).scalar()
+            print(f"  DB rows (SequentialPlanDAO): {row_count}")
+        except Exception as count_error:
+            print(f"  [db] Could not read row count: {count_error}")
 
     finally:
         database_session.close()

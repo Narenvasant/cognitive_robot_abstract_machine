@@ -273,13 +273,8 @@ class Plan:
         :param other: The plan to steal nodes from
         :return: The root node of the other plan mounted in this plan
         """
-        other_plans_edge = other.edges
         root_ref = other.root
         other.plan_graph.clear()
-
-        for edge in other_plans_edge:
-            self.add_edge(edge[0], edge[1])
-
         return root_ref
 
     def get_nodes_by_designator_type(self, *args: Type[Designator]):
