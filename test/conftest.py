@@ -11,6 +11,11 @@ import numpy as np
 import objgraph
 import pytest
 
+try:
+    from pycram.datastructures.dataclasses import Context
+except ModuleNotFoundError:
+    # ROS dependencies.
+    Context = None
 from semantic_digital_twin.adapters.package_resolver import PathResolver
 from semantic_digital_twin.collision_checking.collision_matrix import (
     MaxAvoidedCollisionsOverride,
@@ -23,11 +28,7 @@ from krrood.ontomatic.property_descriptor.attribute_introspector import (
     DescriptorAwareIntrospector,
 )
 from krrood.utils import recursive_subclasses
-try:
-    from pycram.datastructures.dataclasses import Context  # type: ignore
-except ImportError:
-    # Adds ROS dependency
-    pass
+
 from semantic_digital_twin.adapters.mesh import STLParser
 from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
