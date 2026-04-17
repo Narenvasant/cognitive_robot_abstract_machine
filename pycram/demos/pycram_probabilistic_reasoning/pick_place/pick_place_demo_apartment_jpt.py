@@ -174,7 +174,7 @@ _ActionDescription.add_subplan = _patched_add_subplan
 # Constants
 # ---------------------------------------------------------------------------
 
-NUMBER_OF_ITERATIONS:    int = 5000
+NUMBER_OF_ITERATIONS:    int = 5
 MAX_RESAMPLE_ATTEMPTS:   int = 10   # max JPT resamples per iteration before hard failure
 
 DATABASE_URI: str = os.environ.get(

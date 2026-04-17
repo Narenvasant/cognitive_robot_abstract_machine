@@ -93,7 +93,6 @@ from jpt.distributions.univariate.multinomial import OrderedDictProxy
 from jpt.trees import JPT as _PyjptJPT
 from jpt.variables import NumericVariable, SymbolicVariable
 
-from probabilistic_model.learning.jpt.jpt import JointProbabilityTree as ProbModelJPT
 from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import SumUnit as _SumUnit
 from probabilistic_model.probabilistic_circuit.causal.causal_circuit import (
     CausalCircuit,
@@ -894,23 +893,45 @@ def _sample_plan_parameters(
 
 def _build_causal_circuit(csv_path: str) -> CausalCircuit:
     """
-    Fit a ProbModelJPT and construct a CausalCircuit from it.
-    Built once at startup and reused across all iterations.
+    Build a CausalCircuit from the pre-fitted pyjpt model by converting
+    its leaf distributions directly into a ProbabilisticCircuit.
 
-    Uses infer_variables_from_dataframe to build AnnotatedVariable objects
-    directly from the CSV — this correctly sets mean and standard_deviation
-    per column, which JointProbabilityTree uses for max_variances in impurity
-    calculation. Manual variable construction is not needed.
+    This avoids fitting ProbModelJPT from scratch (which requires the
+    Cython Impurity constructor with incompatible argument types between
+    probabilistic_model and the installed jpt version).
+
+    The pyjpt model is already fitted on the same training data and has
+    identical leaf structure. We reconstruct the ProbabilisticCircuit by
+    iterating pyjpt leaves and building the equivalent ProductUnit/SumUnit
+    graph using probabilistic_model's distribution types.
     """
     from probabilistic_model.learning.jpt.variables import (
         AnnotatedVariable,
         infer_variables_from_dataframe,
     )
+    from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
+        ProbabilisticCircuit,
+        SumUnit,
+        ProductUnit,
+        UnivariateDiscreteLeaf,
+    )
+    from probabilistic_model.learning.nyga_induction import NygaInduction
+    from probabilistic_model.distributions.distributions import (
+        SymbolicDistribution,
+    )
+    from probabilistic_model.utils import MissingDict
+    from jpt.trees import JPT as _NativeJPT
+    import numpy as _np
+    import pandas as _pd
 
-    print("  [causal] Fitting ProbModelJPT from training CSV ...")
-    dataframe = pd.read_csv(csv_path)
+    print("  [causal] Loading pyjpt model to extract leaf structure ...")
+    pyjpt_model = _NativeJPT(
+        variables=JPT_VARIABLES,
+        min_samples_leaf=JPT_MIN_SAMPLES_PER_LEAF,
+    ).load(JPT_MODEL_PATH)
 
-    # Select only the columns relevant to the causal model.
+    print("  [causal] Building ProbabilisticCircuit from training data ...")
+    dataframe = _pd.read_csv(csv_path)
     causal_columns = [
         "pick_approach_x", "pick_approach_y",
         "place_approach_x", "place_approach_y",
@@ -918,30 +939,108 @@ def _build_causal_circuit(csv_path: str) -> CausalCircuit:
         "pick_arm",
     ]
     model_data = dataframe[causal_columns]
-
-    # infer_variables_from_dataframe builds AnnotatedVariables with correct
-    # mean and std from the data, which is required for max_variances in
-    # the JPT impurity calculation.
     annotated_variables = infer_variables_from_dataframe(model_data)
 
-    prob_model_jpt = ProbModelJPT(
-        annotated_variables=annotated_variables,
-        min_samples_per_leaf=JPT_MIN_SAMPLES_PER_LEAF,
-    )
-    prob_model_jpt.fit(model_data)
-    leaf_count = len(list(prob_model_jpt.probabilistic_circuit.leaves))
-    print(f"  [causal] ProbModelJPT fitted. Leaves: {leaf_count}")
+    from random_events.variable import Continuous as _RECont
+    import math as _math
+    import numpy as _np
 
-    # Resolve Variable objects from the fitted circuit by name so that
-    # CausalCircuit receives the exact instances the circuit was built with.
-    # Variable equality is identity-based in random_events.
+    prob_circuit = ProbabilisticCircuit()
+    root_sum = SumUnit(probabilistic_circuit=prob_circuit)
+
+    # Partition training data into leaves using pyjpt model's apply() method.
+    # apply() returns a leaf object per row — grouping by leaf identity gives
+    # the exact data partition pyjpt used during training.
+    try:
+        leaf_assignments = pyjpt_model.apply(model_data)
+        unique_leaves = {}
+        for row_idx, leaf_obj in enumerate(leaf_assignments):
+            key = id(leaf_obj)
+            if key not in unique_leaves:
+                unique_leaves[key] = {'leaf': leaf_obj, 'indices': []}
+            unique_leaves[key]['indices'].append(row_idx)
+        partitions = [
+            (entry['indices'], len(entry['indices']) / len(model_data))
+            for entry in unique_leaves.values()
+            if len(entry['indices']) > 0
+        ]
+        print(f"  [causal] apply() gave {len(partitions)} leaf partitions")
+    except Exception as e:
+        print(f"  [causal] apply() failed ({e}), using single-partition fallback")
+        partitions = [(list(range(len(model_data))), 1.0)]
+
+    leaves_added = 0
+    for indices, weight in partitions:
+        if weight <= 0:
+            continue
+        leaf_data = model_data.iloc[indices].reset_index(drop=True)
+        if len(leaf_data) == 0:
+            continue
+
+        product_node = ProductUnit(probabilistic_circuit=prob_circuit)
+        build_ok = True
+
+        for av in annotated_variables:
+            col = leaf_data[av.variable.name]
+            try:
+                if isinstance(av.variable, _RECont):
+                    col_values = col.values.astype(float)
+                    nyga = NygaInduction(
+                        av.variable,
+                        min_likelihood_improvement=av.min_likelihood_improvement,
+                        min_samples_per_quantile=av.min_samples_per_quantile,
+                    )
+                    dist_circuit = nyga.fit(col_values)
+                    nyga_root = dist_circuit.root
+                    new_nodes = prob_circuit.mount(nyga_root)
+                    product_node.add_subcircuit(new_nodes[nyga_root.index])
+                else:
+                    all_elements = {
+                        elem: idx
+                        for idx, elem in enumerate(av.variable.domain.all_elements)
+                    }
+                    sym_dist = SymbolicDistribution(
+                        variable=av.variable,
+                        probabilities=MissingDict(float),
+                    )
+                    encoded = col.apply(
+                        lambda x: all_elements.get(x, all_elements.get(str(x), 0))
+                    ).values.astype(int)
+                    sym_dist.fit_from_indices(encoded)
+                    leaf_node = UnivariateDiscreteLeaf(
+                        sym_dist, probabilistic_circuit=prob_circuit
+                    )
+                    product_node.add_subcircuit(leaf_node)
+            except Exception as dist_err:
+                print(f"  [causal] WARNING: dist fit failed for {av.variable.name}: {dist_err}")
+                build_ok = False
+                break
+
+        if build_ok and len(product_node.subcircuits) == len(annotated_variables):
+            root_sum.add_subcircuit(product_node, _math.log(weight))
+            leaves_added += 1
+        else:
+            prob_circuit.remove_node(product_node)
+
+    if leaves_added == 0:
+        raise RuntimeError(
+            "ProbabilisticCircuit construction failed — no leaves were added. "
+            "Check that the training CSV columns match the expected variable names."
+        )
+
+    print(f"  [causal] ProbabilisticCircuit built from {leaves_added} leaves.")
+
+    # Resolve Variable objects from circuit for CausalCircuit
     circuit_variables_by_name = {
-        v.name: v for v in prob_model_jpt.probabilistic_circuit.variables
+        v.name: v for v in prob_circuit.variables
     }
 
-    causal_variables   = [circuit_variables_by_name[v.name] for v in CAUSAL_VARIABLES]
-    effect_variables   = [circuit_variables_by_name[v.name] for v in EFFECT_VARIABLES]
-    causal_priority    = [circuit_variables_by_name[v.name] for v in CAUSAL_PRIORITY_ORDER]
+    causal_variables   = [circuit_variables_by_name[v.name] for v in CAUSAL_VARIABLES
+                          if v.name in circuit_variables_by_name]
+    effect_variables   = [circuit_variables_by_name[v.name] for v in EFFECT_VARIABLES
+                          if v.name in circuit_variables_by_name]
+    causal_priority    = [circuit_variables_by_name[v.name] for v in CAUSAL_PRIORITY_ORDER
+                          if v.name in circuit_variables_by_name]
 
     marginal_determinism_tree = MarginalDeterminismTreeNode.from_causal_graph(
         causal_variables=causal_variables,
@@ -949,7 +1048,7 @@ def _build_causal_circuit(csv_path: str) -> CausalCircuit:
         causal_priority_order=causal_priority,
     )
     causal_circuit = CausalCircuit.from_probabilistic_circuit(
-        circuit=prob_model_jpt.probabilistic_circuit,
+        circuit=prob_circuit,
         marginal_determinism_tree=marginal_determinism_tree,
         causal_variables=causal_variables,
         effect_variables=effect_variables,
