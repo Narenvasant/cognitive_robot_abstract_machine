@@ -46,6 +46,66 @@ def is_builtin_class(clazz: Type) -> bool:
     return clazz.__module__ == "builtins"
 
 
+def is_external_module(module) -> bool:
+    """
+    Check if a module is external to the project.
+
+    :param module: The module to check.
+    :return: True if the module is external, False otherwise.
+    """
+    if module is None:
+        return True
+    if module.__name__ in ("builtins", "typing", "typing_extensions"):
+        return True
+
+    if not hasattr(module, "__file__"):
+        return True
+
+    file_path = module.__file__
+    if file_path is None:
+        return True
+
+    if "site-packages" in file_path or "dist-packages" in file_path:
+        return True
+
+    # Handle standard library modules (this is a bit heuristic)
+    if file_path.startswith("/usr/lib/python"):
+        return True
+    return False
+
+
+def resolve_name_in_hierarchy(name: str, start_object: Any) -> Any:
+    """
+    Resolve a name by searching through the hierarchy of the start_object.
+
+    :param name: The name to resolve.
+    :param start_object: The object to start searching from.
+    :return: The resolved object.
+    :raises CouldNotResolveType: If the name cannot be resolved.
+    """
+    if not inspect.isclass(start_object):
+        # Fallback to current module logic if not a class
+        return get_object_by_name_from_another_object_in_same_module(name, start_object)
+
+    for base in start_object.__mro__:
+        module = inspect.getmodule(base)
+        if is_builtin_class(base) or is_external_module(module):
+            continue
+
+        try:
+            # Try finding it in the base class's module
+            return get_object_by_name_from_another_object_in_same_module(name, base)
+        except CouldNotResolveType:
+            continue
+
+    # Final fallback if hierarchy fails
+    source_path = inspect.getsourcefile(start_object)
+    raise CouldNotResolveType(
+        name,
+        extra_information=f"Could not find {name} in the hierarchy of {start_object} (starting from {source_path}).",
+    )
+
+
 T = TypeVar("T")
 
 
@@ -67,7 +127,8 @@ def get_generic_type_param(cls, generic_base):
     Example:
         get_generic_type_param(Employee, Role) -> (<class '__main__.Person'>,)
     """
-    for base in getattr(cls, "__orig_bases__", []):
+    orig_bases = cls.__orig_bases__ if hasattr(cls, "__orig_bases__") else []
+    for base in orig_bases:
         base_origin = get_origin(base)
         if base_origin is None:
             continue
@@ -82,9 +143,12 @@ def get_type_hint_of_keyword_argument(callable_: Callable, name: str):
     :param name: The name of the argument
     :return: The type hint of the argument
     """
+    global_namespace = (
+        callable_.__globals__ if hasattr(callable_, "__globals__") else None
+    )
     hints = typing_extensions.get_type_hints(
         callable_,
-        globalns=getattr(callable_, "__globals__", None),
+        globalns=global_namespace,
         localns=None,
         include_extras=True,  # keeps Annotated[...] / other extras if you use them
     )
@@ -115,9 +179,7 @@ def get_type_hints_of_object(
             )
             break
         except NameError as e:
-            object_from_name = get_object_by_name_from_another_object_in_same_module(
-                e.name, object_
-            )
+            object_from_name = resolve_name_in_hierarchy(e.name, object_)
             local_namespace[e.name] = object_from_name
     return type_hints
 
