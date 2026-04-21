@@ -1,22 +1,54 @@
 """
-Sequential runner for both apartment pick-and-place demos.
+Sequential Runner: JPT Baseline and Causal Circuit Pick-and-Place
 
-Runs the JPT-only demo first, then the causal circuit demo, sharing
-a single rclpy context. Both demos publish to RViz (different nodes,
-same topics — RViz shows whichever is active).
+Runs both apartment pick-and-place experiments back to back within a single
+rclpy context, producing directly comparable output for the paper:
 
-All output is mirrored to:
-  - Terminal (live)
-  - jpt_demo_output.txt
-  - causal_demo_output.txt
-  - run_summary.txt  (final comparison table)
+    "Causally-Aware Robot Action Verification via Interventional Probabilistic Circuits"
+    SPAI @ IJCAI 2026
 
-Usage:
-    python run_both_demos.py
+Execution Order
+---------------
+1. JPT-only baseline  (pick_and_place_jpt_baseline.py)
+2. JPT + Causal Circuit (pick_and_place_causal.py)
 
-Separate databases (optional):
-    SEMANTIC_DIGITAL_TWIN_DATABASE_URI_JPT=postgresql://.../jpt_db
-    SEMANTIC_DIGITAL_TWIN_DATABASE_URI_CAUSAL=postgresql://.../causal_db
+Output Files
+------------
+    jpt_baseline_output.txt   — full terminal output of the JPT baseline run
+    causal_output.txt         — full terminal output of the causal circuit run
+    run_comparison_summary.txt — side-by-side comparison of both final summaries
+
+Usage
+-----
+    python run_experiments.py
+
+Database Configuration (optional)
+----------------------------------
+By default both demos write to the same PostgreSQL database. To use separate
+databases for cleaner record separation:
+
+    export SEMANTIC_DIGITAL_TWIN_DATABASE_URI_JPT=postgresql://.../jpt_db
+    export SEMANTIC_DIGITAL_TWIN_DATABASE_URI_CAUSAL=postgresql://.../causal_db
+
+If only the base URI is set, both demos use it:
+
+    export SEMANTIC_DIGITAL_TWIN_DATABASE_URI=postgresql://.../shared_db
+
+Implementation Notes
+--------------------
+rclpy is initialised once in this runner and its init/shutdown/spin methods
+are replaced with no-ops before the demo modules are loaded. This prevents
+each demo from attempting to re-initialise or shut down the shared ROS2
+context. Both demos receive their own ROS2 node for independent TF and
+visualisation publishing.
+
+A single shared _robust_raw_dof patch is installed on ActiveConnection1DOF
+after both demo modules are loaded, replacing the per-module closures that
+each demo installs independently. Without this, the causal demo's closure
+(which references its own module-level world variable, initially None) would
+overwrite the JPT demo's closure during module loading, causing grasp IK
+failures during the JPT run. The runner-level world variable is updated
+automatically via hooks on each demo's world construction function.
 """
 
 from __future__ import annotations
@@ -28,298 +60,353 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-# ---------------------------------------------------------------------------
-# Tee: write to both terminal and a file simultaneously
-# ---------------------------------------------------------------------------
+from typing_extensions import Any
 
-class _Tee:
-    """Mirrors writes to sys.stdout and a log file."""
-    def __init__(self, filepath: str):
-        self._file   = open(filepath, "w", buffering=1)
-        self._stdout = sys.__stdout__
-
-    def write(self, text):
-        self._stdout.write(text)
-        self._file.write(text)
-
-    def flush(self):
-        self._stdout.flush()
-        self._file.flush()
-
-    def fileno(self):
-        return self._stdout.fileno()
-
-    def close(self):
-        self._file.close()
-
-
-_OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
-_JPT_LOG    = os.path.join(_OUTPUT_DIR, "jpt_demo_output.txt")
-_CAUSAL_LOG = os.path.join(_OUTPUT_DIR, "causal_demo_output.txt")
-_SUMMARY    = os.path.join(_OUTPUT_DIR, "run_summary.txt")
-
-# ---------------------------------------------------------------------------
-# Mock nav2_msgs before any import touches giskardpy
-# ---------------------------------------------------------------------------
 _nav2_mock = MagicMock()
 sys.modules["nav2_msgs"]                       = _nav2_mock
 sys.modules["nav2_msgs.action"]                = _nav2_mock.action
 sys.modules["nav2_msgs.action.NavigateToPose"] = _nav2_mock.action.NavigateToPose
 
-# ---------------------------------------------------------------------------
-# Init rclpy ONCE, patch its module IN-PLACE so demo files that do
-# 'import rclpy' at the top of their file see the patched version.
-# Replacing sys.modules["rclpy"] does NOT work — demo modules already
-# hold a direct reference to the real module object via their own import.
-# Mutating the real module object's attributes affects all those references.
-# ---------------------------------------------------------------------------
-import rclpy as _real_rclpy
 
-_real_rclpy.init()
-_shared_node     = _real_rclpy.create_node("pick_and_place_apartment_runner")
-_spin_thread     = threading.Thread(
-    target=_real_rclpy.spin, args=(_shared_node,), daemon=True
+# =============================================================================
+# Output Tee: Mirror stdout to terminal and log file simultaneously
+# =============================================================================
+
+class OutputTee:
+    """
+    Mirrors all writes to both the original sys.stdout and a log file.
+
+    Used to capture the full terminal output of each demo run to a file
+    without suppressing live terminal output during execution.
+    """
+
+    def __init__(self, filepath: str) -> None:
+        self._log_file      = open(filepath, "w", buffering=1)
+        self._original_stdout = sys.__stdout__
+
+    def write(self, text: str) -> None:
+        self._original_stdout.write(text)
+        self._log_file.write(text)
+
+    def flush(self) -> None:
+        self._original_stdout.flush()
+        self._log_file.flush()
+
+    def fileno(self) -> int:
+        return self._original_stdout.fileno()
+
+    def close(self) -> None:
+        self._log_file.close()
+
+
+# =============================================================================
+# Output File Paths
+# =============================================================================
+
+OUTPUT_DIRECTORY         = os.path.dirname(os.path.abspath(__file__))
+JPT_BASELINE_LOG_PATH    = os.path.join(OUTPUT_DIRECTORY, "jpt_baseline_output.txt")
+CAUSAL_LOG_PATH          = os.path.join(OUTPUT_DIRECTORY, "causal_output.txt")
+COMPARISON_SUMMARY_PATH  = os.path.join(OUTPUT_DIRECTORY, "run_comparison_summary.txt")
+
+JPT_BASELINE_MODULE_FILE = "pick_and_place_jpt_baseline.py"
+CAUSAL_MODULE_FILE       = "pick_and_place_causal.py"
+
+DEFAULT_DATABASE_URI = (
+    "postgresql://semantic_digital_twin:naren"
+    "@localhost:5432/probabilistic_reasoning"
 )
-_spin_thread.start()
-print("  [ros] Shared ROS node started.")
-
-def _noop(*args, **kwargs):
-    pass
-
-def _shared_create_node(name, **kwargs):
-    # Return uniquely-named nodes so both demos can publish independently
-    return _real_rclpy.create_node.__wrapped__(name, **kwargs) \
-        if hasattr(_real_rclpy.create_node, '__wrapped__') \
-        else _shared_node
-
-# Patch in-place BEFORE loading demo modules
-_real_rclpy.init        = _noop
-_real_rclpy.shutdown    = _noop
-_real_rclpy.spin        = _noop
-# create_node: let each demo get its own node for independent publishing
-# We store the real create_node before overwriting
-_real_create_node = None  # will be set below after we capture it
-
-# ---------------------------------------------------------------------------
-# Load demo modules
-# ---------------------------------------------------------------------------
-
-_DEMO_DIR = _OUTPUT_DIR
-JPT_DEMO_FILE    = "pick_place_demo_apartment_jpt.py"
-CAUSAL_DEMO_FILE = "pick_place_demo_apartment_jpt_and _causal.py"
 
 
-def _load_demo(filename: str):
+# =============================================================================
+# ROS2 Initialisation (shared across both demo runs)
+# =============================================================================
+
+import rclpy as _rclpy
+
+_rclpy.init()
+_shared_ros_node = _rclpy.create_node("pick_and_place_experiment_runner")
+_ros_spin_thread = threading.Thread(
+    target=_rclpy.spin, args=(_shared_ros_node,), daemon=True
+)
+_ros_spin_thread.start()
+print("[runner] Shared ROS2 node started.")
+
+_rclpy.init     = lambda *args, **kwargs: None
+_rclpy.shutdown = lambda *args, **kwargs: None
+_rclpy.spin     = lambda *args, **kwargs: None
+
+
+# =============================================================================
+# Demo Module Loading
+# =============================================================================
+
+def _load_demo_module(filename: str) -> Any:
+    """
+    Load a demo module from the experiment directory by filename.
+
+    The module is registered in sys.modules before execution so that
+    dataclass definitions and other module-level constructs resolve
+    correctly during import.
+
+    Parameters
+    ----------
+    filename:
+        Python filename of the demo module, relative to OUTPUT_DIRECTORY.
+
+    Returns
+    -------
+    module
+        The loaded and executed demo module.
+    """
     module_name = (
         filename
         .replace(".py", "")
         .replace(" ", "_")
         .replace("-", "_")
     )
-    path = os.path.join(_DEMO_DIR, filename)
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    mod  = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = mod   # register before exec for @dataclass
-    spec.loader.exec_module(mod)
-    return mod
+    module_path = os.path.join(OUTPUT_DIRECTORY, filename)
+    spec        = importlib.util.spec_from_file_location(module_name, module_path)
+    module      = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
+print("\n" + "=" * 64)
+print("  Loading experiment modules ...")
 print("=" * 64)
-print("  Loading demo modules ...")
-print("=" * 64)
 
-_jpt_demo    = _load_demo(JPT_DEMO_FILE)
-_causal_demo = _load_demo(CAUSAL_DEMO_FILE)
+jpt_baseline_module = _load_demo_module(JPT_BASELINE_MODULE_FILE)
+causal_module       = _load_demo_module(CAUSAL_MODULE_FILE)
 
-# Share JPT_VARIABLES and ArmChoiceDomain so pyjpt deserialises consistently
-# (both demos define ArmChoiceDomain independently; the model was serialised
-# with one specific class object — sharing ensures apply() works correctly)
-_causal_demo.JPT_VARIABLES           = _jpt_demo.JPT_VARIABLES
-_causal_demo.ArmChoiceDomain         = _jpt_demo.ArmChoiceDomain
-_causal_demo.JPT_MIN_SAMPLES_PER_LEAF = _jpt_demo.JPT_MIN_SAMPLES_PER_LEAF
 
-# ---------------------------------------------------------------------------
-# Critical fix: reinstall a single shared _robust_raw_dof that reads from
-# a runner-level variable, not from either demo module's _APARTMENT_WORLD.
-#
-# Root cause of pickup failure when running via runner:
-#   Both demos define _robust_raw_dof as a closure over their own module-level
-#   _APARTMENT_WORLD = None. The causal demo is loaded second, so its version
-#   of _robust_raw_dof overwrites the JPT demo's version on _AC1DOF.raw_dof.
-#   During the JPT demo's execution, _causal_demo._APARTMENT_WORLD is still
-#   None (only set inside pick_and_place_demo_apartment_causal()), so the
-#   stale world reference is never repaired → grasp IK fails → pickup fails.
-#
-# Fix: install one shared _robust_raw_dof that reads from _RUNNER_WORLD,
-# a runner-level variable updated at the start of each demo before execution.
-# ---------------------------------------------------------------------------
+causal_module.JPT_VARIABLES            = jpt_baseline_module.JPT_VARIABLES
+causal_module.ArmChoiceDomain          = jpt_baseline_module.ArmChoiceDomain
+causal_module.JPT_MIN_SAMPLES_PER_LEAF = jpt_baseline_module.JPT_MIN_SAMPLES_PER_LEAF
 
-_RUNNER_WORLD = None   # updated before each demo runs
+print("[runner] JPT variable definitions shared between modules.")
 
-from semantic_digital_twin.world_description.connections import ActiveConnection1DOF as _AC1DOF
 
-def _shared_robust_raw_dof(self):
+
+_runner_active_world = None
+
+from semantic_digital_twin.world_description.connections import (
+    ActiveConnection1DOF as _ActiveConnection1DOF,
+)
+
+def _shared_robust_raw_dof(self) -> Any:
+    """Redirect stale _world references to the currently active world."""
     target_world = self._world
-    if (target_world is None or
-            len(target_world._world_entity_hash_table) == 0 or
-            len(target_world.degrees_of_freedom) == 0):
-        if _RUNNER_WORLD is not None:
-            target_world = _RUNNER_WORLD
+    if (
+        target_world is None
+        or len(target_world._world_entity_hash_table) == 0
+        or len(target_world.degrees_of_freedom) == 0
+    ):
+        if _runner_active_world is not None:
+            target_world = _runner_active_world
             self._world  = target_world
     return target_world.get_degree_of_freedom_by_id(self.dof_id)
 
-_AC1DOF.raw_dof = property(_shared_robust_raw_dof)
-print("  [runner] Installed shared _robust_raw_dof patch.")
+_ActiveConnection1DOF.raw_dof = property(_shared_robust_raw_dof)
+print("[runner] Shared ActiveConnection1DOF.raw_dof patch installed.")
 
-# Hook both demos' _build_world to automatically update _RUNNER_WORLD
-# when each demo constructs its world, before any robot motion happens.
 
-_jpt_original_build_world    = _jpt_demo._build_world
-_causal_original_build_world = _causal_demo._build_world
+# =============================================================================
+# World Construction Hooks
+# =============================================================================
 
-def _jpt_build_world_hook(apartment_urdf_path):
-    global _RUNNER_WORLD
+_jpt_original_build_world    = jpt_baseline_module._build_apartment_world
+_causal_original_build_world = causal_module._build_apartment_world
+
+
+def _jpt_build_world_hook(apartment_urdf_path: Any) -> tuple:
+    global _runner_active_world
     world, robot = _jpt_original_build_world(apartment_urdf_path)
-    _RUNNER_WORLD = world
-    print("  [runner] _RUNNER_WORLD updated for JPT demo.")
+    _runner_active_world = world
+    print("[runner] Active world updated for JPT baseline run.")
     return world, robot
 
-def _causal_build_world_hook(apartment_urdf_path):
-    global _RUNNER_WORLD
+
+def _causal_build_world_hook(apartment_urdf_path: Any) -> tuple:
+    global _runner_active_world
     world, robot = _causal_original_build_world(apartment_urdf_path)
-    _RUNNER_WORLD = world
-    print("  [runner] _RUNNER_WORLD updated for causal demo.")
+    _runner_active_world = world
+    print("[runner] Active world updated for causal circuit run.")
     return world, robot
 
-_jpt_demo._build_world    = _jpt_build_world_hook
-_causal_demo._build_world = _causal_build_world_hook
 
-print("  [runner] Hooked _build_world for automatic _RUNNER_WORLD updates.")
+jpt_baseline_module._build_apartment_world = _jpt_build_world_hook
+causal_module._build_apartment_world       = _causal_build_world_hook
 
-# ---------------------------------------------------------------------------
-# Database URIs
-# ---------------------------------------------------------------------------
+print("[runner] World construction hooks installed.")
 
-_DEFAULT_URI = "postgresql://semantic_digital_twin:naren@localhost:5432/probabilistic_reasoning"
 
-_jpt_demo.DATABASE_URI = os.environ.get(
+# =============================================================================
+# Database URI Configuration
+# =============================================================================
+
+jpt_baseline_module.DATABASE_URI = os.environ.get(
     "SEMANTIC_DIGITAL_TWIN_DATABASE_URI_JPT",
-    os.environ.get("SEMANTIC_DIGITAL_TWIN_DATABASE_URI", _DEFAULT_URI),
+    os.environ.get("SEMANTIC_DIGITAL_TWIN_DATABASE_URI", DEFAULT_DATABASE_URI),
 )
-_causal_demo.DATABASE_URI = os.environ.get(
+causal_module.DATABASE_URI = os.environ.get(
     "SEMANTIC_DIGITAL_TWIN_DATABASE_URI_CAUSAL",
-    os.environ.get("SEMANTIC_DIGITAL_TWIN_DATABASE_URI", _DEFAULT_URI),
+    os.environ.get("SEMANTIC_DIGITAL_TWIN_DATABASE_URI", DEFAULT_DATABASE_URI),
 )
 
-# ---------------------------------------------------------------------------
-# Run JPT demo — output mirrored to jpt_demo_output.txt
-# ---------------------------------------------------------------------------
+print(f"[runner] JPT baseline database    : {jpt_baseline_module.DATABASE_URI}")
+print(f"[runner] Causal circuit database  : {causal_module.DATABASE_URI}")
+print(f"\n[runner] Output files:")
+print(f"    JPT baseline : {JPT_BASELINE_LOG_PATH}")
+print(f"    Causal       : {CAUSAL_LOG_PATH}")
+print(f"    Summary      : {COMPARISON_SUMMARY_PATH}")
 
-print(f"\n  Output will be saved to:")
-print(f"    JPT demo   : {_JPT_LOG}")
-print(f"    Causal demo: {_CAUSAL_LOG}")
-print(f"    Summary    : {_SUMMARY}")
 
-print("\n" + "=" * 64)
-print("  STARTING DEMO 1: JPT-only")
-print("=" * 64)
-
-_jpt_tee = _Tee(_JPT_LOG)
-sys.stdout  = _jpt_tee
-
-_jpt_start = time.time()
-_jpt_stats = None
-try:
-    _jpt_demo.pick_and_place_demo_apartment_jpt()
-    _jpt_stats = _jpt_demo._last_statistics if hasattr(_jpt_demo, '_last_statistics') else None
-except Exception as _e:
-    import traceback
-    print(f"\n[runner] JPT demo raised an exception: {_e}")
-    traceback.print_exc()
-_jpt_elapsed = time.time() - _jpt_start
-
-sys.stdout = sys.__stdout__
-_jpt_tee.close()
-print(f"\n[runner] JPT demo finished in {_jpt_elapsed / 3600:.2f}h ({_jpt_elapsed:.0f}s)")
-print(f"[runner] Output saved to {_JPT_LOG}")
-
-# ---------------------------------------------------------------------------
-# Run causal demo — output mirrored to causal_demo_output.txt
-# ---------------------------------------------------------------------------
+# =============================================================================
+# Experiment 1: JPT Baseline
+# =============================================================================
 
 print("\n" + "=" * 64)
-print("  STARTING DEMO 2: JPT + CausalCircuit")
+print("  EXPERIMENT 1 OF 2: JPT Baseline (blind resampling)")
 print("=" * 64)
 
-_causal_tee = _Tee(_CAUSAL_LOG)
-sys.stdout  = _causal_tee
+jpt_tee = OutputTee(JPT_BASELINE_LOG_PATH)
+sys.stdout = jpt_tee
 
-_causal_start = time.time()
-_causal_stats = None
+jpt_start_time  = time.time()
+jpt_statistics  = None
+
 try:
-    _causal_demo.pick_and_place_demo_apartment_causal()
-    _causal_stats = _causal_demo._last_statistics if hasattr(_causal_demo, '_last_statistics') else None
-except Exception as _e:
-    import traceback
-    print(f"\n[runner] Causal demo raised an exception: {_e}")
-    traceback.print_exc()
-_causal_elapsed = time.time() - _causal_start
+    jpt_baseline_module.run_pick_and_place_jpt_baseline()
+    jpt_statistics = getattr(jpt_baseline_module, "_last_run_statistics", None)
+except Exception as error:
+    import traceback as _traceback
+    print(f"\n[runner] JPT baseline raised an exception: {error}")
+    _traceback.print_exc()
+
+jpt_elapsed_seconds = time.time() - jpt_start_time
 
 sys.stdout = sys.__stdout__
-_causal_tee.close()
-print(f"\n[runner] Causal demo finished in {_causal_elapsed / 3600:.2f}h ({_causal_elapsed:.0f}s)")
-print(f"[runner] Output saved to {_CAUSAL_LOG}")
+jpt_tee.close()
 
-# ---------------------------------------------------------------------------
-# Shutdown ROS
-# ---------------------------------------------------------------------------
+print(
+    f"\n[runner] JPT baseline complete in "
+    f"{jpt_elapsed_seconds / 3600:.2f}h ({jpt_elapsed_seconds:.0f}s)"
+)
+print(f"[runner] Output saved to {JPT_BASELINE_LOG_PATH}")
 
-print("\n[runner] Shutting down ROS ...")
-_shared_node.destroy_node()
-_spin_thread.join(timeout=3.0)
+
+# =============================================================================
+# Experiment 2: JPT + Causal Circuit
+# =============================================================================
+
+print("\n" + "=" * 64)
+print("  EXPERIMENT 2 OF 2: JPT + Causal Circuit")
+print("=" * 64)
+
+causal_tee = OutputTee(CAUSAL_LOG_PATH)
+sys.stdout = causal_tee
+
+causal_start_time = time.time()
+causal_statistics = None
+
 try:
-    _real_rclpy.context.get_default_context().try_shutdown()
+    causal_module.run_pick_and_place_with_causal_correction()
+    causal_statistics = getattr(causal_module, "_last_run_statistics", None)
+except Exception as error:
+    import traceback as _traceback
+    print(f"\n[runner] Causal circuit run raised an exception: {error}")
+    _traceback.print_exc()
+
+causal_elapsed_seconds = time.time() - causal_start_time
+
+sys.stdout = sys.__stdout__
+causal_tee.close()
+
+print(
+    f"\n[runner] Causal circuit run complete in "
+    f"{causal_elapsed_seconds / 3600:.2f}h ({causal_elapsed_seconds:.0f}s)"
+)
+print(f"[runner] Output saved to {CAUSAL_LOG_PATH}")
+
+
+# =============================================================================
+# ROS2 Shutdown
+# =============================================================================
+
+print("\n[runner] Shutting down ROS2 ...")
+_shared_ros_node.destroy_node()
+_ros_spin_thread.join(timeout=3.0)
+try:
+    _rclpy.context.get_default_context().try_shutdown()
 except Exception:
     pass
+print("[runner] ROS2 shut down.")
 
-# ---------------------------------------------------------------------------
-# Write comparison summary
-# ---------------------------------------------------------------------------
 
-def _read_last_summary(log_path: str) -> str:
-    """Extract the final summary block from a demo log file."""
+# =============================================================================
+# Comparison Summary
+# =============================================================================
+
+def _extract_final_summary_block(log_path: str) -> str:
+    """
+    Extract the final summary block from a demo log file.
+
+    Locates the last pair of separator lines (lines beginning with 30 or more
+    equals signs) and returns all content from the second-to-last separator
+    to the end of the file. Returns an error message if the file cannot be
+    read or no separator is found.
+
+    Parameters
+    ----------
+    log_path:
+        Path to the demo log file produced by OutputTee.
+
+    Returns
+    -------
+    str
+        The extracted summary block, or an error message string.
+    """
     try:
         lines = open(log_path).readlines()
-        # Find the last occurrence of the summary separator
-        sep_indices = [i for i, l in enumerate(lines) if l.strip().startswith("=" * 30)]
-        if len(sep_indices) >= 2:
-            start = sep_indices[-2]
-            return "".join(lines[start:])
-        elif sep_indices:
-            return "".join(lines[sep_indices[-1]:])
-        return "(summary not found in log)"
-    except Exception as e:
-        return f"(could not read log: {e})"
+        separator_indices = [
+            index for index, line in enumerate(lines)
+            if line.strip().startswith("=" * 30)
+        ]
+        if len(separator_indices) >= 2:
+            return "".join(lines[separator_indices[-2]:])
+        elif separator_indices:
+            return "".join(lines[separator_indices[-1]:])
+        return "(summary block not found in log)"
+    except Exception as error:
+        return f"(could not read log: {error})"
 
+
+total_elapsed_seconds = jpt_elapsed_seconds + causal_elapsed_seconds
 
 summary_lines = [
     "=" * 64,
-    "  COMPARISON SUMMARY",
+    "  EXPERIMENT COMPARISON SUMMARY",
+    "  Causally-Aware Robot Action Verification via",
+    "  Interventional Probabilistic Circuits — SPAI @ IJCAI 2026",
     "=" * 64,
     "",
-    f"  JPT demo wall-clock time    : {_jpt_elapsed / 3600:.2f}h  ({_jpt_elapsed:.0f}s)",
-    f"  Causal demo wall-clock time : {_causal_elapsed / 3600:.2f}h  ({_causal_elapsed:.0f}s)",
-    f"  Total                       : {(_jpt_elapsed + _causal_elapsed) / 3600:.2f}h",
+    f"  JPT baseline wall-clock time    : "
+    f"{jpt_elapsed_seconds / 3600:.2f}h  ({jpt_elapsed_seconds:.0f}s)",
+    f"  Causal circuit wall-clock time  : "
+    f"{causal_elapsed_seconds / 3600:.2f}h  ({causal_elapsed_seconds:.0f}s)",
+    f"  Total experiment time           : "
+    f"{total_elapsed_seconds / 3600:.2f}h  ({total_elapsed_seconds:.0f}s)",
     "",
-    "─" * 64,
-    "  JPT DEMO FINAL SUMMARY",
-    "─" * 64,
-    _read_last_summary(_JPT_LOG),
+    "-" * 64,
+    "  EXPERIMENT 1: JPT BASELINE — FINAL SUMMARY",
+    "-" * 64,
+    _extract_final_summary_block(JPT_BASELINE_LOG_PATH),
     "",
-    "─" * 64,
-    "  CAUSAL DEMO FINAL SUMMARY",
-    "─" * 64,
-    _read_last_summary(_CAUSAL_LOG),
+    "-" * 64,
+    "  EXPERIMENT 2: JPT + CAUSAL CIRCUIT — FINAL SUMMARY",
+    "-" * 64,
+    _extract_final_summary_block(CAUSAL_LOG_PATH),
     "",
     "=" * 64,
 ]
@@ -327,7 +414,7 @@ summary_lines = [
 summary_text = "\n".join(summary_lines)
 print(summary_text)
 
-with open(_SUMMARY, "w") as f:
-    f.write(summary_text)
+with open(COMPARISON_SUMMARY_PATH, "w") as summary_file:
+    summary_file.write(summary_text)
 
-print(f"\n[runner] Comparison summary saved to {_SUMMARY}")
+print(f"\n[runner] Comparison summary saved to {COMPARISON_SUMMARY_PATH}")
