@@ -174,7 +174,7 @@ _ActionDescription.add_subplan = _patched_add_subplan
 # Constants
 # ---------------------------------------------------------------------------
 
-NUMBER_OF_ITERATIONS:    int = 5
+NUMBER_OF_ITERATIONS:    int = 5000
 MAX_RESAMPLE_ATTEMPTS:   int = 10   # max JPT resamples per iteration before hard failure
 
 DATABASE_URI: str = os.environ.get(
@@ -280,9 +280,9 @@ class ResamplingRecord:
 class RunStatistics:
     """Tracks success, failure, and JPT-resampling stats across all iterations."""
     successful_count:   int = 0
-    failed_count:       int = 0
+    failed_iterations:  int = 0   # iterations that ended in failure (hard failures)
+    failed_attempts:    int = 0   # total individual attempt failures across all iterations
     hard_failure_count: int = 0   # iterations that exhausted all MAX_RESAMPLE_ATTEMPTS
-    # Iterations that succeeded only after >=2 JPT resampling attempts
     resampling_records: list = None
 
     def __post_init__(self):
@@ -992,7 +992,7 @@ def pick_and_place_demo_apartment_jpt() -> None:
             print(f"\n{'=' * 64}")
             print(
                 f"  Iteration {iteration_number}/{NUMBER_OF_ITERATIONS}  "
-                f"(success={statistics.successful_count}  failed={statistics.failed_count})"
+                f"(success={statistics.successful_count}  failed_iter={statistics.failed_iterations}  attempts={statistics.failed_attempts})"
             )
             print(f"{'=' * 64}")
 
@@ -1007,8 +1007,34 @@ def pick_and_place_demo_apartment_jpt() -> None:
                         navigation_map, gcs_bounds,
                     )
                 except ValueError as gcs_error:
-                    statistics.failed_count += 1
+                    statistics.failed_iterations += 1
+                    plan = None
                     print(f"  RESULT: FAILED (GCS plan build) — {gcs_error}")
+
+                if plan is not None:
+                    print("\n  Executing plan ...")
+                    with simulated_robot:
+                        try:
+                            plan.perform()
+                            print("  Execution complete.")
+                            statistics.successful_count += 1
+                            print(
+                                f"  RESULT: SUCCESS  "
+                                f"({statistics.successful_count}/{iteration_number} stored,  "
+                                f"{NUMBER_OF_ITERATIONS - iteration_number} remaining)"
+                            )
+                            try:
+                                _persist_plan(database_session, plan)
+                            except Exception as database_error:
+                                print(f"  [db] ERROR: {database_error}")
+                                traceback.print_exc()
+                                database_session.rollback()
+                        except Exception as execution_error:
+                            statistics.failed_iterations += 1
+                            print(
+                                f"  RESULT: FAILED — "
+                                f"{type(execution_error).__name__}: {execution_error}"
+                            )
             else:
                 print("  Mode: JPT-SAMPLED  (with resampling on failure)")
                 # ── JPT resampling loop ────────────────────────────────────
@@ -1035,7 +1061,7 @@ def pick_and_place_demo_apartment_jpt() -> None:
                             f"  [attempt {attempt}] FAILED (GCS plan build) — {gcs_error}"
                             f"  → resampling ..."
                         )
-                        statistics.failed_count += 1
+                        statistics.failed_attempts += 1
                         continue   # resample immediately
 
                     print(f"\n  [attempt {attempt}] Executing plan ...")
@@ -1049,7 +1075,7 @@ def pick_and_place_demo_apartment_jpt() -> None:
                                 f"({elapsed:.1f}s elapsed)"
                             )
                         except Exception as execution_error:
-                            statistics.failed_count += 1
+                            statistics.failed_attempts += 1
                             print(
                                 f"  [attempt {attempt}] FAILED — "
                                 f"{type(execution_error).__name__}: {execution_error}"
@@ -1067,7 +1093,7 @@ def pick_and_place_demo_apartment_jpt() -> None:
                 elapsed = time.time() - resample_start
                 if not execution_succeeded:
                     # All MAX_RESAMPLE_ATTEMPTS exhausted without success
-                    statistics.failed_count += 1
+                    statistics.failed_iterations += 1
                     statistics.hard_failure_count += 1
                     print(
                         f"  RESULT: HARD FAILURE — gave up after "
@@ -1081,14 +1107,14 @@ def pick_and_place_demo_apartment_jpt() -> None:
                     statistics.record_resampling(iteration_number, attempt, elapsed)
 
                 if execution_succeeded:
+                    statistics.successful_count += 1
+                    print(
+                        f"  RESULT: SUCCESS  "
+                        f"({statistics.successful_count}/{iteration_number} stored,  "
+                        f"{NUMBER_OF_ITERATIONS - iteration_number} remaining)"
+                    )
                     try:
                         _persist_plan(database_session, plan)
-                        statistics.successful_count += 1
-                        print(
-                            f"  RESULT: SUCCESS  "
-                            f"({statistics.successful_count}/{iteration_number} stored,  "
-                            f"{NUMBER_OF_ITERATIONS - iteration_number} remaining)"
-                        )
                     except Exception as database_error:
                         print(f"  [db] ERROR: {database_error}")
                         traceback.print_exc()
@@ -1122,7 +1148,8 @@ def pick_and_place_demo_apartment_jpt() -> None:
         print(f"  Run complete.")
         print(f"  Total iterations     : {NUMBER_OF_ITERATIONS}")
         print(f"  Successful plans     : {statistics.successful_count}  ({success_rate}%)")
-        print(f"  Failed attempts      : {statistics.failed_count}")
+        print(f"  Failed iterations    : {statistics.failed_iterations}")
+        print(f"  Total failed attempts: {statistics.failed_attempts}")
         print(f"  Hard failures (>{MAX_RESAMPLE_ATTEMPTS} attempts) : {statistics.hard_failure_count}")
         print(f"  Database             : {DATABASE_URI}")
 
@@ -1156,6 +1183,10 @@ def pick_and_place_demo_apartment_jpt() -> None:
             print(f"  DB rows (SequentialPlanDAO): {row_count}")
         except Exception as count_error:
             print(f"  [db] Could not read row count: {count_error}")
+
+        # Expose statistics on the module for the runner to read
+        import sys as _sys
+        _sys.modules[__name__]._last_statistics = statistics
 
     finally:
         database_session.close()

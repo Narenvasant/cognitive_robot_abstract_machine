@@ -397,7 +397,8 @@ class RunStatistics:
     contribution of the causal circuit can be measured for the paper.
     """
     successful_count:        int  = 0
-    failed_count:            int  = 0
+    failed_iterations:       int  = 0   # iterations that ended in failure
+    failed_attempts:         int  = 0   # total individual attempt failures
     hard_failure_count:      int  = 0   # iterations that hit MAX_CORRECTION_ATTEMPTS
     corrected_attempt_count: int  = 0   # total correction attempts across all iterations
     corrected_success_count: int  = 0   # iterations where a correction eventually succeeded
@@ -1376,15 +1377,19 @@ def _print_run_summary(
     recs = statistics.correction_records
 
     overall_success_rate = 100 * statistics.successful_count // number_of_iterations
-    uncorrected_iter     = number_of_iterations - statistics.corrected_attempt_count
-    uncorrected_success  = statistics.successful_count - statistics.corrected_success_count
-    baseline_rate        = 100 * uncorrected_success // max(uncorrected_iter, 1)
+    # uncorrected_iter = iterations that ran on pure JPT baseline (no correction involved)
+    # use len(recs) = number of iterations that triggered a correction loop,
+    # NOT corrected_attempt_count which is total individual attempts (can exceed iterations)
+    uncorrected_iter    = number_of_iterations - len(recs)
+    uncorrected_success = statistics.successful_count - statistics.corrected_success_count
+    baseline_rate       = 100 * uncorrected_success // max(uncorrected_iter, 1)
 
     print(f"\n{'=' * 64}")
     print(f"  Run complete.")
     print(f"  Total iterations       : {number_of_iterations}")
     print(f"  Successful plans       : {statistics.successful_count}  ({overall_success_rate}%)")
-    print(f"  Failed attempts        : {statistics.failed_count}")
+    print(f"  Failed iterations      : {statistics.failed_iterations}")
+    print(f"  Total failed attempts  : {statistics.failed_attempts}")
     print(f"  Hard failures (>{MAX_CORRECTION_ATTEMPTS} attempts) : {statistics.hard_failure_count}")
 
     # ── Causal correction breakdown ────────────────────────────────────────
@@ -1527,7 +1532,7 @@ def pick_and_place_demo_apartment_causal() -> None:
             print(
                 f"  Iteration {iteration_number}/{NUMBER_OF_ITERATIONS}  "
                 f"(success={statistics.successful_count}  "
-                f"failed={statistics.failed_count}  "
+                f"failed_iter={statistics.failed_iterations}  attempts={statistics.failed_attempts}  "
                 f"corrected={statistics.corrected_success_count}/"
                 f"{statistics.corrected_attempt_count})"
             )
@@ -1545,7 +1550,8 @@ def pick_and_place_demo_apartment_causal() -> None:
                         navigation_map, gcs_bounds,
                     )
                 except ValueError as gcs_error:
-                    statistics.failed_count += 1
+                    statistics.failed_iterations += 1
+                    plan = None
                     print(f"  RESULT: FAILED (GCS plan build) — {gcs_error}")
 
                 if plan is None:
@@ -1559,21 +1565,21 @@ def pick_and_place_demo_apartment_causal() -> None:
                             execution_succeeded = True
                             print("  Execution complete.")
                         except Exception as execution_error:
-                            statistics.failed_count += 1
+                            statistics.failed_iterations += 1
                             print(
                                 f"  RESULT: FAILED — "
                                 f"{type(execution_error).__name__}: {execution_error}"
                             )
 
                     if execution_succeeded:
+                        statistics.successful_count += 1
+                        print(
+                            f"  RESULT: SUCCESS  "
+                            f"({statistics.successful_count}/{iteration_number} stored,  "
+                            f"{NUMBER_OF_ITERATIONS - iteration_number} remaining)"
+                        )
                         try:
                             _persist_plan(database_session, plan)
-                            statistics.successful_count += 1
-                            print(
-                                f"  RESULT: SUCCESS  "
-                                f"({statistics.successful_count}/{iteration_number} stored,  "
-                                f"{NUMBER_OF_ITERATIONS - iteration_number} remaining)"
-                            )
                         except Exception as database_error:
                             print(f"  [db] ERROR: {database_error}")
                             traceback.print_exc()
@@ -1592,7 +1598,7 @@ def pick_and_place_demo_apartment_causal() -> None:
                         robot_start_x=robot_x, robot_start_y=robot_y,
                     )
                 except ValueError as gcs_error:
-                    statistics.failed_count += 1
+                    statistics.failed_attempts += 1
                     print(f"  [attempt 1] FAILED (GCS plan build) — {gcs_error}")
                     plan = None
 
@@ -1605,7 +1611,7 @@ def pick_and_place_demo_apartment_causal() -> None:
                             execution_succeeded = True
                             print("  [attempt 1] Execution complete.")
                         except Exception as execution_error:
-                            statistics.failed_count += 1
+                            statistics.failed_attempts += 1
                             print(
                                 f"  [attempt 1] FAILED — "
                                 f"{type(execution_error).__name__}: {execution_error}"
@@ -1655,7 +1661,7 @@ def pick_and_place_demo_apartment_causal() -> None:
                                     robot_start_x=ROBOT_INIT_X, robot_start_y=ROBOT_INIT_Y,
                                 )
                             except ValueError as gcs_error:
-                                statistics.failed_count += 1
+                                statistics.failed_attempts += 1
                                 statistics.corrected_failure_count += 1
                                 print(
                                     f"  [correction {correction_attempt}] "
@@ -1674,7 +1680,7 @@ def pick_and_place_demo_apartment_causal() -> None:
                                         f"Execution complete. ({elapsed:.1f}s elapsed)"
                                     )
                                 except Exception as execution_error:
-                                    statistics.failed_count += 1
+                                    statistics.failed_attempts += 1
                                     statistics.corrected_failure_count += 1
                                     print(
                                         f"  [correction {correction_attempt}] FAILED — "
@@ -1712,7 +1718,7 @@ def pick_and_place_demo_apartment_causal() -> None:
                             )
                         else:
                             statistics.hard_failure_count += 1
-                            statistics.failed_count += 1
+                            statistics.failed_iterations += 1
                             print(
                                 f"  RESULT: HARD FAILURE — gave up after "
                                 f"{total_attempts} correction attempt(s) ({elapsed:.1f}s)"
@@ -1722,14 +1728,14 @@ def pick_and_place_demo_apartment_causal() -> None:
                             )
 
                 if execution_succeeded:
+                    statistics.successful_count += 1
+                    print(
+                        f"  RESULT: SUCCESS  "
+                        f"({statistics.successful_count}/{iteration_number} stored,  "
+                        f"{NUMBER_OF_ITERATIONS - iteration_number} remaining)"
+                    )
                     try:
                         _persist_plan(database_session, plan)
-                        statistics.successful_count += 1
-                        print(
-                            f"  RESULT: SUCCESS  "
-                            f"({statistics.successful_count}/{iteration_number} stored,  "
-                            f"{NUMBER_OF_ITERATIONS - iteration_number} remaining)"
-                        )
                     except Exception as database_error:
                         print(f"  [db] ERROR: {database_error}")
                         traceback.print_exc()
@@ -1754,6 +1760,10 @@ def pick_and_place_demo_apartment_causal() -> None:
             robot_y = ROBOT_INIT_Y
 
         _print_run_summary(statistics, NUMBER_OF_ITERATIONS, database_session)
+
+        # Expose statistics on the module for the runner to read
+        import sys as _sys
+        _sys.modules[__name__]._last_statistics = statistics
 
     finally:
         database_session.close()
