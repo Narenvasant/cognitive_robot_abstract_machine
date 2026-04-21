@@ -77,7 +77,6 @@ APPROACH_NOISE_COLUMNS: list = [
 
 RANDOM_SEED: int = 42
 
-# Reference values from the high-quality model for sanity checking
 REFERENCE_P_ARM_LEFT:  float = 913 / 1742
 REFERENCE_E_MILK_END_Z: float = 0.8053
 
