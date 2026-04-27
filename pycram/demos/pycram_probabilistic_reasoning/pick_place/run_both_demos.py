@@ -108,12 +108,12 @@ JPT_BASELINE_LOG_PATH    = os.path.join(OUTPUT_DIRECTORY, "jpt_baseline_output.t
 CAUSAL_LOG_PATH          = os.path.join(OUTPUT_DIRECTORY, "causal_output.txt")
 COMPARISON_SUMMARY_PATH  = os.path.join(OUTPUT_DIRECTORY, "run_comparison_summary.txt")
 
-JPT_BASELINE_MODULE_FILE = "pick_and_place_jpt_baseline.py"
-CAUSAL_MODULE_FILE       = "pick_and_place_causal.py"
+JPT_BASELINE_MODULE_FILE = "pick_place_demo_apartment_jpt.py"
+CAUSAL_MODULE_FILE       = "pick_place_demo_apartment_jpt_and_causal.py"
 
 DEFAULT_DATABASE_URI = (
     "postgresql://semantic_digital_twin:naren"
-    "@localhost:5432/probabilistic_reasoning"
+    "@localhost:5432/probabilistic_reasoning_causal"
 )
 
 

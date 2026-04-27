@@ -298,12 +298,12 @@ NavigateAction = BaseNavigateAction
 # Experiment Constants
 # =============================================================================
 
-NUMBER_OF_ITERATIONS:    int = 5_000
+NUMBER_OF_ITERATIONS:    int = 5000
 MAX_CORRECTION_ATTEMPTS: int = 10
 
 DATABASE_URI: str = os.environ.get(
     "SEMANTIC_DIGITAL_TWIN_DATABASE_URI",
-    "postgresql://semantic_digital_twin:naren@localhost:5432/probabilistic_reasoning",
+    "postgresql://semantic_digital_twin:naren@localhost:5432/probabilistic_reasoning_causal",
 )
 
 # World geometry: milk spawn position
