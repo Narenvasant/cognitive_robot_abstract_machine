@@ -56,7 +56,7 @@ from semantic_digital_twin.spatial_types import (
     HomogeneousTransformationMatrix,
 )
 from semantic_digital_twin.spatial_types.spatial_types import Pose
-from semantic_digital_twin.spatial_types.derivatives import DerivativeMap
+from semantic_digital_twin.spatial_types.derivatives import DerivativeMap, Derivatives
 from semantic_digital_twin.world_description.connections import (
     ActiveConnection,
     FixedConnection,
@@ -731,6 +731,8 @@ class AbstractRobot(Agent, HasRobotParts, ABC):
                 robot_part.add_joint_states(robot_part.setup_joint_states())
             self._setup_collision_rules()
             self._setup_velocity_limits()
+            self._setup_acceleration_limits()
+            self._setup_jerk_limits()
             return self
 
     @property
@@ -800,6 +802,29 @@ class AbstractRobot(Agent, HasRobotParts, ABC):
         )
         self.tighten_dof_velocity_limits_proportionally(maximum_velocity=1)
 
+    def _setup_acceleration_limits(self):
+        """
+        Sets up acceleration limits for 1-DOF connections in the robot.
+
+        No-op by default; robots with known acceleration limits (e.g. from the
+        manufacturer's datasheet) should override this.
+        """
+        pass
+
+    def _setup_jerk_limits(self):
+        """
+        Sets up jerk limits for 1-DOF connections in the robot.
+
+        No-op by default; robots with known jerk limits (e.g. from the
+        manufacturer's datasheet) should override this. Without a jerk limit, the QP
+        controller's per-derivative weight normalization treats the degree of
+        freedom's jerk as unbounded (see
+        :meth:`~giskardpy.qp.dof_limits.QuadraticProgramDegreeOfFreedomLimits.normalize_degree_of_freedom_weight`),
+        which zeroes out its jerk objective weight and leaves nothing to penalize a
+        jittery trajectory.
+        """
+        pass
+
     @property
     def drive(self) -> Optional[WheeledDrive]:
         """
@@ -846,31 +871,87 @@ class AbstractRobot(Agent, HasRobotParts, ABC):
             if isinstance(connection, ActiveConnection1DOF)
         ]
 
+    def _tighten_dof_derivative_limits_of_1dof_connections(
+        self,
+        derivative: Derivatives,
+        new_limits: DefaultDict[ActiveConnection1DOF, Optional[float]],
+    ):
+        """
+        Convenience method for tightening one derivative's symmetric limits of all one
+        degree-of-freedom (1DOF) active connections in the system.
+
+        The method iterates through all connections of type `ActiveConnection1DOF` and
+        configures the given derivative's limits by overwriting the existing lower and
+        upper limit values with the provided ones.
+
+        :param derivative: The derivative (velocity, acceleration, or jerk) whose
+            limits are tightened.
+        :param new_limits: A dictionary linking 1DOF connections to their corresponding
+            new limits. The keys are of type `ActiveConnection1DOF`, and the values
+            represent the new limits specific to each connection. A connection whose
+            limit resolves to ``None`` (e.g. via a ``defaultdict(lambda: None)``) is
+            left unchanged.
+        """
+        for connection in self._one_dof_connections:
+            limit = new_limits[connection]
+            if limit is None:
+                continue
+            new_lower_limits = DerivativeMap()
+            new_upper_limits = DerivativeMap()
+            new_lower_limits[derivative] = -limit
+            new_upper_limits[derivative] = limit
+            connection.raw_dof._overwrite_dof_limits(
+                new_lower_limits=new_lower_limits,
+                new_upper_limits=new_upper_limits,
+            )
+
     def tighten_dof_velocity_limits_of_1dof_connections(
         self,
-        new_limits: DefaultDict[ActiveConnection1DOF, float],
+        new_limits: DefaultDict[ActiveConnection1DOF, Optional[float]],
     ):
         """
         Convenience method for tightening the velocity limits of all one degree-of-
         freedom (1DOF) active connections in the system.
 
-        The method iterates through all connections of type `ActiveConnection1DOF` and
-        configures their velocity limits by overwriting the existing lower and upper
-        limit values with the provided ones.
-
         :param new_limits: A dictionary linking 1DOF connections to their corresponding
             new velocity limits. The keys are of type `ActiveConnection1DOF`, and the
             values represent the new velocity limits specific to each connection.
         """
-        for connection in self._one_dof_connections:
-            connection.raw_dof._overwrite_dof_limits(
-                new_lower_limits=DerivativeMap(
-                    None, -new_limits[connection], None, None
-                ),
-                new_upper_limits=DerivativeMap(
-                    None, new_limits[connection], None, None
-                ),
-            )
+        self._tighten_dof_derivative_limits_of_1dof_connections(
+            Derivatives.velocity, new_limits
+        )
+
+    def tighten_dof_acceleration_limits_of_1dof_connections(
+        self,
+        new_limits: DefaultDict[ActiveConnection1DOF, Optional[float]],
+    ):
+        """
+        Convenience method for tightening the acceleration limits of all one degree-of-
+        freedom (1DOF) active connections in the system.
+
+        :param new_limits: A dictionary linking 1DOF connections to their corresponding
+            new acceleration limits. The keys are of type `ActiveConnection1DOF`, and
+            the values represent the new limits specific to each connection.
+        """
+        self._tighten_dof_derivative_limits_of_1dof_connections(
+            Derivatives.acceleration, new_limits
+        )
+
+    def tighten_dof_jerk_limits_of_1dof_connections(
+        self,
+        new_limits: DefaultDict[ActiveConnection1DOF, Optional[float]],
+    ):
+        """
+        Convenience method for tightening the jerk limits of all one degree-of-freedom
+        (1DOF) active connections in the system.
+
+        :param new_limits: A dictionary linking 1DOF connections to their corresponding
+            new jerk limits. The keys are of type `ActiveConnection1DOF`, and the
+            values represent the new limits specific to each connection.
+        """
+        self._tighten_dof_derivative_limits_of_1dof_connections(
+            Derivatives.jerk, new_limits
+        )
 
     def tighten_dof_velocity_limits_proportionally(
         self, maximum_velocity: float

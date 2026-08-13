@@ -11,9 +11,11 @@ class HasMaxJointVelocity:
 
     max_joint_velocity: Optional[float] = field(default=None, kw_only=True)
     """
-    Maximum joint velocity (in rad/s or m/s, per joint), enforced via
-    :class:`~giskardpy.motion_statechart.tasks.joint_tasks.JointVelocityLimit`. ``None``
-    leaves the speed unconstrained.
+    Target joint velocity (in rad/s or m/s, per joint), passed as
+    :class:`~giskardpy.motion_statechart.tasks.joint_tasks.JointPositionList`'s own
+    ``max_velocity`` reference. A pace, not a hard ceiling: the controller may still
+    exceed it if reaching the goal within the prediction horizon needs to. ``None``
+    keeps the task's own default pace.
     """
 
 

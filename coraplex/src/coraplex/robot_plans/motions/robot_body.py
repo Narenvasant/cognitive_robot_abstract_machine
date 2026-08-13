@@ -3,11 +3,9 @@ from typing import Optional
 
 from typing_extensions import List
 
-from giskardpy.motion_statechart.goals.templates import Parallel
 from giskardpy.motion_statechart.tasks.joint_tasks import (
     JointPositionList,
     JointState,
-    JointVelocityLimit,
 )
 from giskardpy.motion_statechart.tasks.pointing import Pointing
 from coraplex.robot_plans.mixins import HasMaxJointVelocity
@@ -65,18 +63,12 @@ class MoveJointsMotion(BaseMotion, HasMaxJointVelocity):
     @property
     def _motion_chart(self):
         dofs = [self.world.get_connection_by_name(name) for name in self.names]
-        joint_task = JointPositionList(
+        kwargs = {}
+        if self.max_joint_velocity is not None:
+            kwargs["max_velocity"] = self.max_joint_velocity
+        return JointPositionList(
             goal_state=JointState.from_mapping(dict(zip(dofs, self.positions))),
-        )
-        if self.max_joint_velocity is None:
-            return joint_task
-        return Parallel(
-            [
-                joint_task,
-                JointVelocityLimit(
-                    connections=dofs, max_velocity=self.max_joint_velocity
-                ),
-            ]
+            **kwargs,
         )
 
 
