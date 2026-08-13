@@ -98,6 +98,24 @@ class GraspDescription:
             reference_frame=target,
         )
 
+        import os
+
+        if os.environ.get("DEBUG_REACH_ORIENTATION") and body is not None:
+            target_world_R = np.array(target.global_pose.to_rotation_matrix().to_np())[
+                :3, :3
+            ]
+            local_R = np.array(target_T_gripper_goal.to_rotation_matrix().to_np())[
+                :3, :3
+            ]
+            resolved_world_R = target_world_R @ local_R
+            print(
+                f"DEBUG_REACH_ORIENTATION target={target.name.name} "
+                f"target_world_Z_axis={target_world_R[:, 2].tolist()} "
+                f"resolved_gripper_local_Z_in_world={resolved_world_R[:, 2].tolist()} "
+                f"local_orientation_Z_axis_asis={local_R[:, 2].tolist()}",
+                flush=True,
+            )
+
         if body:
             bb_in_frame = body.collision.as_bounding_box_collection_in_frame(
                 body

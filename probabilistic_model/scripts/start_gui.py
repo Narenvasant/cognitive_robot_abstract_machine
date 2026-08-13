@@ -16,7 +16,7 @@ def main(model_path: str = None):
 
     :param model_path: The path to the model to display in the GUI.
     """
-    model_path = "/home/tom_sch/.config/JetBrains/PyCharm2025.3/scratches/model.pm"
+    # model_path = "/home/tom_sch/.config/JetBrains/PyCharm2025.3/scratches/model.pm"
 
     if model_path is None:
         model = None

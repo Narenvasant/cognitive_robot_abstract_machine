@@ -42,6 +42,7 @@ from coraplex.datastructures.enums import (
     ApproachDirection,
     VerticalAlignment,
     ExecutionType,
+    MovementType,
 )
 from coraplex.datastructures.grasp import GraspDescription
 
@@ -59,6 +60,7 @@ from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
+from coraplex.robot_plans.motions.gripper import MoveToolCenterPointMotion
 
 from causal_diagnosis_v2 import (
     ActionCausalDiagnoser,
@@ -295,6 +297,24 @@ STACK_HEIGHT_OFFSET = 0.06
 """
 Vertical offset (in meters) above a target cube's center at which a placed cube should
 end up -- one cube height plus a small clearance margin.
+"""
+
+PICKUP_HOVER_HEIGHT = 0.30
+"""
+World-frame height (in meters above ``world.root``) the tool center point is moved to,
+directly above a cube's current x/y, before the pickup's own reach descends onto it.
+
+Comfortably clears the tallest stack this demo can build (4 cubes, each roughly one
+:data:`STACK_HEIGHT_OFFSET` tall) plus the gripper's own finger length. Without this, the
+reach goes straight from wherever :class:`~coraplex.robot_plans.actions.core.robot_body.ParkArmsAction`
+left the arm to the pickup's pre-pose, at whatever height the direct Cartesian path
+happens to pass through -- the same class of problem ``build_stack_plan``'s own
+carrying-park step already works around for the place side, but which nothing
+previously addressed for the pickup side: once a cube ends up resting against a
+neighbour (from an earlier overshoot), that direct path clips the neighbour, collision
+avoidance fights the goal instead of reaching it, and the arm bends and sweeps through
+the cluster instead of picking cleanly. Moving straight above the target first, then
+descending, avoids the direct path ever needing to pass through cluttered space.
 """
 
 CARRYING_PARK_JOINT_VELOCITY = 0.1
@@ -792,16 +812,6 @@ class UprightGraspDescription(GraspDescription):
         lift, which uses it to compute the lift-off direction): the reach onto the object
         itself does not call it at all, see :meth:`pose_sequence`.
 
-        Anchoring the passed-in pose to the body's own frame (rather than, as an earlier
-        version of this method did, pre-resolving the body's position into world
-        coordinates and anchoring to ``world.root`` instead) matters: ``pose_sequence``
-        composes the discarded-rotation pose with *this* reference frame's own current
-        world orientation to get the actual gripper target, so anchoring to ``world.root``
-        (already unrotated) let the composition silently reintroduce the body's rotation
-        instead of discarding it -- confirmed live by watching the lift-off orientation
-        swing toward the body's own tilt for a rolled cube while the reach orientation
-        (already anchored to the body, matching this fix) stayed correctly upright.
-
         :param body: The body being grasped.
         """
         return self.pose_sequence(Pose(reference_frame=body), body)
@@ -810,19 +820,31 @@ class UprightGraspDescription(GraspDescription):
         self, target_T_grasp_pose: Pose, body: Body = None, reverse: bool = False
     ) -> list[Pose]:
         """
-        Overrides :meth:`GraspDescription.pose_sequence` by discarding whatever rotation
-        ``target_T_grasp_pose`` itself carries before composing the grasp orientation
-        onto it.
+        Overrides :meth:`GraspDescription.pose_sequence` by resolving
+        ``target_T_grasp_pose``'s current position into world coordinates and anchoring
+        the result to ``world.root``, discarding whatever rotation the target carries,
+        before composing the grasp orientation onto it.
 
         This is the method that actually matters: ``PickUpAction._grasp_attempt_plan``
-        drives ``ReachAction`` with ``target_pose=self.object_designator.global_pose`` --
-        the object's own, fully resolved pose, rotation included -- and the base
-        implementation multiplies that rotation straight into the gripper's target
-        orientation (``target_T_grasp_pose.to_rotation_matrix() @ ...``). Overriding
-        :meth:`grasp_pose_sequence` alone (as this class first did) never touches that
-        path, since ``ReachAction`` calls this method directly rather than through it --
-        the arm kept bending to reach a knocked-over cube's original top face exactly as
-        before.
+        drives ``ReachAction`` with a pose anchored to the object itself, and the base
+        implementation multiplies whatever rotation that target carries straight into
+        the gripper's target orientation (``target_T_grasp_pose.to_rotation_matrix() @
+        ...``). Overriding :meth:`grasp_pose_sequence` alone (as this class first did)
+        never touches that path, since ``ReachAction`` calls this method directly rather
+        than through it -- the arm kept bending to reach a knocked-over cube's original
+        top face exactly as before.
+
+        Anchoring the *result* to ``world.root`` (rather than keeping it anchored to the
+        object, as an earlier version of this method did) matters just as much as
+        discarding the rotation: the base implementation's own math composes whatever
+        reference frame is passed in with *that* frame's current world orientation to
+        get the actual gripper target, so anchoring to the object again -- even with an
+        identity local rotation -- let its current tilt silently leak back in through
+        that composition. Confirmed live: for a cube rolled onto its side (own top-face
+        normal measured at roughly ``[-0.90, -0.43, 0]``), the resolved gripper target
+        came out at roughly ``[0.90, 0.43, 0]`` -- horizontal, not down -- with an object-
+        anchored target, and correctly ``[0, 0, -1]`` once anchored to ``world.root``
+        instead.
 
         Safe for every call this class actually sees: the place target this run builds
         (see ``sample_actions``'s ``place_location``) already carries an identity
@@ -833,10 +855,11 @@ class UprightGraspDescription(GraspDescription):
         :param body: The body of the grasp.
         :param reverse: If the sequence should be reversed.
         """
-        upright_target = Pose(
-            target_T_grasp_pose.to_position(),
-            reference_frame=target_T_grasp_pose.reference_frame,
-        )
+        target = target_T_grasp_pose.reference_frame
+        world_position = target._world.transform(
+            target_T_grasp_pose.to_homogeneous_matrix(), target._world.root
+        ).to_position()
+        upright_target = Pose(world_position, reference_frame=target._world.root)
         return super().pose_sequence(upright_target, body, reverse)
 
 
@@ -949,6 +972,20 @@ def sample_actions(
     return pickup_action, place_action
 
 
+def _pickup_hover_motion(pickup_action: PickUpAction) -> MoveToolCenterPointMotion:
+    """
+    :return: A position-only move of the tool center point to directly above
+        ``pickup_action``'s target cube's *current* x/y, at :data:`PICKUP_HOVER_HEIGHT`.
+    """
+    cube_pose = pickup_action.object_designator.global_pose
+    hover_pose = Pose.from_xyz_rpy(
+        x=cube_pose.x, y=cube_pose.y, z=PICKUP_HOVER_HEIGHT, reference_frame=world.root
+    )
+    return MoveToolCenterPointMotion(
+        hover_pose, pickup_action.arm, movement_type=MovementType.TRANSLATION
+    )
+
+
 def build_stack_plan(
     pickup_action: PickUpAction, place_action: PlaceAction
 ) -> PlanNode:
@@ -976,6 +1013,15 @@ def build_stack_plan(
     return sequential(
         [
             ParkArmsAction(Arms.BOTH),
+            # Moves straight above the target cube's current x/y before the pickup's
+            # own reach descends onto it, for the same reason the carrying park below
+            # exists on the place side: without this, the reach crosses directly from
+            # wherever ParkArmsAction left the arm to the pickup's pre-pose, at
+            # whatever height that direct path happens to pass through. Once a cube
+            # ends up resting against a neighbour, that direct path clips the
+            # neighbour and the arm bends and sweeps through the cluster instead of
+            # picking cleanly -- see PICKUP_HOVER_HEIGHT.
+            _pickup_hover_motion(pickup_action),
             pickup_action,
             # Parks the held cube clear before transporting it to the place target,
             # rather than crossing directly from the pickup pose to the place pose at
