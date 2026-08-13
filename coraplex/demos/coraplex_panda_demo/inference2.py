@@ -784,18 +784,27 @@ class UprightGraspDescription(GraspDescription):
 
     def grasp_pose_sequence(self, body: Body) -> list[Pose]:
         """
-        Overrides :meth:`GraspDescription.grasp_pose_sequence` by anchoring the sequence
-        to the world's frame at the body's position instead of to the body's own frame.
+        Overrides :meth:`GraspDescription.grasp_pose_sequence` to route through this
+        class's own :meth:`pose_sequence`, which is what actually discards the body's
+        rotation.
 
         Only matters for callers that reach this method directly (``PickUpAction``'s own
         lift, which uses it to compute the lift-off direction): the reach onto the object
         itself does not call it at all, see :meth:`pose_sequence`.
 
+        Anchoring the passed-in pose to the body's own frame (rather than, as an earlier
+        version of this method did, pre-resolving the body's position into world
+        coordinates and anchoring to ``world.root`` instead) matters: ``pose_sequence``
+        composes the discarded-rotation pose with *this* reference frame's own current
+        world orientation to get the actual gripper target, so anchoring to ``world.root``
+        (already unrotated) let the composition silently reintroduce the body's rotation
+        instead of discarding it -- confirmed live by watching the lift-off orientation
+        swing toward the body's own tilt for a rolled cube while the reach orientation
+        (already anchored to the body, matching this fix) stayed correctly upright.
+
         :param body: The body being grasped.
         """
-        return self.pose_sequence(
-            Pose(body.global_pose.to_position(), reference_frame=world.root), body
-        )
+        return self.pose_sequence(Pose(reference_frame=body), body)
 
     def pose_sequence(
         self, target_T_grasp_pose: Pose, body: Body = None, reverse: bool = False
