@@ -490,13 +490,23 @@ def apply_correction(
     failed attempt this is correcting nudged ``cube_to_stack_on`` on its way down, the
     uncorrected target would carry that staleness into the retry too.
 
+    The grasp description is refreshed the same way and for the same reason:
+    ``pickup_action.grasp_description`` -- its top-down orientation override and its
+    :func:`_rotate_gripper_away_from` roll choice alike -- was baked in once, back when
+    this cube's step began. The failed attempt this is correcting can have knocked the
+    cube (or ``cube_to_stack_on``) into a new position, e.g. now lying flush against a
+    neighbour in a direction the original roll choice does not clear; re-deriving it
+    fresh from both cubes' current positions is what actually keeps every retry
+    reaching for the cube's current top and rolling away from whatever is now nearby,
+    not just the first attempt.
+
     :param pickup_action: The failed attempt's pickup.
     :param place_action: The failed attempt's place.
     :param action_name: Which action ``diagnosis`` was diagnosed against, ``"pickup"``
         or ``"place"``.
     :param diagnosis: The diagnosis to apply.
     :param cube_to_stack_on: The cube this step places onto, read fresh for the
-        refreshed target.
+        refreshed target and grasp description.
     """
     corrected_values = {
         MODEL_FIELD_TO_LIVE_FIELD.get(
@@ -508,6 +518,12 @@ def apply_correction(
         pickup_action = dataclasses.replace(pickup_action, **corrected_values)
     else:
         place_action = dataclasses.replace(place_action, **corrected_values)
+    pickup_action = dataclasses.replace(
+        pickup_action,
+        grasp_description=pickup_grasp_description(
+            pickup_action.object_designator, cube_to_stack_on
+        ),
+    )
     place_action = dataclasses.replace(
         place_action, target_location=_current_place_location(cube_to_stack_on)
     )
