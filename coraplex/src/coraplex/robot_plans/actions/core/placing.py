@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 
 from typing_extensions import Any, Dict
 
-from coraplex.plans.attachment_nodes import DetachNode
 from coraplex.plans.plan_node import PlanNode
 from krrood.entity_query_language.core.variable import Variable
 from krrood.entity_query_language.factories import (
@@ -70,18 +69,17 @@ class PlaceAction(ActionDescription, PlaceTuningParameters, HasGraspDetectionThr
 
     def _retract_plan(self, retract_pose: Pose) -> PlanNode:
         """
-        :return: The plan that re-parents the placed object back to the world and
-            retracts the end effector away from it.
+        :return: The plan that retracts the end effector away from the placed object.
         """
-        return sequential(
-            [
-                DetachNode(body=self.object_designator, new_parent=self.world.root),
-                MoveToolCenterPointMotion(
-                    retract_pose,
-                    self.arm,
-                    max_linear_velocity=self.retract_linear_velocity,
-                ),
-            ],
+        # A DetachNode(body=self.object_designator, new_parent=self.world.root)
+        # would normally go here, but is unnecessary: the object is held only by
+        # real contact/friction (AttachNode is likewise unnecessary in
+        # PickUpAction, for the same reason -- see its own comment), so nothing
+        # needs kinematically re-parenting once released.
+        return MoveToolCenterPointMotion(
+            retract_pose,
+            self.arm,
+            max_linear_velocity=self.retract_linear_velocity,
         )
 
     @property

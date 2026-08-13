@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing_extensions import Any, Dict, Optional
 
 from coraplex.locations.pose_validator import AreReachableBy, IsObjectReachableBy
-from coraplex.plans.attachment_nodes import AttachNode
 from coraplex.plans.plan_node import PlanNode
 from krrood.entity_query_language.core.variable import Variable
 from krrood.entity_query_language.factories import (
@@ -217,12 +216,19 @@ class PickUpAction(
                     stall_minimum_time=self.grasp_stall_minimum_time,
                     tolerate_stall=self.tolerate_grasp_stall,
                 ),
-                AttachNode(
-                    body=self.object_designator,
-                    new_parent=ViewManager.get_end_effector_view(
-                        self.arm, self.robot
-                    ).tool_frame,
-                ),
+                # An AttachNode(body=self.object_designator, new_parent=...) would
+                # normally go here, but is unnecessary and actively harmful in
+                # simulation: attaching kinematically re-parents the body, which for
+                # MuJoCo means deleting and recreating it under the new parent and
+                # recompiling the model mid-simulation (see
+                # MujocoSimulator.attach/_reparent_in_simulator) -- reassigning body
+                # and geom ids while the object is mid-grasp, which is what makes the
+                # gripper fingers visually clip through the object and the object
+                # disappear from both the MuJoCo window and the live viewer. Left
+                # unattached, the object is held only by real contact/friction,
+                # which is also what object_friction's own sampling and causal
+                # diagnosis are tuned against (DetachNode is likewise unnecessary in
+                # PlaceAction for the same reason).
             ],
         )
 
