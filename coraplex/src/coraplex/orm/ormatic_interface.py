@@ -6658,6 +6658,7 @@ class PlaceActionDAO(
     grasp_release_threshold: Mapped[builtins.float] = mapped_column(
         use_existing_column=True
     )
+    max_release_attempts: Mapped[builtins.int] = mapped_column(use_existing_column=True)
 
     arm: Mapped[coraplex.datastructures.enums.Arms] = mapped_column(
         krrood.ormatic.custom_types.PolymorphicEnumType,
@@ -6852,6 +6853,7 @@ class PickUpActionDAO(
     tolerate_grasp_stall: Mapped[builtins.bool] = mapped_column(
         use_existing_column=True
     )
+    max_grasp_attempts: Mapped[builtins.int] = mapped_column(use_existing_column=True)
 
     arm: Mapped[coraplex.datastructures.enums.Arms] = mapped_column(
         krrood.ormatic.custom_types.PolymorphicEnumType,

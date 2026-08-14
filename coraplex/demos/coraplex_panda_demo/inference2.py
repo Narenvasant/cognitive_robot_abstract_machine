@@ -225,6 +225,31 @@ multi_sim = MujocoSim(
 )
 time_start = time.time()
 
+if os.environ.get("CAPTURE_FRAMES_DIR"):
+    # Opt-in diagnostic frame dumper (off by default, zero effect on normal runs):
+    # periodically saves MuJoCo's own offscreen render to CAPTURE_FRAMES_DIR, so a run
+    # can be visually reviewed afterwards without needing a screen recorder.
+    import threading as _threading
+
+    from PIL import Image as _Image
+
+    def _capture_frames_loop() -> None:
+        frames_directory = Path(os.environ["CAPTURE_FRAMES_DIR"])
+        frames_directory.mkdir(parents=True, exist_ok=True)
+        interval_seconds = float(os.environ.get("CAPTURE_FRAMES_INTERVAL", "2.0"))
+        frame_index = 0
+        while True:
+            time.sleep(interval_seconds)
+            capture = multi_sim.simulator.capture_rgb(height=480, width=640)
+            _Image.fromarray(capture.result).save(
+                frames_directory / f"frame_{frame_index:05d}.png"
+            )
+            frame_index += 1
+
+    _threading.Thread(
+        target=_capture_frames_loop, daemon=True, name="frame-capture"
+    ).start()
+
 tool_frame = gripper.tool_frame
 
 
@@ -273,19 +298,27 @@ How many times a single cube is retried with a causally corrected sample before 
 is abandoned as a hard failure.
 """
 
-ITERATION_TIME_LIMIT = 120.0
+ITERATION_TIME_LIMIT = 300.0
 """
 Wall-clock budget (in seconds) for one iteration, checked between cubes.
 
-Twice ``demo3.py``'s: a cube here can go through several correction attempts, each
-costing roughly as long as a normal attempt.
+2.5x the original 120s: :class:`~coraplex.robot_plans.actions.core.pick_up.PickUpAction`
+and :class:`~coraplex.robot_plans.actions.core.placing.PlaceAction` now each internally
+retry (see their own ``max_grasp_attempts``/``max_release_attempts``), so a single
+"attempt" here -- one call to :func:`perform_attempt` -- can itself cost as much as the
+whole old budget used to; the outer causal-correction loop below needs headroom left
+over after that, not just enough for one single-shot attempt.
 """
 
-CUBE_PICKUP_TIME_LIMIT = 40.0
+CUBE_PICKUP_TIME_LIMIT = 100.0
 """
 Wall-clock budget (in seconds) for one cube's *entire* stacking step -- its initial
 attempt, every correction retry, and any re-stack of an earlier cube it disturbs along
 the way -- checked independently of, and tighter than, :data:`ITERATION_TIME_LIMIT`.
+
+2.5x the original 40s, for the same reason as :data:`ITERATION_TIME_LIMIT`: raised
+alongside it, keeping the same ratio between them, rather than independently -- see
+:data:`ITERATION_TIME_LIMIT`'s own docstring.
 
 A cube that has rolled out of comfortable reach fails its reach the same way on every
 attempt, and no diagnosed correction fixes "the cube is somewhere else"; left bounded

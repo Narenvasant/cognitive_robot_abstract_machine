@@ -21,7 +21,8 @@ from coraplex.datastructures.enums import (
     MovementType,
 )
 from coraplex.datastructures.grasp import GraspDescription
-from coraplex.plans.factories import sequential
+from coraplex.exceptions import GraspVerificationFailed
+from coraplex.plans.factories import sequential, execute_single
 from coraplex.querying.predicates import GripperIsFree
 from coraplex.robot_plans.actions.base import ActionDescription
 from coraplex.robot_plans.mixins import (
@@ -36,7 +37,10 @@ from coraplex.robot_plans.motions.gripper import (
 from coraplex.view_manager import ViewManager
 from semantic_digital_twin.datastructures.definitions import GripperState
 from semantic_digital_twin.reasoning.predicates import allclose
-from semantic_digital_twin.reasoning.robot_predicates import is_body_gripped
+from semantic_digital_twin.reasoning.robot_predicates import (
+    is_body_gripped,
+    is_body_in_gripper,
+)
 from semantic_digital_twin.robots.robot_part_mixins import HasMobileBase
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world_description.world_entity import Body
@@ -191,6 +195,18 @@ class PickUpAction(
     one.
     """
 
+    max_grasp_attempts: int = 3
+    """
+    How many times to attempt reach+close+lift before giving up on this object.
+
+    Each attempt is verified via :meth:`_grasp_succeeded` (built on
+    :func:`~semantic_digital_twin.reasoning.robot_predicates.is_body_in_gripper`) both
+    right after closing and again after lifting, since a marginal grasp can still slip
+    out during the lift itself. A failed attempt re-opens the gripper and retries the
+    whole reach+close from :attr:`object_designator`'s current (possibly knocked)
+    position, instead of silently carrying an empty or barely-held gripper onward.
+    """
+
     def _grasp_attempt_plan(self) -> PlanNode:
         """
         :return: One reach-and-close attempt at grasping :attr:`object_designator`,
@@ -232,22 +248,65 @@ class PickUpAction(
             ],
         )
 
-    @property
-    def _action_plan(self) -> PlanNode:
+    def _lift_plan(self) -> PlanNode:
+        """
+        :return: The plan that lifts :attr:`object_designator` clear of the table
+            after a grasp attempt closed on it.
+        """
         _, _, lift_to_pose = self.grasp_description.grasp_pose_sequence(
             self.object_designator
         )
+        return MoveToolCenterPointMotion(
+            lift_to_pose,
+            self.arm,
+            allow_gripper_collision=True,
+            movement_type=MovementType.TRANSLATION,
+            max_linear_velocity=self.lift_linear_velocity,
+        )
+
+    def _grasp_succeeded(self) -> bool:
+        """
+        :return: Whether :attr:`object_designator` is currently detected between the
+            gripper's fingers, the same check :meth:`post_condition` uses.
+        """
+        end_effector = ViewManager.get_end_effector_view(self.arm, self.robot)
+        return (
+            is_body_in_gripper(self.object_designator, end_effector)
+            > self.grasp_detection_threshold
+        )
+
+    @property
+    def _action_plan(self) -> PlanNode:
         return sequential(
             children=[
                 self._grasp_attempt_plan(),
-                MoveToolCenterPointMotion(
-                    lift_to_pose,
-                    self.arm,
-                    allow_gripper_collision=True,
-                    movement_type=MovementType.TRANSLATION,
-                    max_linear_velocity=self.lift_linear_velocity,
-                ),
+                self._lift_plan(),
             ],
+        )
+
+    def execute(self) -> Any:
+        """
+        Attempt the grasp up to :attr:`max_grasp_attempts` times, verifying via
+        :meth:`_grasp_succeeded` after closing and again after lifting.
+
+        :raises GraspVerificationFailed: If :attr:`object_designator` is still not
+            detected in the gripper after every attempt.
+        """
+        for attempt in range(self.max_grasp_attempts):
+            self.add_subplan(self._grasp_attempt_plan()).perform()
+            if self._grasp_succeeded():
+                self.add_subplan(self._lift_plan()).perform()
+                if self._grasp_succeeded():
+                    return
+            if attempt < self.max_grasp_attempts - 1:
+                self.add_subplan(
+                    execute_single(
+                        MoveGripperMotion(motion=GripperState.OPEN, gripper=self.arm)
+                    )
+                ).perform()
+        raise GraspVerificationFailed(
+            object_designator=self.object_designator,
+            attempts=self.max_grasp_attempts,
         )
 
     @staticmethod
