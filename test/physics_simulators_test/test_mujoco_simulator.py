@@ -496,6 +496,47 @@ class TestMujocoSimulator:
             result.type is SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION
         )
 
+    # %% actuator control
+
+    def test_set_actuator_control_hands_the_actuator_a_new_set_point(self, simulator):
+        """
+        set_actuator_control must write the value into the actuator's own control input,
+        so a subsequent get_actuator reads it back -- without moving the joint outright
+        the way set_joint_value does.
+        """
+        set_point = 0.5
+
+        result = simulator.callbacks["set_actuator_control"](
+            actuator_name="actuator1", value=set_point
+        )
+        assert (
+            result.type
+            is SimulatorCallbackResult.ResultType.SUCCESS_AFTER_EXECUTION_ON_DATA
+        )
+
+        actuator = simulator.callbacks["get_actuator"](actuator_name="actuator1")
+        assert actuator.result.ctrl[0] == set_point
+
+    def test_set_actuator_control_reports_an_already_reached_set_point(self, simulator):
+        simulator.callbacks["set_actuator_control"](
+            actuator_name="actuator1", value=0.5
+        )
+
+        result = simulator.callbacks["set_actuator_control"](
+            actuator_name="actuator1", value=0.5
+        )
+        assert (
+            result.type is SimulatorCallbackResult.ResultType.SUCCESS_WITHOUT_EXECUTION
+        )
+
+    def test_set_actuator_control_fails_for_unknown_actuator(self, simulator):
+        result = simulator.callbacks["set_actuator_control"](
+            actuator_name="this_actuator_does_not_exist", value=0.5
+        )
+        assert (
+            result.type is SimulatorCallbackResult.ResultType.FAILURE_WITHOUT_EXECUTION
+        )
+
 
 class TestMujocoSimulatorComplex:
     file_path = os.path.join(resources_path, "mjx_single_cube_no_mesh.xml")
