@@ -12,7 +12,6 @@ from typing_extensions import Iterable, List, Sequence
 
 from experiments.causal_reasoning.tracy_rspn.evaluation import (
     EvaluationReport,
-    PipelineReport,
     QueryOutcome,
 )
 
@@ -180,18 +179,22 @@ class MarkdownReport:
 
     def _latencies(self) -> List[str]:
         lines = ["## Seconds per question", ""]
-        names = [pipeline.name for pipeline in self.report.pipelines]
+        header = ["question"]
+        for pipeline in self.report.pipelines:
+            header += [f"{pipeline.name}, first ask", f"{pipeline.name}, asked again"]
         rows = []
         for case_index, outcome in enumerate(self.report.pipelines[0].outcomes):
             row = [outcome.case.name]
             for pipeline in self.report.pipelines:
-                row.append(_number(pipeline.outcomes[case_index].duration, 2))
+                asked = pipeline.outcomes[case_index]
+                row += [_number(asked.duration, 2), _number(asked.repeat_duration, 2)]
             rows.append(row)
-        lines += _table(["question"] + names, rows)
+        lines += _table(header, rows)
         lines += [
             "",
-            "A question's time includes fitting the cause-specific model the first time "
-            "that cause is asked about, grounding, verification and adjustment.",
+            "The first ask includes fitting the cause-specific model the first time that "
+            "cause is asked about; asked again, only grounding, verification and "
+            "adjustment remain.",
         ]
         return lines
 

@@ -125,3 +125,9 @@ def test_markdown_report_names_every_question_and_marks_the_verdicts(report, cas
     assert f"{REFUSED_MARK}: {Refusal.SCHEMA_MISMATCH}" in markdown
     for pipeline in report.pipelines:
         assert pipeline.name in markdown
+
+
+def test_every_outcome_is_timed_asked_again(report):
+    for pipeline in report.pipelines:
+        for outcome in pipeline.outcomes:
+            assert outcome.repeat_duration >= 0

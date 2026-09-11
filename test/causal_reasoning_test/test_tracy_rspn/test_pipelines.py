@@ -7,11 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
-    FRICTION_LEVELS,
-    ClutteredObject,
-    ClutterPickScene,
-)
+from experiments.causal_reasoning.tracy_rspn.domain import FRICTION_LEVELS
 from experiments.causal_reasoning.tracy_rspn.evaluation import (
     QuestionAsker,
     Refusal,

@@ -14,7 +14,6 @@ from typing_extensions import Callable, Dict, List, Self, Tuple, TypeVar
 
 from experiments.causal_reasoning.tracy_rspn.domain import ClutterPickScene
 
-
 T = TypeVar("T")
 
 

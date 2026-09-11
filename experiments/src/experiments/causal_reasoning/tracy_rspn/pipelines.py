@@ -67,15 +67,16 @@ from experiments.causal_reasoning.tracy_rspn.flat_table import (
 MINIMUM_ROWS_PER_LEAF = 15
 """
 The fewest training rows a leaf of a cause-specific tree may hold: enough for a
-continuous attribute's leaf to span a range rather than pin the single value it saw,
-few enough for a stratum to still split on what else drives the effect.
+continuous attribute's leaf to span a range rather than pin the single value it saw, few
+enough for a stratum to still split on what else drives the effect.
 """
 
 PLAIN_MINIMUM_ROWS_PER_LEAF = 50
 """
-The fewest training rows a leaf of the plain tree may hold. The plain model scores
-held-out attempts, and a leaf spans only the ranges it saw, so wider leaves cover more
-of them.
+The fewest training rows a leaf of the plain tree may hold.
+
+The plain model scores held-out attempts, and a leaf spans only the ranges it saw, so
+wider leaves cover more of them.
 """
 
 # %% what a fit reports

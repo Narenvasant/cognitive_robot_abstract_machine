@@ -147,7 +147,15 @@ class QueryOutcome:
 
     duration: float
     """
-    Wall-clock seconds from asking to the answer or the refusal.
+    Wall-clock seconds from asking to the answer or the refusal, the first time the
+    question was asked -- including the fit of the cause-specific model if that cause
+    had not been asked about before.
+    """
+
+    repeat_duration: float = float("nan")
+    """
+    Wall-clock seconds the same question took asked again, with every model fitted:
+    grounding, verification and adjustment alone.
     """
 
     refusal: Optional[Refusal] = None
@@ -262,6 +270,25 @@ class QuestionAsker:
         np.random.seed(self.random_seed)
         outcome.effects = self._effects(pipeline, case)
         return outcome
+
+    def time_repeat(
+        self, pipeline: CausalQueryPipeline, case: CausalQueryCase
+    ) -> float:
+        """
+        Ask a question again and time it alone.
+
+        :param pipeline: The pipeline to ask, with every model it needs fitted.
+        :param case: The question.
+        :return: Wall-clock seconds to the answer or the refusal.
+        """
+        backend = ProbabilisticBackend(model_registry=pipeline.registry)
+        np.random.seed(self.random_seed)
+        started = time.perf_counter()
+        try:
+            backend.rank_causes(case.build())
+        except tuple(REFUSALS_BY_EXCEPTION):
+            pass
+        return time.perf_counter() - started
 
     @staticmethod
     def _effects(
@@ -452,6 +479,8 @@ def evaluate(
         )
         for case in cases:
             pipeline_report.outcomes.append(asker.ask(pipeline, case))
+        for outcome in pipeline_report.outcomes:
+            outcome.repeat_duration = asker.time_repeat(pipeline, outcome.case)
         report.pipelines.append(pipeline_report)
     covered_by_all = np.all(
         [np.isfinite(values) for values in log_likelihoods.values()], axis=0
