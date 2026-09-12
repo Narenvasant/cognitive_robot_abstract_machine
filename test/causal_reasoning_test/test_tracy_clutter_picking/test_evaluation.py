@@ -7,22 +7,22 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.tracy_rspn.dataset import ClutterPickDataset
-from experiments.causal_reasoning.tracy_rspn.evaluation import (
+from experiments.causal_reasoning.tracy_clutter_picking.dataset import ClutterPickDataset
+from experiments.causal_reasoning.tracy_clutter_picking.evaluation import (
     Refusal,
     describe_region,
     evaluate,
 )
-from experiments.causal_reasoning.tracy_rspn.queries import (
+from experiments.causal_reasoning.tracy_clutter_picking.queries import (
     CrowdingCausesLift,
     FrictionCausesLift,
     query_catalogue,
 )
-from experiments.causal_reasoning.tracy_rspn.report import (
+from experiments.causal_reasoning.tracy_clutter_picking.report import (
     MarkdownReport,
     Verdict,
 )
-from experiments.causal_reasoning.tracy_rspn.synthetic import (
+from experiments.causal_reasoning.tracy_clutter_picking.synthetic import (
     synthetic_clutter_pick_scenes,
 )
 from random_events.interval import closed

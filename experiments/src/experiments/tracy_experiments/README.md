@@ -38,4 +38,4 @@ never kinematically attached, so a poor grasp visibly fails instead of being res
 a weld.
 
 The ten-carton clutter demo built on this lives in
-`experiments/causal_reasoning/tracy_rspn`.
+`experiments/causal_reasoning/tracy_clutter_picking`.

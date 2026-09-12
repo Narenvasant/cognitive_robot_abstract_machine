@@ -1,5 +1,5 @@
 """
-Tests for :mod:`experiments.causal_reasoning.tracy_rspn.domain`.
+Tests for :mod:`experiments.causal_reasoning.tracy_clutter_picking.domain`.
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ import math
 
 import pytest
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClosingAxisSide,
     ClutterEnvironment,
     ClutterPickOutcome,

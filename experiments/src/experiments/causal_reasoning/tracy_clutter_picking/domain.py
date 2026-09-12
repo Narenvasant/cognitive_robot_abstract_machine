@@ -7,7 +7,7 @@ of it.
 
 The ten-milk MuJoCo mock produces the same classes, so the pipelines fitted on it apply
 unchanged once GraspClutter6D's own scenes are annotated (see
-:mod:`~experiments.causal_reasoning.tracy_rspn.graspclutter6d`).
+:mod:`~experiments.causal_reasoning.tracy_clutter_picking.graspclutter6d`).
 """
 
 from __future__ import annotations

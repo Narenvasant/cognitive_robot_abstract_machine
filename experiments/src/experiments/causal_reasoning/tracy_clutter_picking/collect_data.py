@@ -1,10 +1,10 @@
 """
 Record many random pick attempts in MuJoCo into a
-:class:`~experiments.causal_reasoning.tracy_rspn.dataset.ClutterPickDataset`.
+:class:`~experiments.causal_reasoning.tracy_clutter_picking.dataset.ClutterPickDataset`.
 
 Run with (the ``iai_tracy_description`` ROS package must be built and sourced)::
 
-    python -m experiments.causal_reasoning.tracy_rspn.collect_data OUTPUT.json
+    python -m experiments.causal_reasoning.tracy_clutter_picking.collect_data OUTPUT.json
         [--attempts N] [--seed N] [--objects N]
 
 The file is rewritten after every attempt, so a run stopped early still leaves what it
@@ -20,12 +20,12 @@ from pathlib import Path
 
 import numpy as np
 
-from experiments.causal_reasoning.tracy_rspn.dataset import ClutterPickDataset
-from experiments.causal_reasoning.tracy_rspn.episode import PickEpisode
-from experiments.causal_reasoning.tracy_rspn.exceptions import (
+from experiments.causal_reasoning.tracy_clutter_picking.dataset import ClutterPickDataset
+from experiments.causal_reasoning.tracy_clutter_picking.episode import PickEpisode
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     EpisodePlanningFailedError,
 )
-from experiments.causal_reasoning.tracy_rspn.layout_sampler import (
+from experiments.causal_reasoning.tracy_clutter_picking.layout_sampler import (
     ClutterLayoutSampler,
 )
 

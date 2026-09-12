@@ -7,30 +7,30 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.tracy_rspn.domain import FrictionLadder
-from experiments.causal_reasoning.tracy_rspn.evaluation import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import FrictionLadder
+from experiments.causal_reasoning.tracy_clutter_picking.evaluation import (
     QuestionAsker,
     Refusal,
 )
-from experiments.causal_reasoning.tracy_rspn.exceptions import (
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     FlatTableSchemaMismatchError,
     OneCausePerQueryError,
     PipelineNotFittedError,
 )
-from experiments.causal_reasoning.tracy_rspn.flat_table import FlatTable, SceneSchema
-from experiments.causal_reasoning.tracy_rspn.pipelines import (
+from experiments.causal_reasoning.tracy_clutter_picking.flat_table import FlatTable, SceneSchema
+from experiments.causal_reasoning.tracy_clutter_picking.pipelines import (
     CauseStratification,
     FlatTablePipeline,
     RelationalPipeline,
 )
-from experiments.causal_reasoning.tracy_rspn.queries import (
+from experiments.causal_reasoning.tracy_clutter_picking.queries import (
     ClosingAxisSideCausesDisturbance,
     CrowdingCausesLift,
     FrictionCausesLift,
     neighbour_query,
     scene_query,
 )
-from experiments.causal_reasoning.tracy_rspn.synthetic import (
+from experiments.causal_reasoning.tracy_clutter_picking.synthetic import (
     synthetic_clutter_pick_scenes,
 )
 from krrood.entity_query_language.backends import ProbabilisticBackend

@@ -45,16 +45,16 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
 from probabilistic_model.probabilistic_model import ProbabilisticModel
 from typing_extensions import Dict, List, Optional, Sequence, Union
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutteredObject,
     ClutterPickScene,
 )
-from experiments.causal_reasoning.tracy_rspn.exceptions import (
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     FlatTableSchemaMismatchError,
     OneCausePerQueryError,
     PipelineNotFittedError,
 )
-from experiments.causal_reasoning.tracy_rspn.flat_table import (
+from experiments.causal_reasoning.tracy_clutter_picking.flat_table import (
     FlatTable,
     SceneSchema,
 )

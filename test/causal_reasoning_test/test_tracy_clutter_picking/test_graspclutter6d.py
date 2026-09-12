@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterEnvironment,
     ObjectCategory,
 )
-from experiments.causal_reasoning.tracy_rspn.exceptions import UnknownSceneRecordError
-from experiments.causal_reasoning.tracy_rspn.graspclutter6d import (
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import UnknownSceneRecordError
+from experiments.causal_reasoning.tracy_clutter_picking.graspclutter6d import (
     GraspClutter6DScene,
 )
 

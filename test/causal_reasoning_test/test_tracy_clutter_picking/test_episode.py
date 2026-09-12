@@ -8,12 +8,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.tracy_rspn.domain import FrictionLadder
-from experiments.causal_reasoning.tracy_rspn.episode import PickEpisode
-from experiments.causal_reasoning.tracy_rspn.layout_sampler import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import FrictionLadder
+from experiments.causal_reasoning.tracy_clutter_picking.episode import PickEpisode
+from experiments.causal_reasoning.tracy_clutter_picking.layout_sampler import (
     ClutterLayoutSampler,
 )
-from experiments.causal_reasoning.tracy_rspn.scene import MilkClutterWorld
+from experiments.causal_reasoning.tracy_clutter_picking.scene import MilkClutterWorld
 from semantic_digital_twin.utils import tracy_installed
 
 pytestmark = pytest.mark.skipif(

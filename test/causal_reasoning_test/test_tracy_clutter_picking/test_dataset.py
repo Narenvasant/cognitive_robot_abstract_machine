@@ -7,18 +7,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.tracy_rspn.dataset import ClutterPickDataset
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.dataset import ClutterPickDataset
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterEnvironment,
     ClutterPickSceneAggregations,
     DistanceBand,
     FrictionLadder,
 )
-from experiments.causal_reasoning.tracy_rspn.layout_sampler import (
+from experiments.causal_reasoning.tracy_clutter_picking.layout_sampler import (
     ClutterLayoutSampler,
     EnvironmentDistribution,
 )
-from experiments.causal_reasoning.tracy_rspn.synthetic import (
+from experiments.causal_reasoning.tracy_clutter_picking.synthetic import (
     SyntheticPickOutcomes,
     synthetic_clutter_pick_scenes,
 )

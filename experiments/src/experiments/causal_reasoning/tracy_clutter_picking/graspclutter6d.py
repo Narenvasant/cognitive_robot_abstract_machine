@@ -6,7 +6,7 @@ GraspClutter6D stores its scenes in the BOP format: per scene, ``scene_gt.json``
 every object's id and pose in each image's camera frame, and ``scene_camera.json``
 lists each image's camera pose in the scene's world frame. Standing the objects on
 the table from those poses makes a
-:class:`~experiments.causal_reasoning.tracy_rspn.domain.ClutterSceneLayout` of them,
+:class:`~experiments.causal_reasoning.tracy_clutter_picking.domain.ClutterSceneLayout` of them,
 so the same attempt and the same pipelines apply once the objects' own models are
 annotated in the semantic digital twin.
 """
@@ -22,13 +22,13 @@ from pathlib import Path
 import numpy as np
 from typing_extensions import Any, ClassVar, Dict, List, Self
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterEnvironment,
     ClutterSceneLayout,
     ObjectCategory,
     PlacedObject,
 )
-from experiments.causal_reasoning.tracy_rspn.exceptions import UnknownSceneRecordError
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import UnknownSceneRecordError
 
 
 class SceneFile(StrEnum):

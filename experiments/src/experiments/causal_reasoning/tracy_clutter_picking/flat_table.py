@@ -15,12 +15,12 @@ import pandas as pd
 from krrood.utils import get_class_and_attribute_name
 from typing_extensions import Any, Callable, Dict, Iterable, List, Tuple
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutteredObject,
     ClutterPickScene,
     ClutterPickSceneAggregations,
 )
-from experiments.causal_reasoning.tracy_rspn.exceptions import (
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     FlatTableSchemaMismatchError,
 )
 
@@ -35,7 +35,7 @@ class SceneSchema:
     neighbours_field: str = "neighbours"
     """
     The exchangeable-part field of
-    :class:`~experiments.causal_reasoning.tracy_rspn.domain.ClutterPickScene` that holds
+    :class:`~experiments.causal_reasoning.tracy_clutter_picking.domain.ClutterPickScene` that holds
     the neighbours.
     """
 
@@ -43,7 +43,7 @@ class SceneSchema:
     def aggregation_statistics(self) -> Tuple[Callable[..., Any], ...]:
         """
         The aggregation statistics of
-        :class:`~experiments.causal_reasoning.tracy_rspn.domain.ClutterPickSceneAggregations`
+        :class:`~experiments.causal_reasoning.tracy_clutter_picking.domain.ClutterPickSceneAggregations`
         over the neighbours; the flat table carries them as columns, so it holds the
         same summaries the relational model derives from its parts.
         """

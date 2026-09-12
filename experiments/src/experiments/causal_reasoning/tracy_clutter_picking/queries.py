@@ -12,11 +12,11 @@ from krrood.entity_query_language.factories import a, cause, confounder
 from krrood.entity_query_language.query.match import Match
 from typing_extensions import Any, List
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutteredObject,
     ClutterPickScene,
 )
-from experiments.causal_reasoning.tracy_rspn.flat_table import SceneSchema
+from experiments.causal_reasoning.tracy_clutter_picking.flat_table import SceneSchema
 
 # %% building blocks
 

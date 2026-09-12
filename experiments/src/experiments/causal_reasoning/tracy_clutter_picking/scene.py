@@ -1,6 +1,6 @@
 """
 The ten-milk clutter on Tracy's own table, built for MuJoCo from a
-:class:`~experiments.causal_reasoning.tracy_rspn.domain.ClutterSceneLayout`.
+:class:`~experiments.causal_reasoning.tracy_clutter_picking.domain.ClutterSceneLayout`.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import numpy as np
 from coraplex.datastructures.enums import Arms
 from typing_extensions import Dict, List
 
-from experiments.causal_reasoning.tracy_rspn.domain import ClutterSceneLayout
+from experiments.causal_reasoning.tracy_clutter_picking.domain import ClutterSceneLayout
 from experiments.tracy_experiments.equipment import (
     add_box,
     apply_gravity_compensation,

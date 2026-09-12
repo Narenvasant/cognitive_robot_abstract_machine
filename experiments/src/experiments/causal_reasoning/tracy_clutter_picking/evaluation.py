@@ -32,23 +32,23 @@ from random_events.product_algebra import Event
 from random_events.variable import Variable
 from typing_extensions import Dict, List, Optional, Sequence, Tuple, Type
 
-from experiments.causal_reasoning.tracy_rspn.dataset import (
+from experiments.causal_reasoning.tracy_clutter_picking.dataset import (
     ClutterPickDataset,
     SuccessRate,
 )
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterPickSceneAggregations,
 )
-from experiments.causal_reasoning.tracy_rspn.exceptions import (
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     FlatTableSchemaMismatchError,
 )
-from experiments.causal_reasoning.tracy_rspn.pipelines import (
+from experiments.causal_reasoning.tracy_clutter_picking.pipelines import (
     CausalQueryPipeline,
     FitReport,
     LikelihoodReport,
     pipelines_for,
 )
-from experiments.causal_reasoning.tracy_rspn.queries import (
+from experiments.causal_reasoning.tracy_clutter_picking.queries import (
     CausalQueryCase,
     query_catalogue,
 )

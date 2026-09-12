@@ -22,14 +22,14 @@ from coraplex.view_manager import ViewManager
 from PIL import Image
 from typing_extensions import Dict, List, Optional
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterPickOutcome,
     ClutterSceneLayout,
 )
-from experiments.causal_reasoning.tracy_rspn.exceptions import (
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     EpisodePlanningFailedError,
 )
-from experiments.causal_reasoning.tracy_rspn.scene import MilkClutterWorld
+from experiments.causal_reasoning.tracy_clutter_picking.scene import MilkClutterWorld
 from experiments.tracy_experiments.equipment import joint_state_of_type
 from experiments.tracy_experiments.pick_and_place_action import PickUpActionMujoco
 from experiments.tracy_experiments.real_time_simulation import RealTimeSimulation

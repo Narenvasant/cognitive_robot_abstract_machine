@@ -4,7 +4,7 @@ write the comparison out as Markdown.
 
 Run with::
 
-    python -m experiments.causal_reasoning.tracy_rspn.run_pipeline
+    python -m experiments.causal_reasoning.tracy_clutter_picking.run_pipeline
         [--dataset ATTEMPTS.json] [--output RESULTS.md] [--train-fraction F]
         [--seed N] [--min-samples-per-leaf N]
 
@@ -22,9 +22,9 @@ from pathlib import Path
 
 from typing_extensions import Optional
 
-from experiments.causal_reasoning.tracy_rspn.dataset import ClutterPickDataset
-from experiments.causal_reasoning.tracy_rspn.evaluation import evaluate
-from experiments.causal_reasoning.tracy_rspn.report import MarkdownReport
+from experiments.causal_reasoning.tracy_clutter_picking.dataset import ClutterPickDataset
+from experiments.causal_reasoning.tracy_clutter_picking.evaluation import evaluate
+from experiments.causal_reasoning.tracy_clutter_picking.report import MarkdownReport
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ class ExperimentFiles:
     def recorded_attempts(self) -> Path:
         """
         The attempts recorded with
-        :mod:`~experiments.causal_reasoning.tracy_rspn.collect_data`.
+        :mod:`~experiments.causal_reasoning.tracy_clutter_picking.collect_data`.
         """
         return self.package_directory / "recorded" / "milk_clutter_attempts.json"
 

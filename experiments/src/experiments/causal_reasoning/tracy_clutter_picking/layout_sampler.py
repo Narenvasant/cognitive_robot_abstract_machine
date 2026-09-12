@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from typing_extensions import Dict, List, Tuple
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterEnvironment,
     ClutterSceneLayout,
     FrictionLadder,

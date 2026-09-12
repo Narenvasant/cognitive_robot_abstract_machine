@@ -141,18 +141,18 @@ builds the MuJoCo scene. Headless runs need MuJoCo's EGL backend
 
 ```bash
 # watch one attempt in the viewer (add --headless --screenshots DIR for images only)
-python -m experiments.causal_reasoning.tracy_rspn.demo --seed 3
+python -m experiments.causal_reasoning.tracy_clutter_picking.demo --seed 3
 
 # record attempts (about 15 s each headless; the file is rewritten after every attempt)
-python -m experiments.causal_reasoning.tracy_rspn.collect_data \
-    experiments/src/experiments/causal_reasoning/tracy_rspn/recorded/milk_clutter_attempts.json \
+python -m experiments.causal_reasoning.tracy_clutter_picking.collect_data \
+    experiments/src/experiments/causal_reasoning/tracy_clutter_picking/recorded/milk_clutter_attempts.json \
     --attempts 300
 
 # fit, score and question both pipelines; needs the experiments ORM interface
 python scripts/regenerate_all_orm.py
-python -m experiments.causal_reasoning.tracy_rspn.run_pipeline
+python -m experiments.causal_reasoning.tracy_clutter_picking.run_pipeline
 ```
 
-The tests under `test/causal_reasoning_test/test_tracy_rspn` run the pipelines on the
+The tests under `test/causal_reasoning_test/test_tracy_clutter_picking` run the pipelines on the
 synthetic attempts, so they need no simulator. The ones that build the MuJoCo scene are
 skipped where Tracy's description is not installed.

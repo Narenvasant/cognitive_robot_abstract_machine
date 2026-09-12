@@ -4,7 +4,7 @@ friction alone.
 
 Run with (the ``iai_tracy_description`` ROS package must be built and sourced)::
 
-    python -m experiments.causal_reasoning.tracy_rspn.demo [--seed N] [--headless]
+    python -m experiments.causal_reasoning.tracy_clutter_picking.demo [--seed N] [--headless]
         [--screenshots DIRECTORY]
 """
 
@@ -17,8 +17,8 @@ from pathlib import Path
 import numpy as np
 from typing_extensions import Optional
 
-from experiments.causal_reasoning.tracy_rspn.episode import PickEpisode
-from experiments.causal_reasoning.tracy_rspn.layout_sampler import (
+from experiments.causal_reasoning.tracy_clutter_picking.episode import PickEpisode
+from experiments.causal_reasoning.tracy_clutter_picking.layout_sampler import (
     ClutterLayoutSampler,
 )
 

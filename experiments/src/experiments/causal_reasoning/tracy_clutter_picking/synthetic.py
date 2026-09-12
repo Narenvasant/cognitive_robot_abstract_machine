@@ -6,7 +6,7 @@ without a simulator.
 Friction lets the fingers hold the target; every adjacent neighbour is in the way of the
 descending fingers and takes a share of that hold away; and the environment drives both
 (see
-:meth:`~experiments.causal_reasoning.tracy_rspn.layout_sampler.EnvironmentDistribution.of_mock_environments`),
+:meth:`~experiments.causal_reasoning.tracy_clutter_picking.layout_sampler.EnvironmentDistribution.of_mock_environments`),
 which is what makes it a confounder of friction and success.
 """
 
@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from typing_extensions import List
 
-from experiments.causal_reasoning.tracy_rspn.domain import (
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterPickOutcome,
     ClutterPickScene,
     ClutterSceneLayout,
@@ -25,7 +25,7 @@ from experiments.causal_reasoning.tracy_rspn.domain import (
     FrictionLadder,
     NeighbourThresholds,
 )
-from experiments.causal_reasoning.tracy_rspn.layout_sampler import (
+from experiments.causal_reasoning.tracy_clutter_picking.layout_sampler import (
     ClutterLayoutSampler,
 )
 

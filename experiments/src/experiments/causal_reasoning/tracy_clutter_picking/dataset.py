@@ -12,7 +12,7 @@ import numpy as np
 from krrood.adapters.json_serializer import from_json, to_json
 from typing_extensions import Callable, Dict, List, Self, Tuple, TypeVar
 
-from experiments.causal_reasoning.tracy_rspn.domain import ClutterPickScene
+from experiments.causal_reasoning.tracy_clutter_picking.domain import ClutterPickScene
 
 T = TypeVar("T")
 

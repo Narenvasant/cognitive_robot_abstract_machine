@@ -1,5 +1,5 @@
 """
-Writing an :class:`~experiments.causal_reasoning.tracy_rspn.evaluation.EvaluationReport`
+Writing an :class:`~experiments.causal_reasoning.tracy_clutter_picking.evaluation.EvaluationReport`
 out as Markdown, with every table explained and the answers put into words.
 """
 
@@ -11,7 +11,7 @@ from enum import StrEnum
 
 from typing_extensions import Iterable, List, Optional, Sequence
 
-from experiments.causal_reasoning.tracy_rspn.evaluation import (
+from experiments.causal_reasoning.tracy_clutter_picking.evaluation import (
     EvaluationReport,
     InterventionalEffect,
     PipelineReport,
