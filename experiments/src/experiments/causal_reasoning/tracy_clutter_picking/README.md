@@ -68,10 +68,11 @@ it summed out by backdoor adjustment.
 | `synthetic.py` | a closed-form stand-in for the attempt with the same causal structure, so the pipelines are tested without a simulator |
 | `dataset.py` | the attempts on disk, their train/test split, and success rates grouped by any key |
 
-The MuJoCo stack the demo drives lives in `experiments/tracy_experiments`: parsing and
-mounting Tracy, servos, self-collision exclusion, the real-time simulation, trajectory
-planning against a scratch copy of the world, the pick and place actions, and contact
-tuning.
+The MuJoCo stack the demo drives lives in the `tracy_mujoco_addons/` subpackage:
+parsing and mounting Tracy, servos, self-collision exclusion, the real-time simulation,
+trajectory planning against a scratch copy of the world, the pick and place actions,
+and contact tuning. Its own README explains why motions are planned by Giskard but
+executed through MuJoCo actuators.
 
 ## The pipelines
 

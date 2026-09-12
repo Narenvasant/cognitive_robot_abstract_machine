@@ -12,7 +12,7 @@ from coraplex.datastructures.enums import Arms
 from typing_extensions import Dict, List
 
 from experiments.causal_reasoning.tracy_clutter_picking.domain import ClutterSceneLayout
-from experiments.tracy_experiments.equipment import (
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.equipment import (
     add_box,
     apply_gravity_compensation,
     equip_arms_with_servos,
@@ -23,8 +23,13 @@ from experiments.tracy_experiments.equipment import (
     parse_tracy,
     tracy_table_mount_position,
 )
-from experiments.tracy_experiments.grasp_contact import ContactParameters
-from experiments.tracy_experiments.trajectory_planning import RobotiqGripper, arm_of
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.grasp_contact import (
+    ContactParameters,
+)
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.trajectory_planning import (
+    RobotiqGripper,
+    arm_of,
+)
 from semantic_digital_twin.adapters.multi_sim import MujocoCamera, MujocoLight
 from semantic_digital_twin.datastructures.definitions import (
     GripperState,

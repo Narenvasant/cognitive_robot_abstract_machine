@@ -1,5 +1,6 @@
 """
-Tests for :mod:`experiments.tracy_experiments.real_time_simulation`.
+Tests for :mod:`experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.r
+eal_time_simulation`.
 """
 
 from __future__ import annotations
@@ -8,7 +9,7 @@ import time
 
 import pytest
 
-from experiments.tracy_experiments.real_time_simulation import (
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.real_time_simulation import (
     RealTimeSimulation,
     SimulationNotStartedError,
 )

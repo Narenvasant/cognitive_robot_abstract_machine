@@ -13,10 +13,10 @@ designators, each of which ticks Giskard's own closed loop live against the worl
 model. That races
 :class:`~semantic_digital_twin.adapters.multi_sim.MujocoSynchronizer`'s own
 physics-thread state sync for a physically simulated robot -- see
-:mod:`~experiments.tracy_experiments.equipment`'s own module docstring. These two
+:mod:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.equipment`'s own module docstring. These two
 actions instead plan each reach by Giskard against an isolated scratch copy of the
 world and play the resulting trajectory back by commanding the real MuJoCo actuators
-(see :class:`~experiments.tracy_experiments.trajectory_planning.TrajectoryPlanner`).
+(see :class:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.trajectory_planning.TrajectoryPlanner`).
 
 Unlike ``PickUpAction``/``PlaceAction``, neither action here kinematically attaches or
 detaches the object: the object is held only by real MuJoCo contact friction between
@@ -42,8 +42,10 @@ from coraplex.datastructures.grasp import GraspDescription
 from coraplex.plans.factories import code
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.base import ActionDescription
-from experiments.tracy_experiments.real_time_simulation import RealTimeSimulation
-from experiments.tracy_experiments.trajectory_planning import (
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.real_time_simulation import (
+    RealTimeSimulation,
+)
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.trajectory_planning import (
     RobotiqGripper,
     TrajectoryPlanner,
     arm_of,
@@ -269,7 +271,9 @@ class PickUpActionMujoco(MujocoArmAction):
     squeeze_margin: Optional[float] = None
     """
     How far past the object's own half-width the fingers close, in metres; the planner's
-    own :attr:`~experiments.tracy_experiments.trajectory_planning.TrajectoryPlanner.squeeze_margin` if not given.
+    own
+    :attr:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.trajectory_planning.TrajectoryPlanner.squeeze_margin`
+    if not given.
 
     Raise it for an object held at a point or edge rather than a flat face.
     """
@@ -277,7 +281,8 @@ class PickUpActionMujoco(MujocoArmAction):
     grasp_half_width: Optional[float] = None
     """
     Half the width the pads are to meet the object across, in metres, for an object
-    grasped across a known pair of faces; see :meth:`~experiments.tracy_experiments.trajectory_planning.TrajectoryPlanner.close_gripper_around`.
+    grasped across a known pair of faces; see
+    :meth:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.trajectory_planning.TrajectoryPlanner.close_gripper_around`.
 
     Defaults to reading it off the object's bounding box in the gripper frame.
     """

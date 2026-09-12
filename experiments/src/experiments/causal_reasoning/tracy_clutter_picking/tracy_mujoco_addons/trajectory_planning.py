@@ -6,7 +6,7 @@ simulated MuJoCo world by driving each joint's own position-servo actuator direc
 Giskard never touches the live, physically simulated world under this module: it only
 ever ticks against a :func:`copy.deepcopy` of it, so it cannot race
 :class:`~semantic_digital_twin.adapters.multi_sim.MujocoSynchronizer`'s own
-physics-thread state sync (see :mod:`~experiments.tracy_experiments.equipment`'s own
+physics-thread state sync (see :mod:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.equipment`'s own
 module docstring). Execution then drives real MuJoCo actuators the same way, so tracking
 is genuinely closed-loop against measured physics, not open-loop trajectory replay.
 
@@ -38,8 +38,12 @@ from typing_extensions import Dict, List, Optional
 
 from coraplex.datastructures.enums import Arms
 from coraplex.exceptions import MotionDidNotFinish
-from experiments.tracy_experiments.equipment import joint_state_of_type
-from experiments.tracy_experiments.real_time_simulation import RealTimeSimulation
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.equipment import (
+    joint_state_of_type,
+)
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.real_time_simulation import (
+    RealTimeSimulation,
+)
 from semantic_digital_twin.datastructures.definitions import (
     GripperState,
     StaticJointState,
@@ -405,8 +409,9 @@ class TrajectoryPlanner:
     ) -> None:
         """
         Drive ``actuators`` through ``trajectory`` on the real, physically simulated
-        world, one recorded waypoint per :meth:`~experiments.tracy_experiments.real_time_simulation.RealTimeSimulation.advance` step, then hold the final waypoint until
-        every joint settles.
+        world, one recorded waypoint per
+        :meth:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.real_time_simulation.RealTimeSimulation.advance`
+        step, then hold the final waypoint until every joint settles.
 
         :param simulation: The running real-time simulation to drive.
         :param actuators: Every joint's own actuator, keyed by joint name.

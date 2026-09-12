@@ -1,6 +1,6 @@
-# Tracy experiments
+# Tracy MuJoCo add-ons
 
-These Tracy demos drive the robot by commanding MuJoCo actuators directly rather than
+The clutter-picking demo drives Tracy by commanding MuJoCo actuators directly rather than
 through Giskard's live closed loop. Giskard's own QP control loop reads `world.state`
 as its belief of the robot's current position, but for a physically simulated degree
 of freedom that same state is also written by Giskard's own prior command. Giskard can
@@ -37,5 +37,5 @@ A grasped object is held by real contact friction between the fingers throughout
 never kinematically attached, so a poor grasp visibly fails instead of being rescued by
 a weld.
 
-The ten-carton clutter demo built on this lives in
-`experiments/causal_reasoning/tracy_clutter_picking`.
+The ten-carton clutter demo built on this is the enclosing
+`tracy_clutter_picking` package.

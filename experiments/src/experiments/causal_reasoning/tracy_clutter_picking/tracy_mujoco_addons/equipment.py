@@ -9,9 +9,9 @@ for a physically simulated DOF that same state is also written by Giskard's own 
 command, not exclusively by MuJoCo's true physics readback -- so Giskard can be
 satisfied by its own prior write, not by the robot actually having moved. Driving the
 actuators directly via
-:meth:`~experiments.tracy_experiments.real_time_simulation.RealTimeSimulation.command`,
+:meth:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.real_time_simulation.RealTimeSimulation.command`,
 and planning Cartesian/joint goals against an isolated scratch copy of the world (see
-:mod:`~experiments.tracy_experiments.trajectory_planning`) rather than through Giskard's
+:mod:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.trajectory_planning`) rather than through Giskard's
 live closed loop, sidesteps this entirely.
 """
 
@@ -23,7 +23,7 @@ from enum import IntEnum
 import mujoco
 from typing_extensions import Dict, Iterable, Tuple, Type
 
-from experiments.tracy_experiments.grasp_contact import (
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.grasp_contact import (
     ContactParameters,
     mujoco_geom_for,
 )
@@ -213,7 +213,7 @@ def joint_state_of_type(robot_part: AbstractRobotPart, state_type) -> JointState
 
 
 def parse_tracy(
-    mount_root_name: PrefixedName = PrefixedName("tracy_mount", "tracy_experiments"),
+    mount_root_name: PrefixedName = PrefixedName("tracy_mount", "tracy_mujoco_addons"),
 ) -> World:
     """
     Read Tracy out of its own ``iai_tracy_description`` ROS package, without any
@@ -449,7 +449,7 @@ def _equip_connections_with_servos(
     """
     Give every one of ``connections`` a position-servo actuator, its own passive
     damping, and armature, driven directly via
-    :meth:`~experiments.tracy_experiments.real_time_simulation.RealTimeSimulation.command`
+    :meth:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.real_time_simulation.RealTimeSimulation.command`
     rather than through Giskard.
 
     A mimic linkage (e.g. the Robotiq gripper's underactuated four-bar mechanism) shares

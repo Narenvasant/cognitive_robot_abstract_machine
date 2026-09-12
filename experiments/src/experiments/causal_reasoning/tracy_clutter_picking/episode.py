@@ -1,8 +1,8 @@
 """
 One attempt to pick the target carton out of a layout's clutter, with MuJoCo standing in
 for Tracy and the target held by contact friction alone: the same
-:class:`~experiments.tracy_experiments.pick_and_place_action.PickUpActionMujoco` the
-Montessori and cube-stacking demos use, run as an ordinary coraplex plan.
+:class:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.pick_and_place_action.PickUpActionMujoco`
+the Montessori and cube-stacking demos use, run as an ordinary coraplex plan.
 """
 
 from __future__ import annotations
@@ -30,9 +30,15 @@ from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     EpisodePlanningFailedError,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.scene import MilkClutterWorld
-from experiments.tracy_experiments.equipment import joint_state_of_type
-from experiments.tracy_experiments.pick_and_place_action import PickUpActionMujoco
-from experiments.tracy_experiments.real_time_simulation import RealTimeSimulation
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.equipment import (
+    joint_state_of_type,
+)
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.pick_and_place_action import (
+    PickUpActionMujoco,
+)
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.real_time_simulation import (
+    RealTimeSimulation,
+)
 from semantic_digital_twin.datastructures.definitions import StaticJointState
 
 logger = logging.getLogger(__name__)
@@ -91,7 +97,9 @@ class PickEpisode:
 
     real_time_factor: Optional[float] = None
     """
-    See :attr:`~experiments.tracy_experiments.real_time_simulation.RealTimeSimulation.real_time_factor`; unpaced by default, for collecting data in batch.
+    See
+    :attr:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.real_time_simulation.RealTimeSimulation.real_time_factor`;
+    unpaced by default, for collecting data in batch.
     """
 
     screenshot_directory: Optional[Path] = None

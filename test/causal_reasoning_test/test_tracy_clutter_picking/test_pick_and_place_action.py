@@ -1,6 +1,6 @@
 """
-Tests for the grasp geometry :mod:`experiments.tracy_experiments.pick_and_place_action`
-derives from a mounted Tracy.
+Tests for the grasp geometry :mod:`experiments.causal_reasoning.tracy_clutter_picking.tr
+acy_mujoco_addons.pick_and_place_action` derives from a mounted Tracy.
 """
 
 from __future__ import annotations
@@ -11,12 +11,12 @@ import numpy
 import pytest
 
 from coraplex.datastructures.enums import Arms
-from experiments.tracy_experiments.equipment import (
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.equipment import (
     mount_stationary_robot,
     parse_tracy,
     tracy_table_mount_position,
 )
-from experiments.tracy_experiments.pick_and_place_action import (
+from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.pick_and_place_action import (
     TopDownGraspGeometry,
     bounding_box_center_world,
 )
