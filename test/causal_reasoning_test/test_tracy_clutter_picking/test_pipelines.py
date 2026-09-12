@@ -218,11 +218,13 @@ def test_relational_pipeline_answers_a_question_about_one_neighbour(
     assert set(_adjusted_by_region(outcome)) == {"along", "across"}
 
 
-def test_each_cause_gets_its_own_model(relational_pipeline, schema):
+def test_each_cause_gets_its_own_model(relational_pipeline, schema, asker):
     """
-    Every distinct cause asked about so far fitted one further model, on top of the
-    plain one.
+    Every distinct cause asked about fitted one further model, on top of the plain one.
     """
+    asker.ask(relational_pipeline, FrictionCausesLift(RECORDED_NEIGHBOUR_COUNT))
+    asker.ask(relational_pipeline, CrowdingCausesLift(RECORDED_NEIGHBOUR_COUNT))
+
     assert relational_pipeline.fit_report.model_count == 1 + len(
         relational_pipeline.cause_models
     )
