@@ -1,5 +1,6 @@
 """
-Storing recorded attempts on disk and splitting them for fitting and evaluation.
+Storing recorded attempts on disk, fetching a hosted set of them, and splitting them for
+fitting and evaluation.
 """
 
 from __future__ import annotations
@@ -7,9 +8,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
+import requests
 from krrood.adapters.json_serializer import from_json, to_json
+from platformdirs import user_cache_dir
 from typing_extensions import Callable, Dict, List, Self, Tuple, TypeVar
 
 from experiments.causal_reasoning.tracy_clutter_picking.domain import ClutterPickScene
@@ -113,3 +117,69 @@ class ClutterPickDataset:
         first = [self.scenes[index] for index in order[:split_index]]
         second = [self.scenes[index] for index in order[split_index:]]
         return type(self)(first), type(self)(second)
+
+
+# %% hosted dataset
+
+
+@dataclass(frozen=True)
+class HostedDataset:
+    """
+    A recorded dataset kept outside the repository and fetched into the user's cache the
+    first time it is needed.
+    """
+
+    url: str
+    """
+    Where the dataset's JSON file is hosted.
+    """
+
+    cache_directory: Path = field(
+        default_factory=lambda: Path(user_cache_dir(__package__.split(".", 1)[0]))
+        / "tracy_clutter_picking"
+    )
+    """
+    Where the fetched file is kept.
+    """
+
+    download_timeout: float = 60.0
+    """
+    How long, in seconds, to wait for the host before giving up.
+    """
+
+    download_chunk_size: int = 1 << 16
+    """
+    How many bytes of the file are written at a time while it is fetched.
+    """
+
+    @property
+    def path(self) -> Path:
+        """
+        Where the fetched file lies, whether it has been fetched yet or not.
+        """
+        return self.cache_directory / Path(urlparse(self.url).path).name
+
+    def fetch(self) -> Path:
+        """
+        Download the file unless it has been fetched before.
+
+        :return: The fetched file.
+        :raises requests.HTTPError: If the host does not serve the file.
+        """
+        if self.path.exists():
+            return self.path
+        self.cache_directory.mkdir(parents=True, exist_ok=True)
+        with requests.get(
+            self.url, stream=True, timeout=self.download_timeout
+        ) as response:
+            response.raise_for_status()
+            with self.path.open("wb") as file:
+                for chunk in response.iter_content(chunk_size=self.download_chunk_size):
+                    file.write(chunk)
+        return self.path
+
+    def load(self) -> ClutterPickDataset:
+        """
+        :return: The hosted attempts, fetched if need be.
+        """
+        return ClutterPickDataset.load(self.fetch())

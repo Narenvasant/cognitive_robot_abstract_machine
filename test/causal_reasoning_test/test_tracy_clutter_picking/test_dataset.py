@@ -4,10 +4,20 @@ Tests for the synthetic attempts and their on-disk dataset.
 
 from __future__ import annotations
 
+import os
+from dataclasses import replace
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
+
 import numpy as np
 import pytest
+from requests import HTTPError
 
-from experiments.causal_reasoning.tracy_clutter_picking.dataset import ClutterPickDataset
+from experiments.causal_reasoning.tracy_clutter_picking.dataset import (
+    ClutterPickDataset,
+    HostedDataset,
+)
 from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterEnvironment,
     ClutterPickSceneAggregations,
@@ -18,10 +28,19 @@ from experiments.causal_reasoning.tracy_clutter_picking.layout_sampler import (
     ClutterLayoutSampler,
     EnvironmentDistribution,
 )
+from experiments.causal_reasoning.tracy_clutter_picking.run_pipeline import (
+    ExperimentFiles,
+)
 from experiments.causal_reasoning.tracy_clutter_picking.synthetic import (
     SyntheticPickOutcomes,
     synthetic_clutter_pick_scenes,
 )
+
+CONTINUOUS_INTEGRATION_VARIABLE = "CI"
+"""
+The environment variable a continuous-integration run sets, where the network is not
+relied on.
+"""
 
 
 @pytest.fixture
@@ -123,3 +142,62 @@ def test_success_rate_by_environment_counts_every_scene_once(scenes):
             sum(scene.lifted for scene in scenes if scene.environment == environment)
             / rate.attempt_count
         )
+
+
+# %% hosted dataset
+
+
+@pytest.fixture
+def hosted_file(scenes, tmp_path):
+    """
+    A dataset served over HTTP from a directory standing in for the host.
+    """
+    served_directory = tmp_path / "served"
+    ClutterPickDataset(scenes).save(served_directory / "attempts.json")
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), partial(SimpleHTTPRequestHandler, directory=served_directory)
+    )
+    Thread(target=server.serve_forever, daemon=True).start()
+    yield HostedDataset(
+        url=f"http://127.0.0.1:{server.server_port}/attempts.json",
+        cache_directory=tmp_path / "cache",
+    )
+    server.shutdown()
+
+
+def test_hosted_dataset_is_fetched_into_the_cache(hosted_file, scenes):
+    path = hosted_file.fetch()
+
+    assert path == hosted_file.cache_directory / "attempts.json"
+    assert hosted_file.load().scenes == scenes
+
+
+def test_hosted_dataset_is_fetched_once(hosted_file):
+    first = hosted_file.fetch()
+    first.write_text("cached")
+
+    assert hosted_file.fetch().read_text() == "cached"
+
+
+def test_missing_hosted_dataset_raises(hosted_file):
+    missing = HostedDataset(
+        url=hosted_file.url.replace("attempts.json", "missing.json"),
+        cache_directory=hosted_file.cache_directory,
+    )
+
+    with pytest.raises(HTTPError):
+        missing.fetch()
+    assert not missing.path.exists()
+
+
+@pytest.mark.skipif(
+    os.environ.get(CONTINUOUS_INTEGRATION_VARIABLE, "false").lower() == "true",
+    reason="fetches the hosted attempts over the network",
+)
+def test_hosted_attempts_are_fetched_from_their_repository(tmp_path):
+    hosted = replace(ExperimentFiles().recorded_attempts, cache_directory=tmp_path)
+
+    dataset = hosted.load()
+
+    assert len(dataset.scenes) == 300
+    assert {len(scene.neighbours) for scene in dataset.scenes} == {9}

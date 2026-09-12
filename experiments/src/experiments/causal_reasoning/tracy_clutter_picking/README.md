@@ -64,9 +64,9 @@ it summed out by backdoor adjustment.
 | `episode.py` | `PickEpisode`: park, pick the target with `PickUpActionMujoco`, measure how far it rose and how far each neighbour moved |
 | `demo.py` | watch one attempt in the viewer, or render before/after screenshots headless |
 | `layout_sampler.py` | `ClutterLayoutSampler`: a jittered grid of ten cartons in a table or bin environment, a random target, a friction level and a grasp yaw |
-| `collect_data.py` | record many attempts headless into `recorded/milk_clutter_attempts.json`, rewritten after every attempt |
+| `collect_data.py` | record many attempts headless into a JSON file, rewritten after every attempt |
 | `synthetic.py` | a closed-form stand-in for the attempt with the same causal structure, so the pipelines are tested without a simulator |
-| `dataset.py` | the attempts on disk, their train/test split, and success rates grouped by any key |
+| `dataset.py` | the attempts on disk, the hosted set of them fetched into the user's cache, their train/test split, and success rates grouped by any key |
 
 The MuJoCo stack the demo drives lives in the `tracy_mujoco_addons/` subpackage:
 parsing and mounting Tracy, servos, self-collision exclusion, the real-time simulation,
@@ -141,13 +141,21 @@ python -m experiments.causal_reasoning.tracy_clutter_picking.demo --seed 3
 
 # record attempts (about 15 s each headless; the file is rewritten after every attempt)
 python -m experiments.causal_reasoning.tracy_clutter_picking.collect_data \
-    experiments/src/experiments/causal_reasoning/tracy_clutter_picking/recorded/milk_clutter_attempts.json \
-    --attempts 300
+    data/milk_clutter_attempts.json --attempts 300
 
 # fit, score and question both pipelines; needs the experiments ORM interface
 python scripts/regenerate_all_orm.py
 python -m experiments.causal_reasoning.tracy_clutter_picking.run_pipeline
+
+# the same on attempts you recorded yourself
+python -m experiments.causal_reasoning.tracy_clutter_picking.run_pipeline \
+    --dataset data/milk_clutter_attempts.json
 ```
+
+The recorded attempts `results.md` is built from are not in this repository. They are
+hosted in [tracy_clutter_picking_data](https://github.com/Narenvasant/tracy_clutter_picking_data)
+and fetched into the user's cache the first time `run_pipeline` needs them;
+`ExperimentFiles.recorded_attempts` pins the version.
 
 The tests under `test/causal_reasoning_test/test_tracy_clutter_picking` run the pipelines on the
 synthetic attempts, so they need no simulator. The ones that build the MuJoCo scene are

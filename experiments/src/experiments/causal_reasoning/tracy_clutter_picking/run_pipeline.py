@@ -22,7 +22,10 @@ from pathlib import Path
 
 from typing_extensions import Optional
 
-from experiments.causal_reasoning.tracy_clutter_picking.dataset import ClutterPickDataset
+from experiments.causal_reasoning.tracy_clutter_picking.dataset import (
+    ClutterPickDataset,
+    HostedDataset,
+)
 from experiments.causal_reasoning.tracy_clutter_picking.evaluation import evaluate
 from experiments.causal_reasoning.tracy_clutter_picking.report import MarkdownReport
 
@@ -30,7 +33,7 @@ from experiments.causal_reasoning.tracy_clutter_picking.report import MarkdownRe
 @dataclass(frozen=True)
 class ExperimentFiles:
     """
-    Where this experiment keeps its recorded attempts and writes its comparison.
+    Where this experiment reads its recorded attempts from and writes its comparison.
     """
 
     package_directory: Path = Path(__file__).parent
@@ -38,13 +41,14 @@ class ExperimentFiles:
     Where this experiment lives.
     """
 
-    @property
-    def recorded_attempts(self) -> Path:
-        """
-        The attempts recorded with
-        :mod:`~experiments.causal_reasoning.tracy_clutter_picking.collect_data`.
-        """
-        return self.package_directory / "recorded" / "milk_clutter_attempts.json"
+    recorded_attempts: HostedDataset = HostedDataset(
+        "https://raw.githubusercontent.com/Narenvasant/tracy_clutter_picking_data/v2/milk_clutter_attempts.json"
+    )
+    """
+    The attempts recorded with
+    :mod:`~experiments.causal_reasoning.tracy_clutter_picking.collect_data`, hosted in
+    their own repository and fetched on first use.
+    """
 
     @property
     def results(self) -> Path:
@@ -58,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 
 def main(
-    dataset: Path,
+    dataset: Optional[Path],
     output: Path,
     train_fraction: float,
     seed: int,
@@ -68,7 +72,8 @@ def main(
     """
     Run the comparison and write it out.
 
-    :param dataset: The recorded attempts to read.
+    :param dataset: A local file of recorded attempts to read; the hosted ones if not
+        given.
     :param output: The Markdown file to write.
     :param train_fraction: Share of attempts to fit on.
     :param seed: Seed of the split and of the questions' Monte-Carlo grounding.
@@ -79,8 +84,14 @@ def main(
     """
     import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO classes
 
+    files = ExperimentFiles()
+    attempts = (
+        files.recorded_attempts.load()
+        if dataset is None
+        else ClutterPickDataset.load(dataset)
+    )
     report = evaluate(
-        ClutterPickDataset.load(dataset),
+        attempts,
         train_fraction=train_fraction,
         random_seed=seed,
         min_samples_per_leaf=min_samples_per_leaf,
@@ -94,7 +105,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
     parser = argparse.ArgumentParser(description=__doc__)
     files = ExperimentFiles()
-    parser.add_argument("--dataset", type=Path, default=files.recorded_attempts)
+    parser.add_argument("--dataset", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=files.results)
     parser.add_argument("--train-fraction", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=0)
