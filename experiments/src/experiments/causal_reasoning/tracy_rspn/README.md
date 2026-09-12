@@ -1,34 +1,34 @@
-# Tracy picks one milk out of ten: relational causal circuits against a flat tree
+# Tracy clutter picking: relational circuit against flat-table tree
 
 ## What this experiment is for
 
 Relational sum-product networks (RSPNs) are less expressive than most machine-learning
-models. The argument this experiment makes is that they are expressive *enough*: a
+models. The argument this experiment makes is that they are expressive *enough*. A
 relational circuit fitted on a robot's own recorded attempts can answer causal questions
-about a cluttered pick -- questions a flat model cannot even pose -- and the answers
-hold up on a task a robot actually executes.
+about a cluttered pick, including questions a flat model cannot even pose, and the
+answers hold up on a task a robot actually executes.
 
-Tracy's left arm picks one milk carton out of a ten-carton clutter in MuJoCo. The carton
-is held by contact friction between the fingertip pads alone; there is no kinematic
+Tracy's left arm picks one milk carton out of a clutter of ten in MuJoCo. The carton is
+held by contact friction between the fingertip pads alone. There is no kinematic
 attachment, so a poor grasp visibly fails. Every attempt is recorded as a relational
 scene and fed to two pipelines that are asked the very same `cause`/`causes_effect`
-EQL queries:
+EQL queries.
 
-- **relational circuit** -- an RSPN fitted on the scenes' relational structure,
-  grounded per query into a circuit over exactly the queried objects, registered as a
-  `CausalCircuit`;
-- **flat-table tree** -- a joint probability tree (JPT) fitted on the same attempts
-  flattened into one fixed-width table, registered as a `CausalCircuit` the same way.
+- The **relational circuit** is an RSPN fitted on the scenes' relational structure. For
+  every query it grounds itself into a circuit over exactly the objects the query
+  names and registers that circuit as a `CausalCircuit`.
+- The **flat-table tree** is a joint probability tree (JPT) fitted on the same attempts
+  flattened into one fixed-width table. It is registered as a `CausalCircuit` in the
+  same way.
 
-`results.md` is the comparison: which questions each pipeline answers and what, how
-many models each fitted, how long, how big, how well each explains held-out attempts,
-how fast each answers, and how often the pick came up in the first place.
+`results.md` holds the comparison: which questions each pipeline answers and what it
+answers, how many models each fitted, how long that took, how big the models are, how
+well each explains held-out attempts, how fast each answers, and how often the pick
+came up in the first place.
 
 The scene classes follow the shape of the
-[GraspClutter6D](https://sites.google.com/view/graspclutter6d) dataset (an environment
-kind, many objects with known poses, a grasp scored by the friction it relies on), so
-its scenes replace the ten-milk mock once they are annotated in the semantic digital
-twin; `graspclutter6d.py` already reads its BOP-format scene files into a layout.
+[GraspClutter6D](https://sites.google.com/view/graspclutter6d) dataset: an environment
+kind, many objects with known poses, and a grasp scored by the friction it relies on.
 
 ## The domain
 
@@ -47,17 +47,17 @@ twin; `graspclutter6d.py` already reads its BOP-format scene files into a layout
 **Why friction.** GraspNet-1Billion and GraspClutter6D score a grasp by the smallest
 friction coefficient it still closes under, so friction is the natural causal knob of a
 grasp dataset. An attempt's friction coefficient is set on the cartons' geoms *and* on
-the picking gripper's fingertip pads: MuJoCo gives a contact the larger of its two
+the picking gripper's fingertip pads. MuJoCo gives a contact the larger of its two
 geoms' friction, so a slippery carton only slips if the pads closing on it are no
 grippier. The ladder sits around the coefficient below which a carton slips out of the
-pads, and every level is exactly representable in single precision, because a circuit's
-support is read back in single precision and a level that rounds there would no longer
+pads. Every level is exactly representable in single precision, because a circuit's
+support is read back in single precision, and a level that rounds there would no longer
 match the point its own leaves sit on.
 
 **Why the environment is a confounder.** A clutter stands on a *table* or in a *bin*
 (`layout_sampler.py`). A bin packs the cartons more tightly *and* holds only the
 slippery ones, so in the recorded attempts friction and crowding are correlated without
-either causing the other; a question that marks the environment as a `confounder` has
+either causing the other. A question that marks the environment as a `confounder` has
 it summed out by backdoor adjustment.
 
 ## The demo and the data
@@ -73,16 +73,16 @@ it summed out by backdoor adjustment.
 | `dataset.py` | the attempts on disk, their train/test split, and success rates grouped by any key |
 | `graspclutter6d.py` | reading a BOP-format GraspClutter6D scene (`scene_gt.json`, `scene_camera.json`) into a layout |
 
-The MuJoCo stack the demo drives (parsing and mounting Tracy, servos, self-collision
-exclusion, the real-time simulation, trajectory planning against a scratch copy of the
-world, the pick and place actions, contact tuning) lives in
-`experiments/tracy_experiments`.
+The MuJoCo stack the demo drives lives in `experiments/tracy_experiments`: parsing and
+mounting Tracy, servos, self-collision exclusion, the real-time simulation, trajectory
+planning against a scratch copy of the world, the pick and place actions, and contact
+tuning.
 
 ## The pipelines
 
 | file | what it holds |
 |---|---|
-| `flat_table.py` | `SceneSchema`, how EQL names every attribute, and `FlatTable`, the attempts flattened into one row each with one block of columns per neighbour index |
+| `flat_table.py` | `SceneSchema`, how EQL names every attribute, and `FlatTable`, the attempts flattened into one row each with one block of columns per neighbour position |
 | `pipelines.py` | `CausalQueryPipeline` and its two implementations, `RelationalPipeline` and `FlatTablePipeline` |
 | `queries.py` | the question catalogue, each question one EQL query that reads the same for either pipeline |
 | `evaluation.py` | asking every question to every pipeline and recording what came of it |
@@ -91,52 +91,53 @@ world, the pick and place actions, contact tuning) lives in
 
 **One model per cause.** Backdoor adjustment needs the circuit to be
 support-deterministic over the cause: no sum unit may mix branches that overlap on it.
-A fit guarantees that by stratifying its training rows on the cause's exact value, and
-stratifying on two causes at once cannot serve both (two partitions sharing a value of
-one of them overlap on it). Each pipeline therefore keeps one plain model for
-everything that is not a causal query -- scoring held-out attempts -- and fits one
-further model per cause variable it is asked about, the first time it is asked. A cause
-on a neighbour attribute stratifies the neighbour template (relational) or the one
-column of that neighbour index (flat).
+A fit guarantees that by stratifying its training rows on the cause's exact value.
+Stratifying on two causes at once cannot serve both, because two partitions that share
+a value of one cause overlap on it. Each pipeline therefore keeps one plain model for
+everything that is not a causal query, such as scoring held-out attempts, and fits one
+further model per cause variable the first time it is asked about that cause. A cause
+on a neighbour attribute stratifies the neighbour template in the relational pipeline,
+or the columns of that one neighbour in the flat pipeline.
 
-**The questions.** Three kinds of cause, each asked about a clutter of the recorded
-size and again about a clutter of another size:
+**The questions.** There are three kinds of cause. Each is asked about a clutter of the
+recorded size and again about a clutter of another size.
 
-1. *friction → lifted*, adjusting for the environment: which grasp friction makes the
-   target come up;
-2. *crowding count → lifted*, adjusting for the environment: how many adjacent
-   neighbours the target can have and still come up -- the cause is an aggregation over
-   the exchangeable parts;
-3. *closing-axis side → disturbed*, for one neighbour: whether standing where the
-   fingers close causes that neighbour to be shoved aside -- cause and effect both live
-   on one part.
+1. *Friction causes lift*, adjusting for the environment: which grasp friction makes
+   the target come up. The cause is an attribute of the attempt itself.
+2. *Crowding count causes lift*, adjusting for the environment: how many adjacent
+   neighbours the target can have and still come up. The cause is an aggregation over
+   the exchangeable parts.
+3. *Closing-axis side causes disturbance*, for one neighbour: whether standing where
+   the fingers close causes that neighbour to be shoved aside. Cause and effect both
+   live on one part.
 
-The relational circuit grounds itself for whatever objects a query names, so it answers
-about 4 or 12 neighbours from attempts recorded with 9; the flat table has columns for
-9 neighbours and nothing else, so it refuses those.
+Neighbours are numbered from 1. The relational circuit grounds itself for whatever
+objects a query names, so it answers about 4 or 12 neighbours from attempts recorded
+with 9. The flat table has columns for 9 neighbours and nothing else, so it refuses the
+questions about 12.
 
 ## Reading `results.md`
 
-- **How often the pick came up** -- the recorded attempts before any model, grouped by
-  environment, friction level and crowding: the picking efficiency in clutter.
-- **Which questions each pipeline can answer** -- one row per question; an answer is
-  put into words (the most effective setting of the cause and how likely the effect
-  then is, against the least effective), a refusal says why.
-- **Fit and likelihood** -- models fitted, training seconds, circuit size, held-out
-  coverage (a tree's leaves span only the ranges they saw) and mean log-likelihood on
+- **How often the pick came up.** The recorded attempts before any model, grouped by
+  environment, friction level and crowding. This is the picking efficiency in clutter.
+- **Which questions each pipeline can answer.** One row per question. An answer is put
+  into words: the most effective setting of the cause, how likely the effect then is,
+  and how that compares with the least effective setting. A refusal says why.
+- **Fit and likelihood.** Models fitted, training seconds, circuit size, held-out
+  coverage (a tree's leaves span only the ranges they saw), and mean log-likelihood on
   the covered attempts and on the attempts both pipelines cover.
-- **Seconds per question** -- the first ask (including the cause model's fit) and the
-  same question asked again with every model fitted.
-- **What the results show** -- the findings read off the numbers above.
-- One section per question with the full interventional table: for every region of the
-  cause, its population share, the naive conditional probability of the effect, and
-  the backdoor-adjusted interventional probability.
+- **Seconds per question.** The first ask, which includes fitting the cause's own
+  model, and the same question asked again with every model fitted.
+- **What the results show.** The findings read off the numbers above.
+- **One section per question** with the full interventional table: for every region of
+  the cause, its population share, the naive conditional probability of the effect,
+  and the backdoor-adjusted interventional probability.
 
 ## Running it
 
 The `iai_tracy_description` ROS package must be built and sourced for anything that
-builds the MuJoCo scene; headless runs need MuJoCo's EGL backend (`export
-MUJOCO_GL=egl`).
+builds the MuJoCo scene. Headless runs need MuJoCo's EGL backend
+(`export MUJOCO_GL=egl`).
 
 ```bash
 # watch one attempt in the viewer (add --headless --screenshots DIR for images only)
@@ -153,5 +154,5 @@ python -m experiments.causal_reasoning.tracy_rspn.run_pipeline
 ```
 
 The tests under `test/causal_reasoning_test/test_tracy_rspn` run the pipelines on the
-synthetic attempts, so they need no simulator; the ones that build the MuJoCo scene are
+synthetic attempts, so they need no simulator. The ones that build the MuJoCo scene are
 skipped where Tracy's description is not installed.
