@@ -55,29 +55,9 @@ from experiments.causal_reasoning.tracy_rspn.exceptions import (
     PipelineNotFittedError,
 )
 from experiments.causal_reasoning.tracy_rspn.flat_table import (
-    AGGREGATION_STATISTICS,
-    NEIGHBOUR_FIELDS,
-    NEIGHBOURS_FIELD,
-    SCENE_SCALAR_FIELDS,
     FlatTable,
-    aggregation_column,
-    scene_column,
+    SceneSchema,
 )
-
-MINIMUM_ROWS_PER_LEAF = 15
-"""
-The fewest training rows a leaf of a cause-specific tree may hold: enough for a
-continuous attribute's leaf to span a range rather than pin the single value it saw, few
-enough for a stratum to still split on what else drives the effect.
-"""
-
-PLAIN_MINIMUM_ROWS_PER_LEAF = 50
-"""
-The fewest training rows a leaf of the plain tree may hold.
-
-The plain model scores held-out attempts, and a leaf spans only the ranges it saw, so
-wider leaves cover more of them.
-"""
 
 # %% what a fit reports
 
@@ -204,15 +184,6 @@ class LikelihoodReport:
 # %% which variable a query marks as its cause
 
 
-NEIGHBOUR_VARIABLE_PATTERN = re.compile(
-    rf"^{re.escape(scene_column(NEIGHBOURS_FIELD))}\[(\d+)\]\.(\w+)$"
-)
-"""
-Matches a neighbour attribute's variable name, capturing the neighbour's index and the
-attribute.
-"""
-
-
 @dataclass(frozen=True)
 class CauseStratification:
     """
@@ -232,12 +203,19 @@ class CauseStratification:
     """
 
     @classmethod
-    def for_variable(cls, variable_name: str) -> CauseStratification:
+    def for_variable(
+        cls, variable_name: str, schema: SceneSchema = SceneSchema()
+    ) -> CauseStratification:
         """
         :param variable_name: The cause variable's name, as EQL names it.
+        :param schema: How the attempt's attributes are named.
         :return: The stratification that makes a fit support-deterministic over it.
         """
-        neighbour_match = NEIGHBOUR_VARIABLE_PATTERN.match(variable_name)
+        neighbour_pattern = re.compile(
+            rf"^{re.escape(schema.scene_column(schema.neighbours_field))}"
+            rf"\[(\d+)\]\.(\w+)$"
+        )
+        neighbour_match = neighbour_pattern.match(variable_name)
         if neighbour_match is None:
             return cls(class_columns=[variable_name], neighbour_attributes=None)
         return cls(class_columns=None, neighbour_attributes=[neighbour_match.group(2)])
@@ -263,17 +241,20 @@ def cause_variable_name(parameters: ModelQueryParameters) -> Optional[str]:
 # %% the shared interface
 
 
-def unspecified_scene_query(neighbour_count: int) -> Match:
+def unspecified_scene_query(
+    neighbour_count: int, schema: SceneSchema = SceneSchema()
+) -> Match:
     """
     A query for an attempt with every attribute, its own and its neighbours', left open.
 
     :param neighbour_count: How many neighbours the attempt has.
+    :param schema: How the attempt's attributes are named.
     :return: The query.
     """
     return a(ClutterPickScene)(
-        **{name: ... for name in SCENE_SCALAR_FIELDS},
+        **{name: ... for name in schema.scene_scalar_fields},
         neighbours=[
-            a(ClutteredObject)(**{name: ... for name in NEIGHBOUR_FIELDS})
+            a(ClutteredObject)(**{name: ... for name in schema.neighbour_fields})
             for _ in range(neighbour_count)
         ],
     )
@@ -285,15 +266,27 @@ class CausalQueryPipeline(ABC):
     One way of turning recorded attempts into models that answer causal EQL queries.
     """
 
-    min_samples_per_leaf: Union[int, float] = MINIMUM_ROWS_PER_LEAF
+    min_samples_per_leaf: Union[int, float] = 15
     """
-    The fewest training rows a leaf of a cause-specific tree may hold; see
+    The fewest training rows a leaf of a cause-specific tree may hold: enough for a
+    continuous attribute's leaf to span a range rather than pin the single value it saw,
+    few enough for a stratum to still split on what else drives the effect.
+
+    See
     :attr:`~probabilistic_model.probabilistic_circuit.relational.rspn.RelationalProbabilisticCircuit.min_samples_per_leaf`.
     """
 
-    plain_min_samples_per_leaf: Union[int, float] = PLAIN_MINIMUM_ROWS_PER_LEAF
+    plain_min_samples_per_leaf: Union[int, float] = 50
     """
     The fewest training rows a leaf of the plain tree may hold.
+
+    The plain model scores held-out attempts, and a leaf spans only the ranges it saw,
+    so wider leaves cover more of them.
+    """
+
+    schema: SceneSchema = field(default_factory=SceneSchema)
+    """
+    How the attempt's attributes are named.
     """
 
     training_scenes: List[ClutterPickScene] = field(default_factory=list)
@@ -415,7 +408,7 @@ class CausalQueryPipeline(ABC):
             circuit = self.observed_attribute_circuit(neighbour_count)
             if circuit is None:
                 continue
-            table = FlatTable(neighbour_count)
+            table = FlatTable(neighbour_count, self.schema)
             rows = [table.row(scenes[index]) for index in indices]
             events = np.array(
                 [
@@ -427,18 +420,15 @@ class CausalQueryPipeline(ABC):
             log_likelihoods[indices] = circuit.log_likelihood(events)
         return LikelihoodReport.from_log_likelihoods(log_likelihoods)
 
-    @staticmethod
     def _without_aggregations(
-        circuit: ProbabilisticCircuit,
+        self, circuit: ProbabilisticCircuit
     ) -> Optional[ProbabilisticCircuit]:
         """
         :param circuit: A circuit over an attempt's attributes and aggregation
             statistics.
         :return: The circuit marginalized to everything but the aggregation statistics.
         """
-        aggregation_names = {
-            aggregation_column(name) for name in AGGREGATION_STATISTICS
-        }
+        aggregation_names = set(self.schema.aggregation_columns)
         return circuit.marginal(
             [
                 variable
@@ -525,7 +515,7 @@ class RelationalPipeline(CausalQueryPipeline):
         return self._size_of(self.plain_model)
 
     def _fit_cause_model(self, cause_name: str) -> CircuitSize:
-        stratification = CauseStratification.for_variable(cause_name)
+        stratification = CauseStratification.for_variable(cause_name, self.schema)
         model = self._new_model(self.min_samples_per_leaf)
         RelationalCausalCircuit().fit(
             model,
@@ -534,7 +524,7 @@ class RelationalPipeline(CausalQueryPipeline):
             stratify_parts_by=(
                 None
                 if stratification.neighbour_attributes is None
-                else {NEIGHBOURS_FIELD: stratification.neighbour_attributes}
+                else {self.schema.neighbours_field: stratification.neighbour_attributes}
             ),
         )
         self.cause_models[cause_name] = model
@@ -553,7 +543,9 @@ class RelationalPipeline(CausalQueryPipeline):
         self, neighbour_count: int
     ) -> Optional[ProbabilisticCircuit]:
         grounded = self.registry_for(None).get_model(
-            UnderspecifiedParameters(unspecified_scene_query(neighbour_count))
+            UnderspecifiedParameters(
+                unspecified_scene_query(neighbour_count, self.schema)
+            )
         )
         return self._without_aggregations(grounded)
 
@@ -639,7 +631,7 @@ class FlatTablePipeline(CausalQueryPipeline):
         """
         The table the attempts are flattened into.
         """
-        return FlatTable(self.neighbour_count)
+        return FlatTable(self.neighbour_count, self.schema)
 
     def _training_dataframe(self) -> pd.DataFrame:
         return self.table.dataframe(self.training_scenes)

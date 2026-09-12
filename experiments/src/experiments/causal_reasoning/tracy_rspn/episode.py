@@ -29,36 +29,13 @@ from experiments.causal_reasoning.tracy_rspn.domain import (
 from experiments.causal_reasoning.tracy_rspn.exceptions import (
     EpisodePlanningFailedError,
 )
-from experiments.causal_reasoning.tracy_rspn.scene import (
-    MILK_SIZE,
-    PICK_ARM,
-    SCENE_CAMERA_NAME,
-    MilkClutterWorld,
-)
+from experiments.causal_reasoning.tracy_rspn.scene import MilkClutterWorld
 from experiments.tracy_experiments.equipment import joint_state_of_type
 from experiments.tracy_experiments.pick_and_place_action import PickUpActionMujoco
 from experiments.tracy_experiments.real_time_simulation import RealTimeSimulation
 from semantic_digital_twin.datastructures.definitions import StaticJointState
 
 logger = logging.getLogger(__name__)
-
-LIFT_THRESHOLD = 0.1
-"""
-How far, in metres, the target has to have risen at the end of the attempt to count as
-lifted: well below the hover height a held carton returns to, well above anything a
-carton merely nudged by the fingers reaches.
-"""
-
-SETTLE_TIME = 1.0
-"""
-Simulated seconds the scene is left to come to rest before and after the pick.
-"""
-
-SCREENSHOT_SIZE = (640, 480)
-"""
-Width and height, in pixels, of a screenshot of the run: the largest MuJoCo renders
-offscreen without the model declaring a bigger framebuffer.
-"""
 
 
 @dataclass
@@ -80,7 +57,7 @@ class BodyPositions:
         :return: Their current centres, copied out of the simulator's live state so the
             reading stays put once the simulation moves on.
         """
-        positions = simulation.multi_sim.simulator.get_bodies_positions(names).result
+        positions = simulation.mirror.simulator.get_bodies_positions(names).result
         return cls({name: np.array(position) for name, position in positions.items()})
 
     def horizontal_displacement(self, other: BodyPositions, name: str) -> float:
@@ -114,8 +91,7 @@ class PickEpisode:
 
     real_time_factor: Optional[float] = None
     """
-    See :attr:`~experiments.tracy_experiments.real_time_simulation.RealTimeSimulation.real_time_factor`;
-    unpaced by default, for collecting data in batch.
+    See :attr:`~experiments.tracy_experiments.real_time_simulation.RealTimeSimulation.real_time_factor`; unpaced by default, for collecting data in batch.
     """
 
     screenshot_directory: Optional[Path] = None
@@ -126,6 +102,29 @@ class PickEpisode:
     keep_viewer_open: bool = False
     """
     Whether to keep the viewer window open after the attempt until it is closed.
+    """
+
+    lift_threshold: float = 0.1
+    """
+    How far, in metres, the target has to have risen at the end of the attempt to count
+    as lifted: well below the hover height a held carton returns to, well above
+    anything a carton merely nudged by the fingers reaches.
+    """
+
+    settle_time: float = 1.0
+    """
+    Simulated seconds the scene is left to come to rest before and after the pick.
+    """
+
+    screenshot_width: int = 640
+    """
+    Width, in pixels, of a screenshot of the run: the widest MuJoCo renders offscreen
+    without the model declaring a bigger framebuffer.
+    """
+
+    screenshot_height: int = 480
+    """
+    Height, in pixels, of a screenshot of the run.
     """
 
     scene: Optional[MilkClutterWorld] = field(init=False, default=None)
@@ -150,11 +149,11 @@ class PickEpisode:
             real_time_factor=self.real_time_factor,
         ) as simulation:
             self._hold_park(simulation)
-            simulation.advance(SETTLE_TIME)
+            simulation.advance(self.settle_time)
             before = BodyPositions.read(simulation, names)
             self._screenshot(simulation, "before_pick")
             self._pick(simulation)
-            simulation.advance(SETTLE_TIME)
+            simulation.advance(self.settle_time)
             after = BodyPositions.read(simulation, names)
             self._screenshot(simulation, "after_pick")
             outcome = self._outcome(before, after)
@@ -192,20 +191,20 @@ class PickEpisode:
         grasp_description = GraspDescription(
             ApproachDirection.FRONT,
             VerticalAlignment.TOP,
-            ViewManager.get_end_effector_view(PICK_ARM, self.scene.robot),
+            ViewManager.get_end_effector_view(self.scene.pick_arm, self.scene.robot),
         )
         context = Context(self.scene.world, self.scene.robot, evaluate_conditions=False)
         plan = sequential(
             [
                 PickUpActionMujoco(
                     object_designator=self.scene.target,
-                    arm=PICK_ARM,
+                    arm=self.scene.pick_arm,
                     grasp_description=grasp_description,
-                    sim=simulation,
+                    simulation=simulation,
                     actuators=self.scene.actuators,
                     grasp_yaw=self.scene.layout.target.yaw
                     + self.scene.layout.grasp_yaw,
-                    grasp_half_width=MILK_SIZE.x / 2,
+                    grasp_half_width=self.scene.milk_size.x / 2,
                 )
             ],
             context,
@@ -226,7 +225,7 @@ class PickEpisode:
         lift_height = after.rise(before, self.scene.target.name.name)
         return ClutterPickOutcome(
             lift_height=lift_height,
-            lifted=lift_height > LIFT_THRESHOLD,
+            lifted=lift_height > self.lift_threshold,
             neighbour_displacements=[
                 after.horizontal_displacement(before, neighbour.name.name)
                 for neighbour in self.scene.neighbours
@@ -242,12 +241,13 @@ class PickEpisode:
         """
         if self.screenshot_directory is None:
             return
-        width, height = SCREENSHOT_SIZE
-        rgb = simulation.multi_sim.simulator.capture_rgb(
-            camera_name=SCENE_CAMERA_NAME, height=height, width=width
+        image = simulation.mirror.simulator.capture_rgb(
+            camera_name=self.scene.camera_name,
+            height=self.screenshot_height,
+            width=self.screenshot_width,
         ).result
         self.screenshot_directory.mkdir(parents=True, exist_ok=True)
-        Image.fromarray(rgb).save(self.screenshot_directory / f"{label}.png")
+        Image.fromarray(image).save(self.screenshot_directory / f"{label}.png")
 
     @staticmethod
     def _wait_for_viewer(simulation: RealTimeSimulation) -> None:

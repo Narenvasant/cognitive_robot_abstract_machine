@@ -30,7 +30,7 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
 from random_events.interval import Interval
 from random_events.product_algebra import Event
 from random_events.variable import Variable
-from typing_extensions import Dict, List, Optional, Sequence
+from typing_extensions import Dict, List, Optional, Sequence, Tuple, Type
 
 from experiments.causal_reasoning.tracy_rspn.dataset import (
     ClutterPickDataset,
@@ -87,18 +87,27 @@ class Refusal(StrEnum):
     The pipeline served a plain circuit for a question that marks a cause.
     """
 
+    @classmethod
+    def by_exception(cls) -> Dict[Type[Exception], Refusal]:
+        """
+        :return: The exceptions a pipeline refuses a question with, and what each one
+            means.
+        """
+        return {
+            FlatTableSchemaMismatchError: cls.SCHEMA_MISMATCH,
+            SupportDeterminismVerificationResult: cls.NOT_SUPPORT_DETERMINISTIC,
+            ClassCircuitGroundingFailedError: cls.GROUNDING_FAILED,
+            PartCircuitGroundingFailedError: cls.GROUNDING_FAILED,
+            EmptyInterventionalCircuitError: cls.NO_INTERVENTION_REGION,
+            DoRequiresCausalCircuitModel: cls.NOT_A_CAUSAL_MODEL,
+        }
 
-REFUSALS_BY_EXCEPTION = {
-    FlatTableSchemaMismatchError: Refusal.SCHEMA_MISMATCH,
-    SupportDeterminismVerificationResult: Refusal.NOT_SUPPORT_DETERMINISTIC,
-    ClassCircuitGroundingFailedError: Refusal.GROUNDING_FAILED,
-    PartCircuitGroundingFailedError: Refusal.GROUNDING_FAILED,
-    EmptyInterventionalCircuitError: Refusal.NO_INTERVENTION_REGION,
-    DoRequiresCausalCircuitModel: Refusal.NOT_A_CAUSAL_MODEL,
-}
-"""
-The exceptions a pipeline refuses a question with, and what each one means.
-"""
+    @classmethod
+    def exception_types(cls) -> Tuple[Type[Exception], ...]:
+        """
+        :return: Every exception a pipeline refuses a question with.
+        """
+        return tuple(cls.by_exception())
 
 
 @dataclass(frozen=True)
@@ -247,12 +256,12 @@ class QuestionAsker:
         started = time.perf_counter()
         try:
             [primary] = backend.rank_causes(case.build())
-        except tuple(REFUSALS_BY_EXCEPTION) as refusal:
+        except Refusal.exception_types() as refusal:
             return QueryOutcome(
                 case=case,
                 pipeline_name=pipeline.name,
                 duration=time.perf_counter() - started,
-                refusal=REFUSALS_BY_EXCEPTION[type(refusal)],
+                refusal=Refusal.by_exception()[type(refusal)],
             )
         duration = time.perf_counter() - started
         cause = primary.cause_variable
@@ -286,7 +295,7 @@ class QuestionAsker:
         started = time.perf_counter()
         try:
             backend.rank_causes(case.build())
-        except tuple(REFUSALS_BY_EXCEPTION):
+        except Refusal.exception_types():
             pass
         return time.perf_counter() - started
 
@@ -417,6 +426,16 @@ class EvaluationReport:
     The lifted share per number of adjacent neighbours.
     """
 
+    min_samples_per_leaf: int = 0
+    """
+    The fewest training rows a leaf of a cause-specific tree was allowed to hold.
+    """
+
+    plain_min_samples_per_leaf: int = 0
+    """
+    The fewest training rows a leaf of the plain tree was allowed to hold.
+    """
+
     pipelines: List[PipelineReport] = field(default_factory=list)
     """
     One report per pipeline.
@@ -433,7 +452,8 @@ def evaluate(
     dataset: ClutterPickDataset,
     train_fraction: float = 0.8,
     random_seed: int = 0,
-    min_samples_per_leaf: int = 25,
+    min_samples_per_leaf: Optional[int] = None,
+    plain_min_samples_per_leaf: Optional[int] = None,
     cases: Optional[Sequence[CausalQueryCase]] = None,
 ) -> EvaluationReport:
     """
@@ -443,8 +463,10 @@ def evaluate(
     :param dataset: The recorded attempts.
     :param train_fraction: Share of attempts to fit on.
     :param random_seed: Seed of the split and of the questions' Monte-Carlo grounding.
-    :param min_samples_per_leaf: The fewest training rows a leaf of a fitted tree may
-        hold.
+    :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
+        tree may hold; the pipelines' own default if not given.
+    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
+        tree may hold; the pipelines' own default if not given.
     :param cases: The questions to ask; defaults to :func:`query_catalogue`.
     :return: The comparison.
     """
@@ -470,7 +492,12 @@ def evaluate(
     pipelines = pipelines_for(recorded_neighbour_count)
     log_likelihoods: Dict[str, np.ndarray] = {}
     for pipeline in pipelines:
-        pipeline.min_samples_per_leaf = min_samples_per_leaf
+        if min_samples_per_leaf is not None:
+            pipeline.min_samples_per_leaf = min_samples_per_leaf
+        if plain_min_samples_per_leaf is not None:
+            pipeline.plain_min_samples_per_leaf = plain_min_samples_per_leaf
+        report.min_samples_per_leaf = pipeline.min_samples_per_leaf
+        report.plain_min_samples_per_leaf = pipeline.plain_min_samples_per_leaf
         fit = pipeline.fit(training.scenes)
         likelihood = pipeline.log_likelihood(test.scenes)
         log_likelihoods[pipeline.name] = likelihood.log_likelihoods

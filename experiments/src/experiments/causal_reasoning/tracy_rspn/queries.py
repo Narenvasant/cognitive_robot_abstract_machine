@@ -16,42 +16,44 @@ from experiments.causal_reasoning.tracy_rspn.domain import (
     ClutteredObject,
     ClutterPickScene,
 )
-from experiments.causal_reasoning.tracy_rspn.flat_table import (
-    NEIGHBOUR_FIELDS,
-    SCENE_SCALAR_FIELDS,
-)
+from experiments.causal_reasoning.tracy_rspn.flat_table import SceneSchema
 
 # %% building blocks
 
 
-def neighbour_query(**specified: Any) -> Match:
+def neighbour_query(schema: SceneSchema = SceneSchema(), **specified: Any) -> Match:
     """
     A query for one neighbour with every attribute left open but the given ones.
 
+    :param schema: How the attempt's attributes are named.
     :param specified: Attribute markers or values to set instead of leaving open.
     :return: The query.
     """
     return a(ClutteredObject)(
-        **{name: specified.get(name, ...) for name in NEIGHBOUR_FIELDS}
+        **{name: specified.get(name, ...) for name in schema.neighbour_fields}
     )
 
 
-def scene_query(neighbours: List[Match], **specified: Any) -> Match:
+def scene_query(
+    neighbours: List[Match], schema: SceneSchema = SceneSchema(), **specified: Any
+) -> Match:
     """
     A query for an attempt with the given neighbours and every scalar attribute left
     open but the given ones.
 
     :param neighbours: One query per neighbour.
+    :param schema: How the attempt's attributes are named.
     :param specified: Scalar attribute markers or values to set instead of leaving open;
         an aggregation statistic's name is accepted too.
     :return: The query.
     """
+    scalar_fields = schema.scene_scalar_fields
     return a(ClutterPickScene)(
-        **{name: specified.get(name, ...) for name in SCENE_SCALAR_FIELDS},
+        **{name: specified.get(name, ...) for name in scalar_fields},
         **{
             name: value
             for name, value in specified.items()
-            if name not in SCENE_SCALAR_FIELDS
+            if name not in scalar_fields
         },
         neighbours=neighbours,
     )
@@ -91,6 +93,20 @@ class CausalQueryCase(ABC):
         :return: The query asking the question, freshly built.
         """
 
+    @abstractmethod
+    def describe_cause(self, region: str) -> str:
+        """
+        :param region: A region of the cause, written out.
+        :return: The intervention setting the cause to that region, in plain words.
+        """
+
+    @property
+    @abstractmethod
+    def effect(self) -> str:
+        """
+        The effect the question asks about, in plain words.
+        """
+
 
 @dataclass(frozen=True)
 class FrictionCausesLift(CausalQueryCase):
@@ -118,6 +134,13 @@ class FrictionCausesLift(CausalQueryCase):
         )
         query.causes_effect(query.variable.lifted == True)
         return query
+
+    def describe_cause(self, region: str) -> str:
+        return f"a grasp friction coefficient of {region}"
+
+    @property
+    def effect(self) -> str:
+        return "the target is lifted"
 
 
 @dataclass(frozen=True)
@@ -149,6 +172,13 @@ class CrowdingCausesLift(CausalQueryCase):
         )
         query.causes_effect(query.variable.lifted == True)
         return query
+
+    def describe_cause(self, region: str) -> str:
+        return f"{region} adjacent neighbours"
+
+    @property
+    def effect(self) -> str:
+        return "the target is lifted"
 
 
 @dataclass(frozen=True)
@@ -189,36 +219,37 @@ class ClosingAxisSideCausesDisturbance(CausalQueryCase):
         )
         return query
 
+    def describe_cause(self, region: str) -> str:
+        return f"neighbour {self.neighbour_index} standing {region} the closing axis"
 
-SMALLER_CLUTTER_NEIGHBOUR_COUNT = 4
-"""
-Neighbour count of the questions asked about a smaller clutter than the attempts were
-recorded in.
-"""
-
-LARGER_CLUTTER_NEIGHBOUR_COUNT = 12
-"""
-Neighbour count of the questions asked about a larger clutter than the attempts were
-recorded in.
-"""
+    @property
+    def effect(self) -> str:
+        return f"neighbour {self.neighbour_index} is disturbed"
 
 
-def query_catalogue(recorded_neighbour_count: int) -> List[CausalQueryCase]:
+def query_catalogue(
+    recorded_neighbour_count: int,
+    smaller_neighbour_count: int = 4,
+    larger_neighbour_count: int = 12,
+) -> List[CausalQueryCase]:
     """
     Every question of the experiment: each kind of cause asked about a clutter of the
     recorded size, then again about clutters of other sizes.
 
     :param recorded_neighbour_count: How many neighbours the recorded attempts have.
+    :param smaller_neighbour_count: Neighbour count of the question asked about a
+        smaller clutter than recorded.
+    :param larger_neighbour_count: Neighbour count of the questions asked about a larger
+        clutter than recorded.
     :return: The questions, in the order they are asked.
     """
     return [
         FrictionCausesLift(recorded_neighbour_count),
         CrowdingCausesLift(recorded_neighbour_count),
         ClosingAxisSideCausesDisturbance(recorded_neighbour_count, neighbour_index=0),
-        FrictionCausesLift(SMALLER_CLUTTER_NEIGHBOUR_COUNT),
-        CrowdingCausesLift(LARGER_CLUTTER_NEIGHBOUR_COUNT),
+        FrictionCausesLift(smaller_neighbour_count),
+        CrowdingCausesLift(larger_neighbour_count),
         ClosingAxisSideCausesDisturbance(
-            LARGER_CLUTTER_NEIGHBOUR_COUNT,
-            neighbour_index=LARGER_CLUTTER_NEIGHBOUR_COUNT - 1,
+            larger_neighbour_count, neighbour_index=larger_neighbour_count - 1
         ),
     ]

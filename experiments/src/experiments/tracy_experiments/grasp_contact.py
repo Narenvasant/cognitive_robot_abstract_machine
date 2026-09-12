@@ -1,93 +1,135 @@
 """
-Contact-friction tuning for a MuJoCo-simulated gripper's grasp on a loose object and for
-the surface it is released onto, generalized from ``coraplex_panda_demo``'s own
-reliably-grasped cube.
+Contact tuning for a MuJoCo-simulated gripper's grasp on a loose object and for the
+surface it rests on, generalized from ``coraplex_panda_demo``'s own reliably-grasped
+cube.
 """
 
 from __future__ import annotations
 
-from typing_extensions import Iterable
+from dataclasses import dataclass
 
-from experiments.tracy_experiments.equipment import _mujoco_geom_for
+from typing_extensions import Iterable, Optional, Tuple
+
+from semantic_digital_twin.adapters.multi_sim import MujocoGeom
+from semantic_digital_twin.world_description.geometry import Shape
 from semantic_digital_twin.world_description.world_entity import Body
 
-GRASP_FRICTION = [0.3, 0.05, 0.001]
-"""
-Contact friction (sliding, torsional, rolling; see
-:attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.friction`) given to a loose
-object's collision geometry by default.
 
-``0.3`` approximates real sliding friction between painted wood/plastic surfaces
-(~0.25-0.4). Contact friction is combined by MuJoCo as the element-wise maximum of the
-two participating geoms, so the surface an object rests on needs an equally explicit
-:data:`SURFACE_FRICTION` for the object-surface contact to drop below the finger-
-dominated grip instead of being pinned at MuJoCo's own ``1.0`` default.
-"""
-
-SURFACE_FRICTION = [0.3, 0.005, 0.0001]
-"""
-Contact friction (sliding, torsional, rolling) given to the surface loose objects rest
-on via :func:`apply_contact_friction`.
-
-Matches :data:`GRASP_FRICTION`'s own sliding component so the object-surface contact is
-governed by this pair rather than by MuJoCo's own ``1.0`` default. Torsional and rolling
-use MuJoCo's own defaults rather than :data:`GRASP_FRICTION`'s grip-stabilizing
-multiples of them, since the surface is never pinched between fingers.
-"""
-
-GRASP_SOLVER_REFERENCE = [0.008, 1.0]
-"""
-Contact solver reference (see
-:attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.solver_reference`) given to
-every loose object, matching ``coraplex_panda_demo``'s cube (``solref="0.008"``).
-
-Stiffer than MuJoCo's own default (``0.02``): a soft contact lets a pinched object sink
-into the fingers and then slip back out as the arm lifts, rather than being held solidly
-between them.
-"""
-
-GRASP_SOLVER_IMPEDANCE = [0.96, 0.99, 0.001, 0.5, 2.0]
-"""
-Contact solver impedance (see
-:attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.solver_impedance`) given to
-every loose object, matching ``coraplex_panda_demo``'s cube (``solimp="0.96 0.99"``, the
-remaining three values MuJoCo's own defaults).
-
-Harder than MuJoCo's own default (``0.9 0.95``), for the same reason as
-:data:`GRASP_SOLVER_REFERENCE`.
-"""
-
-
-def apply_contact_friction(bodies: Iterable[Body], friction: list[float]) -> None:
+def mujoco_geom_for(shape: Shape) -> MujocoGeom:
     """
-    Give every collision geometry of every body in ``bodies`` the given contact friction
-    (see :attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.friction`), without
-    touching solver reference or impedance (see :func:`apply_grasp_contact_parameters`
-    for a grasped-object variant that also sets those).
+    ``shape``'s own :class:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom`
+    additional property, creating one if it has none yet.
 
-    :param bodies: The bodies to modify in place.
-    :param friction: Contact friction to give every body's collision geometry.
+    :class:`~semantic_digital_twin.adapters.multi_sim.MujocoGeomConverter` reads only
+    the first ``MujocoGeom`` it finds on a shape, so a second, appended one would be
+    silently ignored: callers must modify the returned instance in place rather than
+    replacing it.
+
+    :param shape: The shape to find or create a ``MujocoGeom`` on, modified in place if
+        none exists yet.
+    :return: The shape's ``MujocoGeom``.
     """
-    for body in bodies:
-        for geometry in body.collision:
-            _mujoco_geom_for(geometry).friction = list(friction)
+    existing = [
+        additional_property
+        for additional_property in shape.simulator_additional_properties
+        if isinstance(additional_property, MujocoGeom)
+    ]
+    if existing:
+        return existing[0]
+    mujoco_geom = MujocoGeom()
+    shape.simulator_additional_properties.append(mujoco_geom)
+    return mujoco_geom
 
 
-def apply_grasp_contact_parameters(
-    bodies: Iterable[Body], friction: list[float]
-) -> None:
+@dataclass(frozen=True)
+class ContactParameters:
     """
-    Give every body in ``bodies`` the contact parameters that let a gripper pick it up
-    and hold it: ``friction`` plus the solver reference and solver impedance of
-    ``coraplex_panda_demo``'s own reliably-grasped cube (see :data:`GRASP_FRICTION`,
-    :data:`GRASP_SOLVER_REFERENCE`, :data:`GRASP_SOLVER_IMPEDANCE`).
+    The contact parameters one kind of geometry gets in MuJoCo: its friction and,
+    optionally, how stiffly its contacts resolve.
 
-    :param bodies: The bodies to modify in place.
-    :param friction: Contact friction to give every body's collision geometry.
+    Contact friction is combined by MuJoCo as the element-wise maximum of the two
+    participating geoms, so a contact is only as slippery as the grippier of its two
+    sides.
     """
-    for body in bodies:
-        for geometry in body.collision:
-            mujoco_geom = _mujoco_geom_for(geometry)
-            mujoco_geom.friction = list(friction)
-            mujoco_geom.solver_reference = list(GRASP_SOLVER_REFERENCE)
-            mujoco_geom.solver_impedance = list(GRASP_SOLVER_IMPEDANCE)
+
+    friction: Tuple[float, float, float]
+    """
+    Sliding, torsional and rolling friction; see
+    :attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.friction`.
+    """
+
+    solver_reference: Optional[Tuple[float, ...]] = None
+    """
+    Contact solver reference (see
+    :attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.solver_reference`), or
+    ``None`` to leave the geometry's own.
+    """
+
+    solver_impedance: Optional[Tuple[float, ...]] = None
+    """
+    Contact solver impedance (see
+    :attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.solver_impedance`), or
+    ``None`` to leave the geometry's own.
+    """
+
+    @classmethod
+    def grasped_object(cls, sliding_friction: float = 0.3) -> ContactParameters:
+        """
+        The parameters that let a gripper pick an object up and hold it.
+
+        The solver reference and impedance are ``coraplex_panda_demo``'s own reliably-
+        grasped cube's (``solref="0.008"``, ``solimp="0.96 0.99"``): stiffer and harder
+        than MuJoCo's defaults (``0.02`` and ``0.9 0.95``), since a soft contact lets a
+        pinched object sink into the fingers and then slip back out as the arm lifts.
+        The torsional and rolling friction are lifted above MuJoCo's defaults to keep a
+        held object from pivoting between the pads.
+
+        :param sliding_friction: The sliding friction coefficient; ``0.3`` approximates
+            painted wood or plastic.
+        :return: The parameters.
+        """
+        return cls(
+            friction=(sliding_friction, 0.05, 0.001),
+            solver_reference=(0.008, 1.0),
+            solver_impedance=(0.96, 0.99, 0.001, 0.5, 2.0),
+        )
+
+    @classmethod
+    def surface(cls, sliding_friction: float = 0.3) -> ContactParameters:
+        """
+        The friction of a surface loose objects rest on, with MuJoCo's own torsional and
+        rolling defaults, since a surface is never pinched between fingers.
+
+        Made explicit so an object-surface contact can drop below the finger-dominated
+        grip instead of being pinned at MuJoCo's own ``1.0`` sliding default.
+
+        :param sliding_friction: The sliding friction coefficient.
+        :return: The parameters.
+        """
+        return cls(friction=(sliding_friction, 0.005, 0.0001))
+
+    @classmethod
+    def cube(cls) -> ContactParameters:
+        """
+        The parameters of ``coraplex_panda_demo/stacking_scene.xml``'s own proven-
+        working cube (``friction="1 0.05 0.001"``), for an object that is to be grasped
+        without its friction being the question.
+
+        :return: The parameters.
+        """
+        return cls.grasped_object(sliding_friction=1.0)
+
+    def apply_to(self, bodies: Iterable[Body]) -> None:
+        """
+        Give every collision geometry of every body these parameters, in place.
+
+        :param bodies: The bodies to modify.
+        """
+        for body in bodies:
+            for geometry in body.collision:
+                mujoco_geom = mujoco_geom_for(geometry)
+                mujoco_geom.friction = list(self.friction)
+                if self.solver_reference is not None:
+                    mujoco_geom.solver_reference = list(self.solver_reference)
+                if self.solver_impedance is not None:
+                    mujoco_geom.solver_impedance = list(self.solver_impedance)

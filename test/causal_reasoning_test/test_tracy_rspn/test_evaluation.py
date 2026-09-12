@@ -19,9 +19,8 @@ from experiments.causal_reasoning.tracy_rspn.queries import (
     query_catalogue,
 )
 from experiments.causal_reasoning.tracy_rspn.report import (
-    ANSWERED_MARK,
-    REFUSED_MARK,
     MarkdownReport,
+    Verdict,
 )
 from experiments.causal_reasoning.tracy_rspn.synthetic import (
     synthetic_clutter_pick_scenes,
@@ -121,8 +120,8 @@ def test_markdown_report_names_every_question_and_marks_the_verdicts(report, cas
     markdown = MarkdownReport(report).render()
     for case in cases:
         assert case.question in markdown
-    assert ANSWERED_MARK in markdown
-    assert f"{REFUSED_MARK}: {Refusal.SCHEMA_MISMATCH}" in markdown
+    assert Verdict.ANSWERED in markdown
+    assert f"{Verdict.REFUSED}: {Refusal.SCHEMA_MISMATCH}" in markdown
     for pipeline in report.pipelines:
         assert pipeline.name in markdown
 
@@ -131,3 +130,16 @@ def test_every_outcome_is_timed_asked_again(report):
     for pipeline in report.pipelines:
         for outcome in pipeline.outcomes:
             assert outcome.repeat_duration >= 0
+
+
+def test_markdown_report_puts_an_answer_into_words(report):
+    markdown = MarkdownReport(report).render()
+    relational_answer = report.pipelines[0].outcomes[0]
+    assert (
+        relational_answer.case.describe_cause(
+            relational_answer.most_effective.cause_region
+        )
+        in markdown
+    )
+    assert relational_answer.case.effect in markdown
+    assert "## What the results show" in markdown

@@ -12,22 +12,26 @@ the resulting trajectory is played back by commanding real MuJoCo actuators
 
 ## Layout
 
-- `equipment.py` -- parse/mount Tracy, equip it with position-servo actuators, gravity
-  compensation, self-collision exclusion; `add_box`/`add_cube`; `table_top_z`.
+- `equipment.py` -- parse and mount Tracy (`parse_tracy`, `mount_stationary_robot`,
+  `tracy_table_mount_position`), equip it with position servos (`TracyServoTuning`,
+  `ServoGains`, `equip_arms_with_servos`, `equip_grippers_with_servos`), gravity
+  compensation and self-collision exclusion (`CollisionGroup`), and loose boxes
+  (`add_box`, `add_cube`).
+- `grasp_contact.py` -- `ContactParameters`: MuJoCo friction and solver settings for a
+  grasped object, a resting surface, or a plain cube, applied to bodies.
 - `real_time_simulation.py` -- `RealTimeSimulation`, a MuJoCo mirror of a world stepped
   from the calling thread (not MuJoCo's own background thread, whose reads would
   otherwise race a caller's own), paced to the wall clock or, with
   `real_time_factor=None`, as fast as the machine allows.
-- `trajectory_planning.py` -- plan-then-execute primitives (`plan_cartesian_trajectory`,
-  `plan_joint_trajectory`, `follow_joint_trajectory`, `park_arms`, `set_gripper`,
-  `close_gripper_around`): Giskard plans kinematically against a scratch copy of the
-  world, then the result is played back on the real, physically simulated one.
+- `trajectory_planning.py` -- `TrajectoryPlanner`: plan a Cartesian or joint goal
+  against a scratch copy of the world and play it back on the real, physically
+  simulated one; park arms, open or close a gripper, close it around an object sized to
+  the object's width. `RobotiqGripper` names the gripper's own bodies and joints and
+  finds the knuckle angle for a given opening.
 - `pick_and_place_action.py` -- `PickUpActionMujoco`/`PlaceActionMujoco`, matching the
-  real `PickUpAction`/`PlaceAction`'s own field interface but driven by the primitives
-  above instead of a Giskard motion mapping; generic over any body and arm.
-- `grasp_contact.py` -- MuJoCo contact-friction tuning (`GRASP_FRICTION`,
-  `SURFACE_FRICTION`, solver reference/impedance) for a grasped object and the surface
-  it rests on.
+  real `PickUpAction`/`PlaceAction`'s own field interface but driven by the planner
+  above instead of a Giskard motion mapping; `TopDownGraspGeometry` places the tool
+  frame so the fingers, not the tool frame, meet the object.
 
 A grasped object is held by real contact friction between the fingers throughout, never
 kinematically attached: a poor grasp visibly fails instead of being rescued by a weld.

@@ -75,7 +75,7 @@ class RealTimeSimulation:
     physics steps are done -- for collecting data in batch rather than watching a run.
     """
 
-    multi_sim: MujocoSim = field(init=False)
+    mirror: MujocoSim = field(init=False)
     """
     The MuJoCo mirror of :attr:`world`.
     """
@@ -91,7 +91,7 @@ class RealTimeSimulation:
     """
 
     def __post_init__(self):
-        self.multi_sim = MujocoSim(
+        self.mirror = MujocoSim(
             world=self.world, headless=self.headless, step_size=self.step_size
         )
 
@@ -106,7 +106,7 @@ class RealTimeSimulation:
         """
         Open the viewer and reset the simulation to the world's built pose.
         """
-        self.multi_sim.simulator.start(simulate_in_thread=False, render_in_thread=False)
+        self.mirror.simulator.start(simulate_in_thread=False, render_in_thread=False)
         self._simulated_time = 0.0
         self._start_time = time.time()
 
@@ -114,7 +114,7 @@ class RealTimeSimulation:
         """
         Close the viewer and tear the simulation down.
         """
-        self.multi_sim.stop_simulation()
+        self.mirror.stop_simulation()
         self._start_time = None
 
     @property
@@ -122,7 +122,7 @@ class RealTimeSimulation:
         """
         Whether the simulation is still being displayed, i.e. the viewer window is open.
         """
-        return self.multi_sim.simulator.renderer.is_running()
+        return self.mirror.simulator.renderer.is_running()
 
     def command(self, actuator: Actuator, set_point: float) -> None:
         """
@@ -132,7 +132,7 @@ class RealTimeSimulation:
         :param actuator: The actuator to command. It has to belong to :attr:`world`.
         :param set_point: The value the actuator should drive towards.
         """
-        self.multi_sim.simulator.set_actuator_control(
+        self.mirror.simulator.set_actuator_control(
             actuator_name=actuator.name.name, value=set_point
         )
 
@@ -149,7 +149,7 @@ class RealTimeSimulation:
         if self._start_time is None:
             raise SimulationNotStartedError(world=self.world)
 
-        simulator = self.multi_sim.simulator
+        simulator = self.mirror.simulator
         for _ in range(round(duration / simulator.step_size)):
             simulator.step()
             self._simulated_time += simulator.step_size

@@ -21,7 +21,7 @@ from krrood.parametrization.feature_extraction.aggregations import (
     AggregationStatistic,
     aggregation_statistic,
 )
-from typing_extensions import List, Sequence
+from typing_extensions import List, Tuple
 
 # %% vocabulary
 
@@ -55,31 +55,18 @@ class DistanceBand(StrEnum):
 
     ADJACENT = "adjacent"
     """
-    Closer than :data:`ADJACENT_DISTANCE`: inside the space a gripper sweeps when it
-    descends onto the target.
+    Inside the space a gripper sweeps when it descends onto the target.
     """
 
     NEAR = "near"
     """
-    Between :data:`ADJACENT_DISTANCE` and :data:`NEAR_DISTANCE`.
+    Outside the fingers' sweep but still under the gripper's housing.
     """
 
     FAR = "far"
     """
-    Further than :data:`NEAR_DISTANCE`.
+    Clear of the gripper altogether.
     """
-
-    @classmethod
-    def of(cls, distance: float) -> DistanceBand:
-        """
-        :param distance: Centre-to-centre distance to the target, in metres.
-        :return: The band the distance falls into.
-        """
-        if distance < ADJACENT_DISTANCE:
-            return cls.ADJACENT
-        if distance < NEAR_DISTANCE:
-            return cls.NEAR
-        return cls.FAR
 
 
 class ClosingAxisSide(StrEnum):
@@ -97,57 +84,108 @@ class ClosingAxisSide(StrEnum):
     Off to the side of the fingers, where only the gripper's housing passes over it.
     """
 
-    @classmethod
-    def of(cls, bearing: float) -> ClosingAxisSide:
+
+@dataclass(frozen=True)
+class NeighbourThresholds:
+    """
+    The distances and angles that turn a neighbour's measured geometry into the bands
+    and sides the models are fitted on.
+    """
+
+    adjacent_distance: float = 0.09
+    """
+    Centre-to-centre distance, in metres, below which a neighbour counts as adjacent to
+    the target: a Robotiq 2F-85's open fingers reach about 4.5cm out from the target's
+    centre on either side, and a 6cm carton standing closer than 9cm leaves less than
+    the finger's own thickness of clearance between the two.
+    """
+
+    near_distance: float = 0.15
+    """
+    Centre-to-centre distance, in metres, below which a neighbour counts as near the
+    target: still inside the gripper housing's own footprint while it descends.
+    """
+
+    along_half_angle: float = math.pi / 4
+    """
+    Largest angle, in radians, between the closing axis and the direction to a neighbour
+    for the neighbour to count as standing along the axis.
+    """
+
+    disturbance_threshold: float = 0.01
+    """
+    How far, in metres, a neighbour has to move during an attempt to count as disturbed
+    by it.
+    """
+
+    def distance_band(self, distance: float) -> DistanceBand:
+        """
+        :param distance: Centre-to-centre distance to the target, in metres.
+        :return: The band the distance falls into.
+        """
+        if distance < self.adjacent_distance:
+            return DistanceBand.ADJACENT
+        if distance < self.near_distance:
+            return DistanceBand.NEAR
+        return DistanceBand.FAR
+
+    def closing_axis_side(self, bearing: float) -> ClosingAxisSide:
         """
         :param bearing: Angle, in radians, between the closing axis and the direction
             from the target to the neighbour.
         :return: The side the neighbour stands on.
         """
-        if abs(math.cos(bearing)) > math.cos(ALONG_HALF_ANGLE):
-            return cls.ALONG
-        return cls.ACROSS
+        if abs(math.cos(bearing)) > math.cos(self.along_half_angle):
+            return ClosingAxisSide.ALONG
+        return ClosingAxisSide.ACROSS
+
+    def is_disturbed(self, displacement: float) -> bool:
+        """
+        :param displacement: How far a neighbour moved during an attempt, in metres.
+        :return: Whether that counts as disturbed.
+        """
+        return displacement > self.disturbance_threshold
 
 
-ALONG_HALF_ANGLE = math.pi / 4
-"""
-Largest angle, in radians, between the closing axis and the direction to a neighbour for
-the neighbour to count as standing along the axis.
-"""
+@dataclass(frozen=True)
+class FrictionLadder:
+    """
+    The sliding friction coefficients an attempt's grasp contact is given, one level per
+    attempt.
 
-ADJACENT_DISTANCE = 0.09
-"""
-Centre-to-centre distance, in metres, below which a neighbour counts as adjacent to the
-target: a Robotiq 2F-85's open fingers reach about 4.5cm out from the target's centre on
-either side, and a 6cm carton standing closer than 9cm leaves less than the finger's own
-thickness of clearance between the two.
-"""
+    A ladder in the spirit of the one GraspNet-1Billion and GraspClutter6D score their
+    grasps on -- a grasp's score is the smallest friction coefficient it still closes
+    under -- placed around the coefficient below which a friction-held carton slips out
+    of the Robotiq 2F-85's pads, at levels a single-precision float represents exactly:
+    a circuit's support is read back in single precision, and a level that rounds there
+    would no longer match the point its own leaves sit on.
+    """
 
-NEAR_DISTANCE = 0.15
-"""
-Centre-to-centre distance, in metres, below which a neighbour counts as near the target:
+    levels: Tuple[float, ...] = (0.125, 0.1875, 0.25, 0.375, 0.5, 0.75)
+    """
+    The coefficients, lowest first.
+    """
 
-still inside the gripper housing's own footprint while it descends.
-"""
+    @property
+    def highest(self) -> float:
+        """
+        The top of the ladder.
+        """
+        return max(self.levels)
 
-DISTURBANCE_THRESHOLD = 0.01
-"""
-How far, in metres, a neighbour has to move during an attempt to count as disturbed by
-it.
-"""
+    @property
+    def lowest(self) -> float:
+        """
+        The bottom of the ladder.
+        """
+        return min(self.levels)
 
-FRICTION_LEVELS: Sequence[float] = (0.125, 0.1875, 0.25, 0.375, 0.5, 0.75)
-"""
-The sliding friction coefficients an attempt's grasp contact is given, one level per
-attempt.
-
-A ladder in the spirit of the one GraspNet-1Billion and GraspClutter6D score their
-grasps on -- a grasp's score is the smallest friction coefficient it still closes under
--- placed around the coefficient below which a friction-held carton slips out of the
-Robotiq 2F-85's pads, at levels a single-precision float represents exactly: a circuit's
-support is read back in single precision, and a level that rounds there would no longer
-match the point its own leaves sit on.
-"""
+    def lowest_levels(self, count: int) -> Tuple[float, ...]:
+        """
+        :param count: How many levels to take.
+        :return: The lowest ``count`` levels, lowest first.
+        """
+        return tuple(sorted(self.levels))[:count]
 
 
 # %% objects and attempts
@@ -202,7 +240,8 @@ class ClutteredObject:
 
     disturbed: bool
     """
-    Whether the attempt moved the object by more than :data:`DISTURBANCE_THRESHOLD`.
+    Whether the attempt moved the object further than
+    :attr:`NeighbourThresholds.disturbance_threshold`.
     """
 
 
@@ -230,8 +269,8 @@ class ClutterPickScene:
 
     friction_coefficient: float
     """
-    Sliding friction coefficient of the objects' contacts during the attempt, one of
-    :data:`FRICTION_LEVELS`.
+    Sliding friction coefficient of the grasp contact during the attempt, one level of
+    the :class:`FrictionLadder`.
     """
 
     grasp_yaw: float
@@ -337,8 +376,8 @@ class ClutterSceneLayout:
 
     friction_coefficient: float
     """
-    Sliding friction coefficient the objects' contacts get, one of
-    :data:`FRICTION_LEVELS`.
+    Sliding friction coefficient the grasp contact gets, one level of the
+    :class:`FrictionLadder`.
     """
 
     grasp_yaw: float
@@ -388,11 +427,16 @@ class ClutterPickOutcome:
     :attr:`ClutterSceneLayout.neighbours`.
     """
 
-    def to_scene(self, layout: ClutterSceneLayout) -> ClutterPickScene:
+    def to_scene(
+        self,
+        layout: ClutterSceneLayout,
+        thresholds: NeighbourThresholds = NeighbourThresholds(),
+    ) -> ClutterPickScene:
         """
         Record the attempt as the relational scene the pipelines are fitted on.
 
         :param layout: The layout the attempt ran on.
+        :param thresholds: What turns each neighbour's geometry into its bands.
         :return: The scene, its neighbours expressed relative to the target.
         """
         target = layout.target
@@ -404,13 +448,13 @@ class ClutterPickOutcome:
                 y=placed.y - target.y,
                 yaw=placed.yaw,
                 distance_to_target=placed.distance_to(target),
-                distance_band=DistanceBand.of(placed.distance_to(target)),
-                closing_axis_side=ClosingAxisSide.of(
+                distance_band=thresholds.distance_band(placed.distance_to(target)),
+                closing_axis_side=thresholds.closing_axis_side(
                     math.atan2(placed.y - target.y, placed.x - target.x)
                     - closing_axis_yaw
                 ),
                 displacement=displacement,
-                disturbed=displacement > DISTURBANCE_THRESHOLD,
+                disturbed=thresholds.is_disturbed(displacement),
             )
             for placed, displacement in zip(
                 layout.neighbours, self.neighbour_displacements

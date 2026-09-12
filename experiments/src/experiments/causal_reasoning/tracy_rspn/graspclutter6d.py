@@ -20,7 +20,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import numpy as np
-from typing_extensions import Any, Dict, List, Self
+from typing_extensions import Any, ClassVar, Dict, List, Self
 
 from experiments.causal_reasoning.tracy_rspn.domain import (
     ClutterEnvironment,
@@ -29,11 +29,6 @@ from experiments.causal_reasoning.tracy_rspn.domain import (
     PlacedObject,
 )
 from experiments.causal_reasoning.tracy_rspn.exceptions import UnknownSceneRecordError
-
-MILLIMETRES_PER_METRE = 1000.0
-"""
-BOP poses are in millimetres.
-"""
 
 
 class SceneFile(StrEnum):
@@ -80,6 +75,11 @@ class RigidTransform:
     The translation, in metres.
     """
 
+    millimetres_per_metre: ClassVar[float] = 1000.0
+    """
+    BOP poses are in millimetres.
+    """
+
     @classmethod
     def from_json(cls, rotation: List[float], translation: List[float]) -> Self:
         """
@@ -89,7 +89,7 @@ class RigidTransform:
         """
         return cls(
             rotation=np.array(rotation, dtype=float).reshape(3, 3),
-            translation=np.array(translation, dtype=float) / MILLIMETRES_PER_METRE,
+            translation=np.array(translation, dtype=float) / cls.millimetres_per_metre,
         )
 
     def inverse(self) -> RigidTransform:

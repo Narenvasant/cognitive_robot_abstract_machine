@@ -9,17 +9,16 @@ import pytest
 
 from experiments.causal_reasoning.tracy_rspn.dataset import ClutterPickDataset
 from experiments.causal_reasoning.tracy_rspn.domain import (
-    FRICTION_LEVELS,
     ClutterEnvironment,
     ClutterPickSceneAggregations,
     DistanceBand,
+    FrictionLadder,
 )
 from experiments.causal_reasoning.tracy_rspn.layout_sampler import (
-    ENVIRONMENT_DISTRIBUTIONS,
     ClutterLayoutSampler,
+    EnvironmentDistribution,
 )
 from experiments.causal_reasoning.tracy_rspn.synthetic import (
-    LIFTED_HEIGHT,
     SyntheticPickOutcomes,
     synthetic_clutter_pick_scenes,
 )
@@ -40,15 +39,15 @@ def test_sampled_layout_has_the_requested_object_count():
 
 
 def test_sampled_friction_comes_from_the_environments_own_levels():
-    sampler = ClutterLayoutSampler(
-        np.random.default_rng(0), environments=[ClutterEnvironment.BIN]
-    )
+    distributions = EnvironmentDistribution.of_mock_environments()
+    bin_only = {ClutterEnvironment.BIN: distributions[ClutterEnvironment.BIN]}
+    sampler = ClutterLayoutSampler(np.random.default_rng(0), distributions=bin_only)
     for _ in range(20):
         layout = sampler.sample()
         assert layout.environment == ClutterEnvironment.BIN
         assert (
             layout.friction_coefficient
-            in ENVIRONMENT_DISTRIBUTIONS[ClutterEnvironment.BIN].friction_levels
+            in distributions[ClutterEnvironment.BIN].friction_levels
         )
 
 
@@ -56,19 +55,19 @@ def test_sampled_friction_comes_from_the_environments_own_levels():
 
 
 def test_highest_friction_without_adjacent_neighbours_always_lifts():
-    sampler = ClutterLayoutSampler(
-        np.random.default_rng(1), environments=[ClutterEnvironment.TABLE]
-    )
+    distributions = EnvironmentDistribution.of_mock_environments()
+    table_only = {ClutterEnvironment.TABLE: distributions[ClutterEnvironment.TABLE]}
+    sampler = ClutterLayoutSampler(np.random.default_rng(1), distributions=table_only)
     outcomes = SyntheticPickOutcomes(np.random.default_rng(1))
     lifted_count = 0
     for _ in range(20):
         layout = sampler.sample()
-        layout.friction_coefficient = max(FRICTION_LEVELS)
+        layout.friction_coefficient = FrictionLadder().highest
         outcome = outcomes.simulate(layout)
         scene = outcome.to_scene(layout)
         if ClutterPickSceneAggregations(instance=scene).crowding_count() == 0:
             assert outcome.lifted
-            assert outcome.lift_height == LIFTED_HEIGHT
+            assert outcome.lift_height == outcomes.lifted_height
             lifted_count += 1
     assert lifted_count > 0
 

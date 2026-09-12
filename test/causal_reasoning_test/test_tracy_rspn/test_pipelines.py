@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.tracy_rspn.domain import FRICTION_LEVELS
+from experiments.causal_reasoning.tracy_rspn.domain import FrictionLadder
 from experiments.causal_reasoning.tracy_rspn.evaluation import (
     QuestionAsker,
     Refusal,
@@ -17,12 +17,7 @@ from experiments.causal_reasoning.tracy_rspn.exceptions import (
     OneCausePerQueryError,
     PipelineNotFittedError,
 )
-from experiments.causal_reasoning.tracy_rspn.flat_table import (
-    FlatTable,
-    aggregation_column,
-    neighbour_column,
-    scene_column,
-)
+from experiments.causal_reasoning.tracy_rspn.flat_table import FlatTable, SceneSchema
 from experiments.causal_reasoning.tracy_rspn.pipelines import (
     CauseStratification,
     FlatTablePipeline,
@@ -76,21 +71,28 @@ def flat_table_pipeline(scenes):
 # %% flat table
 
 
-def test_flat_table_columns_are_named_like_eql_variables():
-    assert scene_column("lifted") == "ClutterPickScene.lifted"
-    assert neighbour_column(2, "x") == "ClutterPickScene.neighbours[2].x"
-    assert (
-        aggregation_column("crowding_count")
-        == "ClutterPickSceneAggregations.crowding_count()"
+@pytest.fixture(scope="module")
+def schema():
+    return SceneSchema()
+
+
+def test_flat_table_columns_are_named_like_eql_variables(schema):
+    assert schema.scene_column("lifted") == "ClutterPickScene.lifted"
+    assert schema.neighbour_column(2, "x") == "ClutterPickScene.neighbours[2].x"
+    assert schema.aggregation_columns == (
+        "ClutterPickSceneAggregations.crowding_count()",
     )
 
 
-def test_flat_table_row_keeps_every_attribute(scenes):
+def test_flat_table_row_keeps_every_attribute(scenes, schema):
     scene = scenes[0]
     row = FlatTable(RECORDED_NEIGHBOUR_COUNT).row(scene)
-    assert row[scene_column("friction_coefficient")] == scene.friction_coefficient
     assert (
-        row[neighbour_column(3, "distance_band")] == scene.neighbours[3].distance_band
+        row[schema.scene_column("friction_coefficient")] == scene.friction_coefficient
+    )
+    assert (
+        row[schema.neighbour_column(3, "distance_band")]
+        == scene.neighbours[3].distance_band
     )
     assert set(row) == set(FlatTable(RECORDED_NEIGHBOUR_COUNT).columns)
 
@@ -103,17 +105,17 @@ def test_flat_table_rejects_a_scene_of_another_neighbour_count(scenes):
 # %% stratification per cause
 
 
-def test_a_scene_level_cause_stratifies_the_class_circuit():
+def test_a_scene_level_cause_stratifies_the_class_circuit(schema):
     stratification = CauseStratification.for_variable(
-        scene_column("friction_coefficient")
+        schema.scene_column("friction_coefficient")
     )
-    assert stratification.class_columns == [scene_column("friction_coefficient")]
+    assert stratification.class_columns == [schema.scene_column("friction_coefficient")]
     assert stratification.neighbour_attributes is None
 
 
-def test_a_neighbour_cause_stratifies_the_neighbour_template():
+def test_a_neighbour_cause_stratifies_the_neighbour_template(schema):
     stratification = CauseStratification.for_variable(
-        neighbour_column(4, "closing_axis_side")
+        schema.neighbour_column(4, "closing_axis_side")
     )
     assert stratification.class_columns is None
     assert stratification.neighbour_attributes == ["closing_axis_side"]
@@ -167,8 +169,8 @@ def test_both_pipelines_find_the_highest_friction_the_surest_lift(
 
     assert outcome.answered
     adjusted = _adjusted_by_region(outcome)
-    assert max(adjusted, key=adjusted.get) == f"{max(FRICTION_LEVELS):g}"
-    assert min(adjusted, key=adjusted.get) == f"{min(FRICTION_LEVELS):g}"
+    assert max(adjusted, key=adjusted.get) == f"{FrictionLadder().highest:g}"
+    assert min(adjusted, key=adjusted.get) == f"{FrictionLadder().lowest:g}"
 
 
 @pytest.mark.parametrize(
@@ -192,7 +194,7 @@ def test_relational_pipeline_answers_about_a_clutter_of_another_size(
         relational_pipeline, FrictionCausesLift(RECORDED_NEIGHBOUR_COUNT + 2)
     )
     assert outcome.answered
-    assert len(outcome.effects) == len(FRICTION_LEVELS)
+    assert len(outcome.effects) == len(FrictionLadder().levels)
 
 
 def test_flat_table_pipeline_refuses_a_clutter_of_another_size(
@@ -216,7 +218,7 @@ def test_relational_pipeline_answers_a_question_about_one_neighbour(
     assert set(_adjusted_by_region(outcome)) == {"along", "across"}
 
 
-def test_each_cause_gets_its_own_model(relational_pipeline):
+def test_each_cause_gets_its_own_model(relational_pipeline, schema):
     """
     Every distinct cause asked about so far fitted one further model, on top of the
     plain one.
@@ -225,8 +227,8 @@ def test_each_cause_gets_its_own_model(relational_pipeline):
         relational_pipeline.cause_models
     )
     assert set(relational_pipeline.cause_models) >= {
-        scene_column("friction_coefficient"),
-        aggregation_column("crowding_count"),
+        schema.scene_column("friction_coefficient"),
+        schema.aggregation_column("crowding_count"),
     }
 
 

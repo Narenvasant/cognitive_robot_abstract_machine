@@ -17,9 +17,8 @@ from experiments.tracy_experiments.equipment import (
     tracy_table_mount_position,
 )
 from experiments.tracy_experiments.pick_and_place_action import (
-    _bounding_box_center_world,
-    _finger_midpoint_offset,
-    _top_down_pose_builder,
+    TopDownGraspGeometry,
+    bounding_box_center_world,
 )
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.tracy import Tracy
@@ -51,7 +50,7 @@ def test_bounding_box_center_world_is_the_average_of_the_bodys_own_min_and_max(
     world, _ = mounted_tracy
     body = world.get_body_by_name("left_robotiq_85_left_finger_tip_link")
 
-    center = _bounding_box_center_world(world, body)
+    center = bounding_box_center_world(world, body)
 
     bounding_box = body.collision[0].local_frame_bounding_box
     root_transform_body = world.compute_forward_kinematics_np(world.root, body)
@@ -67,10 +66,12 @@ def test_bounding_box_center_world_is_the_average_of_the_bodys_own_min_and_max(
 
 
 def test_finger_midpoint_offset_differs_between_left_and_right_arm(mounted_tracy):
-    _, robot = mounted_tracy
+    world, robot = mounted_tracy
 
-    left_offset = _finger_midpoint_offset(robot, Arms.LEFT)
-    right_offset = _finger_midpoint_offset(robot, Arms.RIGHT)
+    left_offset = TopDownGraspGeometry(world, robot, Arms.LEFT).finger_midpoint_offset()
+    right_offset = TopDownGraspGeometry(
+        world, robot, Arms.RIGHT
+    ).finger_midpoint_offset()
 
     assert list(left_offset) != list(right_offset)
 
@@ -81,10 +82,12 @@ def test_grasp_yaw_turns_the_closing_axis_about_the_vertical_without_tilting_it(
     world, robot = mounted_tracy
     yaw = math.pi / 6
 
-    straight = _top_down_pose_builder(world, robot, Arms.LEFT)(0.0, 0.0, 1.0)
-    turned = _top_down_pose_builder(world, robot, Arms.LEFT, grasp_yaw=yaw)(
+    straight = TopDownGraspGeometry(world, robot, Arms.LEFT).tool_frame_pose(
         0.0, 0.0, 1.0
     )
+    turned = TopDownGraspGeometry(
+        world, robot, Arms.LEFT, grasp_yaw=yaw
+    ).tool_frame_pose(0.0, 0.0, 1.0)
 
     straight_rotation = straight.to_rotation_matrix().evaluate()[:3, :3]
     turned_rotation = turned.to_rotation_matrix().evaluate()[:3, :3]

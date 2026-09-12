@@ -5,49 +5,29 @@ without a simulator.
 
 Friction lets the fingers hold the target; every adjacent neighbour is in the way of the
 descending fingers and takes a share of that hold away; and the environment drives both
-(see :data:`~experiments.causal_reasoning.tracy_rspn.layout_sampler.ENVIRONMENT_DISTRIBUTIONS`),
+(see
+:meth:`~experiments.causal_reasoning.tracy_rspn.layout_sampler.EnvironmentDistribution.of_mock_environments`),
 which is what makes it a confounder of friction and success.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from typing_extensions import List
 
 from experiments.causal_reasoning.tracy_rspn.domain import (
-    FRICTION_LEVELS,
     ClutterPickOutcome,
     ClutterPickScene,
     ClutterSceneLayout,
     DistanceBand,
+    FrictionLadder,
+    NeighbourThresholds,
 )
 from experiments.causal_reasoning.tracy_rspn.layout_sampler import (
     ClutterLayoutSampler,
 )
-
-HOLD_PER_FRICTION = 1.0 / max(FRICTION_LEVELS)
-"""
-How much of a sure hold each unit of friction coefficient buys: the highest friction
-level alone holds the target for certain.
-"""
-
-HOLD_LOST_PER_ADJACENT_NEIGHBOUR = 0.25
-"""
-How much of the hold each adjacent neighbour takes away.
-"""
-
-LIFTED_HEIGHT = 0.25
-"""
-How far, in metres, a held target rises: the hover clearance the gripper returns to,
-less the closing swing it descended below it.
-"""
-
-ADJACENT_NEIGHBOUR_DISPLACEMENT = 0.03
-"""
-How far, in metres, an adjacent neighbour is shoved when the fingers land on it.
-"""
 
 
 @dataclass
@@ -61,6 +41,33 @@ class SyntheticPickOutcomes:
     Source of randomness for the hold's own coin flip.
     """
 
+    ladder: FrictionLadder = field(default_factory=FrictionLadder)
+    """
+    The friction levels attempts draw from; the highest alone holds the target for
+    certain.
+    """
+
+    thresholds: NeighbourThresholds = field(default_factory=NeighbourThresholds)
+    """
+    What makes a neighbour adjacent, and so in the fingers' way.
+    """
+
+    hold_lost_per_adjacent_neighbour: float = 0.25
+    """
+    How much of the hold each adjacent neighbour takes away.
+    """
+
+    lifted_height: float = 0.25
+    """
+    How far, in metres, a held target rises: the hover clearance the gripper returns to,
+    less the closing swing it descended below it.
+    """
+
+    adjacent_neighbour_displacement: float = 0.03
+    """
+    How far, in metres, an adjacent neighbour is shoved when the fingers land on it.
+    """
+
     def simulate(self, layout: ClutterSceneLayout) -> ClutterPickOutcome:
         """
         :param layout: The layout to attempt.
@@ -68,32 +75,26 @@ class SyntheticPickOutcomes:
         """
         target = layout.target
         adjacent = [
-            neighbour
+            self.thresholds.distance_band(neighbour.distance_to(target))
+            == DistanceBand.ADJACENT
             for neighbour in layout.neighbours
-            if DistanceBand.of(neighbour.distance_to(target)) == DistanceBand.ADJACENT
         ]
         hold_probability = float(
             np.clip(
-                layout.friction_coefficient * HOLD_PER_FRICTION
-                - len(adjacent) * HOLD_LOST_PER_ADJACENT_NEIGHBOUR,
+                layout.friction_coefficient / self.ladder.highest
+                - sum(adjacent) * self.hold_lost_per_adjacent_neighbour,
                 0.0,
                 1.0,
             )
         )
         lifted = bool(self.random_state.uniform() < hold_probability)
-        displacements = [
-            (
-                ADJACENT_NEIGHBOUR_DISPLACEMENT
-                if DistanceBand.of(neighbour.distance_to(target))
-                == DistanceBand.ADJACENT
-                else 0.0
-            )
-            for neighbour in layout.neighbours
-        ]
         return ClutterPickOutcome(
-            lift_height=LIFTED_HEIGHT if lifted else 0.0,
+            lift_height=self.lifted_height if lifted else 0.0,
             lifted=lifted,
-            neighbour_displacements=displacements,
+            neighbour_displacements=[
+                self.adjacent_neighbour_displacement if is_adjacent else 0.0
+                for is_adjacent in adjacent
+            ],
         )
 
 

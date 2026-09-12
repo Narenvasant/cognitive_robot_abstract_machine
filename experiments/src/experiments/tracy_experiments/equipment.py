@@ -3,31 +3,32 @@ Read Tracy's description out of its own ROS package and equip it to be driven by
 MuJoCo actuator control.
 
 Physically simulating the joints Giskard actively commands, and letting Giskard itself
-drive them via ``ParkArmsAction``, was tried first (see
-:mod:`~experiments.tracy_experiments.parkarms_demo`'s own docstring) and traced to a real
-architectural gap: Giskard's own QP control loop reads ``world.state`` as its belief of
-the robot's current position, but for a physically simulated DOF that same state is also
-written by Giskard's own prior command, not exclusively by MuJoCo's true physics
-readback -- so Giskard can be satisfied by its own prior write, not by the robot actually
-having moved. Driving the actuators directly via
+drive them, was tried first and traced to a real architectural gap: Giskard's own QP
+control loop reads ``world.state`` as its belief of the robot's current position, but
+for a physically simulated DOF that same state is also written by Giskard's own prior
+command, not exclusively by MuJoCo's true physics readback -- so Giskard can be
+satisfied by its own prior write, not by the robot actually having moved. Driving the
+actuators directly via
 :meth:`~experiments.tracy_experiments.real_time_simulation.RealTimeSimulation.command`,
 and planning Cartesian/joint goals against an isolated scratch copy of the world (see
 :mod:`~experiments.tracy_experiments.trajectory_planning`) rather than through Giskard's
-live closed loop, sidesteps this entirely -- proved out first by the cube-stacking demo.
+live closed loop, sidesteps this entirely.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import IntEnum
 
 import mujoco
-from typing_extensions import Callable, Dict, Iterable, Tuple, Type
+from typing_extensions import Dict, Iterable, Tuple, Type
 
-from semantic_digital_twin.adapters.multi_sim import (
-    MujocoActuator,
-    MujocoBody,
-    MujocoGeom,
+from experiments.tracy_experiments.grasp_contact import (
+    ContactParameters,
+    mujoco_geom_for,
 )
+from semantic_digital_twin.adapters.multi_sim import MujocoActuator, MujocoBody
+from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.datastructures.joint_state import JointState
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.robot_parts import AbstractRobot, AbstractRobotPart
@@ -43,21 +44,9 @@ from semantic_digital_twin.world_description.connections import (
     FixedConnection,
 )
 from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFreedom
-from semantic_digital_twin.world_description.geometry import Box, Color, Scale, Shape
+from semantic_digital_twin.world_description.geometry import Box, Color, Scale
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Actuator, Body
-
-TRACY_MOUNT_ROOT_NAME = PrefixedName("tracy_mount", "tracy_experiments")
-"""
-Name given to the parsed Tracy's own synthetic world root once merged, so it never
-collides with a merge target's own root.
-
-Tracy's real kinematic root, the body named
-``"table"`` (see :meth:`~semantic_digital_twin.robots.tracy.Tracy._get_root_body_name`),
-is a descendant of this synthetic node, not the node itself, so renaming it does not
-affect :meth:`~semantic_digital_twin.robots.robot_parts.AbstractRobot.from_world`'s later
-lookup.
-"""
 
 # %% servo tuning
 
@@ -97,106 +86,112 @@ class ServoGains:
     changing its real, low-frequency behaviour.
     """
 
+    @classmethod
+    def ur10e(cls, torque_limit: float, joint_damping: float) -> ServoGains:
+        """
+        The gains of one UR10e joint size class, taken as-is from MuJoCo Menagerie's own
+        ``universal_robots_ur10e/ur10e.xml``: its ``<general gainprm="5000"
+        biasprm="0 -5000 -500">`` and ``<joint armature="0.1">`` sit on the base
+        ``ur10e`` default class, applying identically to every joint regardless of
+        size; only the torque limit and the joint's own passive damping differ per size
+        class. Tracy's own UR10 (not UR10e) arms are close enough to reuse this.
 
-_STIFFNESS = 5_000.0
-_ACTUATOR_DAMPING = 500.0
-_ARMATURE = 0.1
-"""
-Shared across every arm joint class below, matching MuJoCo Menagerie's own.
+        :param torque_limit: The size class's torque limit, in newton metres.
+        :param joint_damping: The size class's passive joint damping.
+        :return: The gains.
+        """
+        return cls(
+            stiffness=5_000.0,
+            actuator_damping=500.0,
+            torque_limit=torque_limit,
+            joint_damping=joint_damping,
+            armature=0.1,
+        )
 
-``universal_robots_ur10e/ur10e.xml``: its ``<general gainprm="5000" biasprm="0 -5000
--500">`` and ``<joint armature="0.1">`` sit on the base ``ur10e`` default class, applying
-identically to every joint regardless of size; only torque limit and the joint's own
-passive damping are given separately per size class there.
-"""
+    @classmethod
+    def robotiq_85_knuckle(cls) -> ServoGains:
+        """
+        Tuning for a Robotiq-85 knuckle joint; no MuJoCo Menagerie or otherwise
+        pre-tuned reference exists for this gripper, so this is the cube-stacking
+        demo's own, empirically raised value.
 
-ARM_JOINT_SERVO: Dict[str, ServoGains] = {
+        :return: The gains.
+        """
+        return cls(
+            stiffness=100.0,
+            actuator_damping=10.0,
+            torque_limit=10.0,
+            joint_damping=0.0,
+            armature=0.05,
+        )
+
+
+def ur10e_arm_gains() -> Dict[str, ServoGains]:
+    """
+    Real, per-joint-size UR10e gains and torque limits, keyed by joint name with Tracy's
+    own ``left_``/``right_`` prefix stripped.
+
+    :return: The gains of every arm joint.
+    """
     # "size4" in ur10e.xml: the two shoulder joints, which carry the whole rest of the
     # arm's weight and so need the most torque and the most passive damping to settle
-    # without ringing.
-    "shoulder_pan_joint": ServoGains(
-        _STIFFNESS, _ACTUATOR_DAMPING, 330.0, 10.0, _ARMATURE
-    ),
-    "shoulder_lift_joint": ServoGains(
-        _STIFFNESS, _ACTUATOR_DAMPING, 330.0, 10.0, _ARMATURE
-    ),
-    # "size3" in ur10e.xml: the elbow.
-    "elbow_joint": ServoGains(_STIFFNESS, _ACTUATOR_DAMPING, 150.0, 5.0, _ARMATURE),
-    # "size2" in ur10e.xml: the three wrist joints, which carry only the gripper and so
-    # need much less of either.
-    "wrist_1_joint": ServoGains(_STIFFNESS, _ACTUATOR_DAMPING, 56.0, 2.0, _ARMATURE),
-    "wrist_2_joint": ServoGains(_STIFFNESS, _ACTUATOR_DAMPING, 56.0, 2.0, _ARMATURE),
-    "wrist_3_joint": ServoGains(_STIFFNESS, _ACTUATOR_DAMPING, 56.0, 2.0, _ARMATURE),
-}
-"""
-Real, per-joint-size UR10e gains and torque limits, taken as-is from MuJoCo Menagerie's
-own ``universal_robots_ur10e/ur10e.xml``, keyed by joint name with Tracy's own
-``left_``/``right_`` prefix stripped.
-
-Tracy's own UR10 (not UR10e) arms are close enough to reuse this directly.
-"""
-
-GRIPPER_JOINT_SERVO = ServoGains(100.0, 10.0, 10.0, 0.0, 0.05)
-"""
-Tuning for a Robotiq-85 knuckle joint; no MuJoCo Menagerie or otherwise pre-tuned
-reference exists for this gripper.
-
-Matches the cube-stacking demo's own, empirically raised value.
-"""
-
-GRIPPER_JOINT_VELOCITY_LIMIT = 1.0
-"""
-Velocity limit, in radians per second, given to every gripper joint's own degree of
-freedom, overriding whatever ``iai_tracy_description`` itself declares.
-
-The parsed URDF's own knuckle joint velocity limit is roughly ``0.032`` rad/s -- at that
-speed, closing through the gripper's own ~0.8 rad range takes about 25 real seconds,
-which :func:`~experiments.tracy_experiments.trajectory_planning.plan_joint_trajectory`
-faithfully respects since it clamps its own reference velocity to this limit, the same
-way it does for the arm's own real, hardware-sourced joint limits. Unlike the arm's own
-:data:`ARM_JOINT_SERVO` (sourced from real UR10e hardware data), no such reference
-backs this gripper's own declared limit, so there is no real hardware speed being
-faithfully preserved by keeping it -- raising it trades that unproven number for a
-still-modest, more usable one.
-
-``1.0`` (not higher) is a real, tested ceiling, not just a round number: pushing this to
-``2.0`` was tried first and, confirmed directly by ticking the planner in isolation,
-made the QP solver settle about 0.016 rad short of the actual target and stay there
-indefinitely, so ``is_end_motion`` never triggers and the plan times out -- ``1.0``
-converges cleanly (tested up to 1400 ticks with a stable, correct result) and still
-closes the gripper about 25x faster than the original limit.
-"""
-
-
-def _raise_gripper_velocity_limits(world: World, robot: Tracy) -> None:
-    """
-    Raise every gripper joint's own degree of freedom velocity limit to
-    :data:`GRIPPER_JOINT_VELOCITY_LIMIT`; see its own docstring for why.
-
-    :param world: The world to modify in place.
-    :param robot: The robot whose grippers' velocity limits are raised.
-    """
-    dofs = {
-        connection.raw_dof
-        for arm in robot.get_arms()
-        for connection in arm.end_effector.active_connections
+    # without ringing; "size3" the elbow; "size2" the three wrist joints, which carry
+    # only the gripper and so need much less of either.
+    return {
+        "shoulder_pan_joint": ServoGains.ur10e(torque_limit=330.0, joint_damping=10.0),
+        "shoulder_lift_joint": ServoGains.ur10e(torque_limit=330.0, joint_damping=10.0),
+        "elbow_joint": ServoGains.ur10e(torque_limit=150.0, joint_damping=5.0),
+        "wrist_1_joint": ServoGains.ur10e(torque_limit=56.0, joint_damping=2.0),
+        "wrist_2_joint": ServoGains.ur10e(torque_limit=56.0, joint_damping=2.0),
+        "wrist_3_joint": ServoGains.ur10e(torque_limit=56.0, joint_damping=2.0),
     }
-    with world.modify_world():
-        for dof in dofs:
-            dof.limits.upper.velocity = GRIPPER_JOINT_VELOCITY_LIMIT
-            dof.limits.lower.velocity = -GRIPPER_JOINT_VELOCITY_LIMIT
 
 
-def _servo_tuning_for(joint_name: str) -> ServoGains:
+@dataclass(frozen=True)
+class TracyServoTuning:
     """
-    The tuning a joint's servo is built with, by its (possibly ``left_``/``right_``-
-    prefixed) name.
-
-    :param joint_name: Name of the joint, e.g. ``"left_shoulder_pan_joint"``.
-    :return: Its own tuning from :data:`ARM_JOINT_SERVO`.
+    The servos Tracy's arms and grippers are equipped with.
     """
-    unprefixed = joint_name.removeprefix("left_").removeprefix("right_")
-    return ARM_JOINT_SERVO[unprefixed]
+
+    arm_joint_gains: Dict[str, ServoGains] = field(default_factory=ur10e_arm_gains)
+    """
+    Each arm joint's gains, keyed by joint name without the arm's ``left_``/``right_``
+    prefix.
+    """
+
+    gripper_joint_gains: ServoGains = field(
+        default_factory=ServoGains.robotiq_85_knuckle
+    )
+    """
+    The gains of every gripper joint.
+    """
+
+    gripper_joint_velocity_limit: float = 1.0
+    """
+    Velocity limit, in radians per second, given to every gripper joint's own degree of
+    freedom, overriding whatever ``iai_tracy_description`` itself declares.
+
+    The parsed URDF's own knuckle joint velocity limit is roughly ``0.032`` rad/s -- at
+    that speed, closing through the gripper's own ~0.8 rad range takes about 25 real
+    seconds, which joint-space planning faithfully respects since it clamps its own
+    reference velocity to this limit. Unlike the arm's gains (sourced from real UR10e
+    hardware data), no such reference backs this gripper's own declared limit, so
+    raising it trades an unproven number for a still-modest, more usable one.
+
+    ``1.0`` (not higher) is a real, tested ceiling: ``2.0`` made the QP solver settle
+    about 0.016 rad short of the actual target and stay there indefinitely, so the plan
+    never finished -- ``1.0`` converges cleanly and still closes the gripper about 25x
+    faster than the original limit.
+    """
+
+    def arm_gains_for(self, joint_name: str) -> ServoGains:
+        """
+        :param joint_name: Name of an arm joint, possibly ``left_``/``right_``-prefixed,
+            e.g. ``"left_shoulder_pan_joint"``.
+        :return: Its gains.
+        """
+        unprefixed = joint_name.removeprefix("left_").removeprefix("right_")
+        return self.arm_joint_gains[unprefixed]
 
 
 def joint_state_of_type(robot_part: AbstractRobotPart, state_type) -> JointState:
@@ -205,6 +200,7 @@ def joint_state_of_type(robot_part: AbstractRobotPart, state_type) -> JointState
 
     :param robot_part: The robot part (an arm or a gripper) to search.
     :param state_type: The state type to find, e.g. :attr:`StaticJointState.PARK`.
+    :return: The joint state.
     """
     return next(
         joint_state
@@ -216,7 +212,9 @@ def joint_state_of_type(robot_part: AbstractRobotPart, state_type) -> JointState
 # %% mounting
 
 
-def parse_tracy() -> World:
+def parse_tracy(
+    mount_root_name: PrefixedName = PrefixedName("tracy_mount", "tracy_experiments"),
+) -> World:
     """
     Read Tracy out of its own ``iai_tracy_description`` ROS package, without any
     actuator: an actuator parsed into one world cannot be merged into another (see
@@ -224,16 +222,19 @@ def parse_tracy() -> World:
     :func:`equip_arms_with_servos`/:func:`equip_grippers_with_servos` install their own
     once Tracy is mounted.
 
-    :return: A world holding only Tracy's own body tree, its synthetic root renamed to
-        :data:`TRACY_MOUNT_ROOT_NAME`.
+    :param mount_root_name: Name given to the parsed Tracy's own synthetic world root,
+        so it never collides with a merge target's own root. Tracy's real kinematic
+        root, the body named ``"table"``, is a descendant of this synthetic node, not
+        the node itself, so renaming it does not affect
+        :meth:`~semantic_digital_twin.robots.robot_parts.AbstractRobot.from_world`'s
+        later lookup.
+    :return: A world holding only Tracy's own body tree.
     """
-    from semantic_digital_twin.adapters.urdf import URDFParser
-
     tracy_world = URDFParser.from_file(Tracy.get_ros_file_path()).parse()
     with tracy_world.modify_world():
         for actuator in list(tracy_world.actuators):
             tracy_world.remove_actuator(actuator)
-        tracy_world.root.name = TRACY_MOUNT_ROOT_NAME
+        tracy_world.root.name = mount_root_name
     return tracy_world
 
 
@@ -322,6 +323,7 @@ def table_top_z(robot: Tracy) -> float:
     the physical robot, fetched live from its own world service).
 
     :param robot: The already-mounted robot whose table height is read.
+    :return: The height.
     """
     table = robot.root
     tabletop = max(table.collision, key=lambda shape: shape.scale.x * shape.scale.y)
@@ -338,6 +340,25 @@ def table_top_z(robot: Tracy) -> float:
 # %% physical simulation
 
 
+class CollisionGroup(IntEnum):
+    """
+    MuJoCo ``contype``/``conaffinity`` bits telling apart what may touch what: a contact
+    between two geoms is generated only if one's ``contype`` shares a bit with the
+    other's ``conaffinity``.
+    """
+
+    ROBOT = 1
+    """
+    Tracy's own moving links; see :func:`exclude_self_collision`.
+    """
+
+    EXTERNAL = 2
+    """
+    Things Tracy is meant to actually touch -- loose objects, a table, anything that is
+    not the robot's own body.
+    """
+
+
 def apply_gravity_compensation(world: World, robot: Tracy) -> None:
     """
     Give every arm and gripper link MuJoCo's own gravity compensation.
@@ -348,8 +369,8 @@ def apply_gravity_compensation(world: World, robot: Tracy) -> None:
     the gripper -- an entirely separate semantic annotation hanging off the arm's end,
     not part of ``arm.active_connections`` -- settles wherever gravity pulls it
     regardless of its own actuator's commanded target, since its comparatively weak
-    servo (see :data:`GRIPPER_JOINT_SERVO`) never has enough authority to fight the
-    whole uncompensated finger assembly's own weight.
+    servo never has enough authority to fight the whole uncompensated finger assembly's
+    own weight.
 
     :param world: The world to modify in place.
     :param robot: The robot to compensate.
@@ -362,44 +383,6 @@ def apply_gravity_compensation(world: World, robot: Tracy) -> None:
                 )
 
 
-ROBOT_COLLISION_BIT = 1
-"""
-MuJoCo ``contype``/``conaffinity`` bit given to every one of Tracy's own collision geoms
-by :func:`exclude_self_collision`.
-"""
-
-EXTERNAL_COLLISION_BIT = 2
-"""
-MuJoCo ``contype``/``conaffinity`` bit given to things Tracy is meant to actually touch
--- loose objects, a table, anything that is not the robot's own body.
-"""
-
-
-def _mujoco_geom_for(shape: Shape) -> MujocoGeom:
-    """
-    ``shape``'s own :class:`MujocoGeom` additional property, creating one if it has none
-    yet.
-
-    :class:`~semantic_digital_twin.adapters.multi_sim.MujocoGeomConverter` reads only
-    the first ``MujocoGeom`` it finds on a shape, so a second, appended one would be
-    silently ignored: callers must modify the returned instance in place rather than
-    replacing it.
-
-    :param shape: The shape to find or create a ``MujocoGeom`` on, modified in place if
-        none exists yet.
-    """
-    existing = [
-        additional_property
-        for additional_property in shape.simulator_additional_properties
-        if isinstance(additional_property, MujocoGeom)
-    ]
-    if existing:
-        return existing[0]
-    mujoco_geom = MujocoGeom()
-    shape.simulator_additional_properties.append(mujoco_geom)
-    return mujoco_geom
-
-
 def exclude_self_collision(world: World, robot: Tracy) -> None:
     """
     Let the robot's own links pass through each other, without also excusing them from
@@ -410,15 +393,15 @@ def exclude_self_collision(world: World, robot: Tracy) -> None:
     push through by itself (confirmed directly in the cube-stacking demo: one joint sat
     pinned at its starting angle the whole run, the signature of a real contact force).
 
-    Gives every one of the robot's own collision geoms :data:`ROBOT_COLLISION_BIT` as
-    both ``contype`` and ``conaffinity``: two robot geoms then never generate a contact,
-    while a robot geom still collides normally with anything else, since that other
-    geometry keeps MuJoCo's default bit (which overlaps :data:`ROBOT_COLLISION_BIT`).
+    Gives every one of the robot's own collision geoms :attr:`CollisionGroup.ROBOT` as
+    ``contype`` and :attr:`CollisionGroup.EXTERNAL` as ``conaffinity``: two robot geoms
+    then never generate a contact, while a robot geom still collides with anything
+    external.
 
     ``robot.bodies_with_collision`` also includes ``robot.root`` itself -- Tracy's own
-    table, since both arms are rooted there rather than at a separate torso link -- which
-    must be skipped: it is exactly the kind of thing this function's own docstring says
-    the robot should keep colliding with, not one of the robot's own moving links.
+    table, since both arms are rooted there rather than at a separate torso link --
+    which must be skipped: it is exactly the kind of thing the robot should keep
+    colliding with, not one of the robot's own moving links.
 
     :param world: The world to relax, modified in place.
     :param robot: The robot to exclude self-collision on.
@@ -428,20 +411,25 @@ def exclude_self_collision(world: World, robot: Tracy) -> None:
             if body is robot.root:
                 continue
             for shape in body.collision:
-                mujoco_geom = _mujoco_geom_for(shape)
-                mujoco_geom.contype = ROBOT_COLLISION_BIT
-                mujoco_geom.conaffinity = EXTERNAL_COLLISION_BIT
+                mujoco_geom = mujoco_geom_for(shape)
+                mujoco_geom.contype = CollisionGroup.ROBOT
+                mujoco_geom.conaffinity = CollisionGroup.EXTERNAL
 
 
-def _servo_actuator(gains: ServoGains, dof: DegreeOfFreedom) -> MujocoActuator:
+def _servo_actuator(
+    gains: ServoGains, degree_of_freedom: DegreeOfFreedom
+) -> MujocoActuator:
     """
-    Build a MuJoCo actuator that servos ``dof`` to a commanded position with a PD law,
-    clamped to ``gains``' own torque limit and ``dof``'s own position limits.
+    Build a MuJoCo actuator that servos ``degree_of_freedom`` to a commanded position
+    with a PD law, clamped to ``gains``' own torque limit and the degree of freedom's
+    own position limits.
 
     :param gains: Gains and torque clamp to build the servo with.
-    :param dof: The degree of freedom the servo's control range is clamped to.
+    :param degree_of_freedom: The degree of freedom the servo's control range is
+        clamped to.
+    :return: The actuator's MuJoCo definition.
     """
-    limits = dof.limits
+    limits = degree_of_freedom.limits
     return MujocoActuator(
         dynamics_type=mujoco.mjtDyn.mjDYN_NONE,
         gain_type=mujoco.mjtGain.mjGAIN_FIXED,
@@ -456,122 +444,121 @@ def _servo_actuator(gains: ServoGains, dof: DegreeOfFreedom) -> MujocoActuator:
 def _equip_connections_with_servos(
     world: World,
     connections: Iterable[ActiveConnection1DOF],
-    gains_for: Callable[[str], ServoGains],
+    gains_for: Dict[str, ServoGains],
 ) -> Dict[str, Actuator]:
     """
     Give every one of ``connections`` a position-servo actuator, its own passive
-    damping, and armature, driven directly via :meth:`~experiments.tracy_experiments.rea
-    l_time_simulation.RealTimeSimulation.command` rather than through Giskard.
+    damping, and armature, driven directly via
+    :meth:`~experiments.tracy_experiments.real_time_simulation.RealTimeSimulation.command`
+    rather than through Giskard.
 
     A mimic linkage (e.g. the Robotiq gripper's underactuated four-bar mechanism) shares
-    one ``raw_dof`` across several connections; each such ``dof`` gets an actuator only
-    once, since a second actuator on the same, already-equipped ``dof`` would apply
-    competing, duplicate servo force rather than driving anything new. ``dynamics``
-    (armature and damping), by contrast, lives on each connection -- its own physical
-    MuJoCo joint -- not the shared ``dof``, so it is set for every connection regardless
-    of whether that connection's own ``dof`` was already equipped with an actuator;
-    leaving a mimicked joint's own armature at zero starves the whole coupled mechanism
-    of the numerical damping that keeps it from chattering under load, even though only
-    one of its joints is ever actually driven directly.
+    one ``raw_dof`` across several connections; each such degree of freedom gets an
+    actuator only once, since a second actuator on the same, already-equipped one would
+    apply competing, duplicate servo force rather than driving anything new.
+    ``dynamics`` (armature and damping), by contrast, lives on each connection -- its
+    own physical MuJoCo joint -- not the shared degree of freedom, so it is set for
+    every connection regardless; leaving a mimicked joint's own armature at zero
+    starves the whole coupled mechanism of the numerical damping that keeps it from
+    chattering under load, even though only one of its joints is ever driven directly.
 
     :param world: The world to add the actuators to, modified in place.
     :param connections: The connections to equip; non-1DOF connections are skipped.
-    :param gains_for: Looks up a connection's own tuning by its joint name.
+    :param gains_for: Each connection's gains, by its joint name.
     :return: Each driven degree of freedom's own actuator, keyed by joint name.
     """
     actuators_by_joint_name: Dict[str, Actuator] = {}
-    equipped_dofs: set[DegreeOfFreedom] = set()
+    equipped: set[DegreeOfFreedom] = set()
     with world.modify_world():
         for connection in connections:
             if not isinstance(connection, ActiveConnection1DOF):
                 continue
-            dof = connection.raw_dof
-            gains = gains_for(dof.name.name)
+            degree_of_freedom = connection.raw_dof
+            gains = gains_for[degree_of_freedom.name.name]
             connection.dynamics.armature = gains.armature
             connection.dynamics.damping = gains.joint_damping
-            if dof in equipped_dofs:
+            if degree_of_freedom in equipped:
                 continue
-            equipped_dofs.add(dof)
+            equipped.add(degree_of_freedom)
             actuator = Actuator()
-            actuator.add_dof(dof=dof)
-            actuator.simulator_additional_properties.append(_servo_actuator(gains, dof))
+            actuator.add_dof(dof=degree_of_freedom)
+            actuator.simulator_additional_properties.append(
+                _servo_actuator(gains, degree_of_freedom)
+            )
             world.add_actuator(actuator=actuator)
-            actuators_by_joint_name[dof.name.name] = actuator
+            actuators_by_joint_name[degree_of_freedom.name.name] = actuator
     return actuators_by_joint_name
 
 
-def equip_arms_with_servos(world: World, robot: Tracy) -> Dict[str, Actuator]:
+def equip_arms_with_servos(
+    world: World, robot: Tracy, tuning: TracyServoTuning = TracyServoTuning()
+) -> Dict[str, Actuator]:
     """
     Give every joint of both arms a position-servo actuator, its own passive damping,
     and armature, driven directly rather than through Giskard.
 
     :param world: The world to add the actuators to, modified in place.
     :param robot: The robot whose arms are driven.
+    :param tuning: The servos to equip.
     :return: Each driven degree of freedom's own actuator, keyed by joint name.
     """
     connections = [
-        connection for arm in robot.get_arms() for connection in arm.active_connections
+        connection
+        for arm in robot.get_arms()
+        for connection in arm.active_connections
+        if isinstance(connection, ActiveConnection1DOF)
     ]
-    return _equip_connections_with_servos(world, connections, _servo_tuning_for)
+    return _equip_connections_with_servos(
+        world,
+        connections,
+        {
+            connection.raw_dof.name.name: tuning.arm_gains_for(
+                connection.raw_dof.name.name
+            )
+            for connection in connections
+        },
+    )
 
 
-def equip_grippers_with_servos(world: World, robot: Tracy) -> Dict[str, Actuator]:
+def equip_grippers_with_servos(
+    world: World, robot: Tracy, tuning: TracyServoTuning = TracyServoTuning()
+) -> Dict[str, Actuator]:
     """
     Give every joint of both grippers a position-servo actuator, mirroring
-    :func:`equip_arms_with_servos` for the end effectors it does not cover.
-
-    Also raises every gripper joint's own velocity limit; see
-    :func:`_raise_gripper_velocity_limits`'s own docstring for why.
+    :func:`equip_arms_with_servos` for the end effectors it does not cover, and raise
+    every gripper joint's own velocity limit to the tuning's (see
+    :attr:`TracyServoTuning.gripper_joint_velocity_limit`).
 
     :param world: The world to add the actuators to, modified in place.
     :param robot: The robot whose grippers are driven.
+    :param tuning: The servos to equip.
     :return: Each driven degree of freedom's own actuator, keyed by joint name.
     """
-    _raise_gripper_velocity_limits(world, robot)
     connections = [
         connection
         for arm in robot.get_arms()
         for connection in arm.end_effector.active_connections
+        if isinstance(connection, ActiveConnection1DOF)
     ]
+    with world.modify_world():
+        for degree_of_freedom in {connection.raw_dof for connection in connections}:
+            degree_of_freedom.limits.upper.velocity = (
+                tuning.gripper_joint_velocity_limit
+            )
+            degree_of_freedom.limits.lower.velocity = (
+                -tuning.gripper_joint_velocity_limit
+            )
     return _equip_connections_with_servos(
-        world, connections, lambda _: GRIPPER_JOINT_SERVO
+        world,
+        connections,
+        {
+            connection.raw_dof.name.name: tuning.gripper_joint_gains
+            for connection in connections
+        },
     )
 
 
-# %% cubes (stacking demo)
-
-CUBE_FRICTION = [1.0, 0.05, 0.001]
-"""
-Contact friction (sliding, torsional, rolling; see
-:attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.friction`) given to every
-cube's collision geometry.
-
-Matches ``coraplex_panda_demo/stacking_scene.xml``'s own proven-working cube
-(``friction="1 0.05 0.001"``) exactly.
-"""
-
-CUBE_SOLVER_REFERENCE = [0.008, 1.0]
-"""
-Contact solver reference (see
-:attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.solver_reference`) given to
-every cube, matching ``coraplex_panda_demo``'s own proven-working cube
-(``solref="0.008"``).
-
-Stiffer than MuJoCo's own default (``0.02``): a soft contact lets a pinched cube sink
-into the fingers and then slip back out as the arm lifts, rather than being held solidly
-between them.
-"""
-
-CUBE_SOLVER_IMPEDANCE = [0.96, 0.99, 0.001, 0.5, 2.0]
-"""
-Contact solver impedance (see
-:attr:`~semantic_digital_twin.adapters.multi_sim.MujocoGeom.solver_impedance`) given to
-every cube, matching ``coraplex_panda_demo``'s own proven-working cube (``solimp="0.96
-0.99"``, the remaining three values MuJoCo's own defaults).
-
-Harder than MuJoCo's own default (``0.9 0.95``), for the same reason as
-:data:`CUBE_SOLVER_REFERENCE`.
-"""
+# %% loose objects
 
 
 def add_box(
@@ -581,18 +568,16 @@ def add_box(
     scale: Scale,
     color: Color,
     yaw: float = 0.0,
+    contact: ContactParameters = ContactParameters.cube(),
 ) -> Body:
     """
     Add a free-standing box with real collision geometry to the world, so it can be
     pushed, grasped, and stacked by real contact rather than teleported into place or
     kinematically attached to whatever is holding it.
 
-    Its collision geom gets :data:`EXTERNAL_COLLISION_BIT`, and is allowed to touch both
-    the robot (:data:`ROBOT_COLLISION_BIT`) and other external things, including another
-    box -- see :func:`exclude_self_collision`. It also gets :data:`CUBE_FRICTION`,
-    :data:`CUBE_SOLVER_REFERENCE`, and :data:`CUBE_SOLVER_IMPEDANCE`, without which a
-    grasped box sinks into the fingers under MuJoCo's own soft contact defaults and
-    slips back out as the arm lifts.
+    Its collision geom belongs to :attr:`CollisionGroup.EXTERNAL` and is allowed to
+    touch both the robot and other external things, including another box -- see
+    :func:`exclude_self_collision`.
 
     :param world: The world to add the box to, modified in place.
     :param name: Name of the box.
@@ -600,6 +585,9 @@ def add_box(
     :param scale: Edge lengths of the box, in metres.
     :param color: Colour of the box.
     :param yaw: Rotation of the box about the vertical, in radians.
+    :param contact: The box's contact parameters; a grasped cube's by default, without
+        which a grasped box sinks into the fingers under MuJoCo's own soft contact
+        defaults and slips back out as the arm lifts.
     :return: The newly added box.
     """
     box = Body(name=PrefixedName(name))
@@ -608,14 +596,12 @@ def add_box(
         scale=scale,
         color=color,
     )
-    mujoco_geom = _mujoco_geom_for(shape)
-    mujoco_geom.friction = list(CUBE_FRICTION)
-    mujoco_geom.solver_reference = list(CUBE_SOLVER_REFERENCE)
-    mujoco_geom.solver_impedance = list(CUBE_SOLVER_IMPEDANCE)
-    mujoco_geom.contype = EXTERNAL_COLLISION_BIT
-    mujoco_geom.conaffinity = ROBOT_COLLISION_BIT | EXTERNAL_COLLISION_BIT
+    mujoco_geom = mujoco_geom_for(shape)
+    mujoco_geom.contype = CollisionGroup.EXTERNAL
+    mujoco_geom.conaffinity = CollisionGroup.ROBOT | CollisionGroup.EXTERNAL
     geometry = ShapeCollection([shape], reference_frame=box)
     box.collision, box.visual = geometry, geometry
+    contact.apply_to([box])
 
     with world.modify_world():
         world.add_connection(
