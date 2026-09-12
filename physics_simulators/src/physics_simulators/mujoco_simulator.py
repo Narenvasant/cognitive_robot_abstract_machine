@@ -3,8 +3,9 @@
 import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field, InitVar
+from enum import StrEnum
 from threading import RLock
-from typing import Optional, List, Dict, Union, Any
+from typing import Optional, List, Dict, Union, Any, ClassVar
 
 import mujoco
 import mujoco.viewer
@@ -16,6 +17,16 @@ from physics_simulators.base_simulator import (
     SimulatorCallbackResult,
     SimulatorState,
 )
+
+
+class HeadlessGraphicsBackend(StrEnum):
+    """
+    The OpenGL backends MuJoCo renders with when no display is available, selected
+    through the ``MUJOCO_GL`` environment variable.
+    """
+
+    EGL = "egl"
+    OSMESA = "osmesa"
 
 
 @dataclass
@@ -43,6 +54,17 @@ class MujocoRenderer(SimulatorRenderer):
 class MujocoSimulator(BaseSimulator):
     """
     Mujoco Simulator class.
+    """
+
+    GRAPHICS_BACKEND_VARIABLE: ClassVar[str] = "MUJOCO_GL"
+    """
+    The environment variable MuJoCo reads its OpenGL backend from.
+    """
+
+    DISPLAY_VARIABLE: ClassVar[str] = "DISPLAY"
+    """
+    The environment variable that names the X display the windowed backend renders
+    through.
     """
 
     _name: str = field(init=False, repr=False)
@@ -1524,6 +1546,18 @@ class MujocoSimulator(BaseSimulator):
             info=f"Loaded simulation with key_id {key_id}",
             result=key_id,
         )
+
+    @classmethod
+    def offscreen_rendering_available(cls) -> bool:
+        """
+        Whether this process can create the OpenGL context that :meth:`capture_rgb` and
+        :meth:`capture_depth` need: a headless backend is selected, or a display is
+        available to the windowed one.
+        """
+        backend = os.environ.get(cls.GRAPHICS_BACKEND_VARIABLE, "")
+        if backend in HeadlessGraphicsBackend:
+            return True
+        return cls.DISPLAY_VARIABLE in os.environ
 
     @BaseSimulator.simulator_callback
     def capture_rgb(

@@ -5,7 +5,10 @@ import mujoco
 import numpy
 import pytest
 
-from physics_simulators.mujoco_simulator import MujocoSimulator
+from physics_simulators.mujoco_simulator import (
+    HeadlessGraphicsBackend,
+    MujocoSimulator,
+)
 from physics_simulators.base_simulator import (
     SimulatorConstraints,
     SimulatorState,
@@ -660,3 +663,33 @@ class TestMujocoSimulatorComplex:
                     sim.stop()
                 except Exception:
                     pass
+
+
+class TestOffscreenRenderingAvailability:
+    """
+    Whether offscreen rendering can be attempted depends on the process's OpenGL setup.
+    """
+
+    @pytest.fixture(autouse=True)
+    def no_graphics_environment(self, monkeypatch):
+        monkeypatch.delenv(MujocoSimulator.GRAPHICS_BACKEND_VARIABLE, raising=False)
+        monkeypatch.delenv(MujocoSimulator.DISPLAY_VARIABLE, raising=False)
+
+    def test_unavailable_without_backend_or_display(self):
+        assert not MujocoSimulator.offscreen_rendering_available()
+
+    @pytest.mark.parametrize("backend", list(HeadlessGraphicsBackend))
+    def test_available_with_headless_backend(self, monkeypatch, backend):
+        monkeypatch.setenv(MujocoSimulator.GRAPHICS_BACKEND_VARIABLE, backend)
+
+        assert MujocoSimulator.offscreen_rendering_available()
+
+    def test_unavailable_with_windowed_backend_and_no_display(self, monkeypatch):
+        monkeypatch.setenv(MujocoSimulator.GRAPHICS_BACKEND_VARIABLE, "glfw")
+
+        assert not MujocoSimulator.offscreen_rendering_available()
+
+    def test_available_with_display(self, monkeypatch):
+        monkeypatch.setenv(MujocoSimulator.DISPLAY_VARIABLE, ":1")
+
+        assert MujocoSimulator.offscreen_rendering_available()
