@@ -56,24 +56,6 @@ class EpisodePlanningFailedError(DataclassException):
 
 
 @dataclass
-class UnknownSceneRecordError(DataclassException):
-    """
-    Raised when a GraspClutter6D ``scene_gt.json`` has no record for a requested image.
-    """
-
-    image_id: int
-    """
-    The image the record was requested for.
-    """
-
-    def error_message(self) -> str:
-        return f"scene_gt.json carries no object poses for image {self.image_id}."
-
-    def suggest_correction(self) -> str:
-        return "Pick one of the image ids the file lists."
-
-
-@dataclass
 class OneCausePerQueryError(DataclassException):
     """
     Raised when a query marks more than one variable as its cause: each pipeline fits

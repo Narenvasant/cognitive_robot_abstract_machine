@@ -26,10 +26,6 @@ answers, how many models each fitted, how long that took, how big the models are
 well each explains held-out attempts, how fast each answers, and how often the pick
 came up in the first place.
 
-The scene classes follow the shape of the
-[GraspClutter6D](https://sites.google.com/view/graspclutter6d) dataset: an environment
-kind, many objects with known poses, and a grasp scored by the friction it relies on.
-
 ## The domain
 
 `domain.py` holds the classes every other module works on.
@@ -44,9 +40,9 @@ kind, many objects with known poses, and a grasp scored by the friction it relie
 | `NeighbourThresholds` | the distances and angles that turn measured geometry into bands and sides |
 | `FrictionLadder` | the friction levels an attempt can be given |
 
-**Why friction.** GraspNet-1Billion and GraspClutter6D score a grasp by the smallest
-friction coefficient it still closes under, so friction is the natural causal knob of a
-grasp dataset. An attempt's friction coefficient is set on the cartons' geoms *and* on
+**Why friction.** A friction-held grasp succeeds or fails by the smallest friction
+coefficient it still closes under, so friction is the natural causal knob of a pick.
+An attempt's friction coefficient is set on the cartons' geoms *and* on
 the picking gripper's fingertip pads. MuJoCo gives a contact the larger of its two
 geoms' friction, so a slippery carton only slips if the pads closing on it are no
 grippier. The ladder sits around the coefficient below which a carton slips out of the
@@ -71,7 +67,6 @@ it summed out by backdoor adjustment.
 | `collect_data.py` | record many attempts headless into `recorded/milk_clutter_attempts.json`, rewritten after every attempt |
 | `synthetic.py` | a closed-form stand-in for the attempt with the same causal structure, so the pipelines are tested without a simulator |
 | `dataset.py` | the attempts on disk, their train/test split, and success rates grouped by any key |
-| `graspclutter6d.py` | reading a BOP-format GraspClutter6D scene (`scene_gt.json`, `scene_camera.json`) into a layout |
 
 The MuJoCo stack the demo drives lives in `experiments/tracy_experiments`: parsing and
 mounting Tracy, servos, self-collision exclusion, the real-time simulation, trajectory

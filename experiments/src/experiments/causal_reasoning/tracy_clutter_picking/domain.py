@@ -1,13 +1,8 @@
 """
-Domain classes for picking one object out of a clutter, shaped after the GraspClutter6D
-dataset (https://sites.google.com/view/graspclutter6d): a scene is one of a few
-environment kinds holding many objects with known poses, a grasp is scored by the
-friction coefficient it relies on, and every object in the scene is an exchangeable part
-of it.
-
-The ten-milk MuJoCo mock produces the same classes, so the pipelines fitted on it apply
-unchanged once GraspClutter6D's own scenes are annotated (see
-:mod:`~experiments.causal_reasoning.tracy_clutter_picking.graspclutter6d`).
+Domain classes for picking one object out of a clutter: a scene is one of a few
+environment kinds holding many objects with known poses, a grasp is characterised by
+the friction coefficient it relies on, and every object in the scene is an exchangeable
+part of it.
 """
 
 from __future__ import annotations
@@ -28,20 +23,16 @@ from typing_extensions import List, Tuple
 
 class ClutterEnvironment(StrEnum):
     """
-    The kind of environment a clutter stands in; GraspClutter6D's 75 configurations are
-    bins, shelves and tables.
+    The kind of environment a clutter stands in.
     """
 
     TABLE = "table"
     BIN = "bin"
-    SHELF = "shelf"
 
 
 class ObjectCategory(StrEnum):
     """
-    What kind of object stands in the clutter.
-
-    GraspClutter6D distinguishes 200 objects; the ten-milk mock only has one.
+    What kind of object stands in the clutter; the ten-carton clutter only has one.
     """
 
     MILK = "milk"
@@ -153,12 +144,10 @@ class FrictionLadder:
     The sliding friction coefficients an attempt's grasp contact is given, one level per
     attempt.
 
-    A ladder in the spirit of the one GraspNet-1Billion and GraspClutter6D score their
-    grasps on -- a grasp's score is the smallest friction coefficient it still closes
-    under -- placed around the coefficient below which a friction-held carton slips out
-    of the Robotiq 2F-85's pads, at levels a single-precision float represents exactly:
-    a circuit's support is read back in single precision, and a level that rounds there
-    would no longer match the point its own leaves sit on.
+    The ladder is placed around the coefficient below which a friction-held carton slips
+    out of the Robotiq 2F-85's pads, at levels a single-precision float represents
+    exactly: a circuit's support is read back in single precision, and a level that
+    rounds there would no longer match the point its own leaves sit on.
     """
 
     levels: Tuple[float, ...] = (0.125, 0.1875, 0.25, 0.375, 0.5, 0.75)
