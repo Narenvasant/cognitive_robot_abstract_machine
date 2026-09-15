@@ -17,7 +17,10 @@ from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     OneCausePerQueryError,
     PipelineNotFittedError,
 )
-from experiments.causal_reasoning.tracy_clutter_picking.flat_table import FlatTable, SceneSchema
+from experiments.causal_reasoning.tracy_clutter_picking.flat_table import (
+    FlatTable,
+    SceneSchema,
+)
 from experiments.causal_reasoning.tracy_clutter_picking.pipelines import (
     CauseStratification,
     FlatTablePipeline,
@@ -36,7 +39,15 @@ from experiments.causal_reasoning.tracy_clutter_picking.synthetic import (
 from krrood.entity_query_language.backends import ProbabilisticBackend
 from krrood.entity_query_language.factories import cause
 
-RECORDED_NEIGHBOUR_COUNT = 5
+
+@pytest.fixture(scope="module")
+def recorded_neighbour_count() -> int:
+    """
+    How many neighbours the synthetic attempts are recorded with.
+    """
+    return 5
+
+
 """
 Neighbours per synthetic attempt; fewer than the mock's ten cartons, to keep the tests
 quick.
@@ -44,11 +55,11 @@ quick.
 
 
 @pytest.fixture(scope="module")
-def scenes():
+def scenes(recorded_neighbour_count):
     return synthetic_clutter_pick_scenes(
         np.random.default_rng(0),
         scene_count=150,
-        object_count=RECORDED_NEIGHBOUR_COUNT + 1,
+        object_count=recorded_neighbour_count + 1,
     )
 
 
@@ -60,9 +71,9 @@ def relational_pipeline(scenes):
 
 
 @pytest.fixture(scope="module")
-def flat_table_pipeline(scenes):
+def flat_table_pipeline(scenes, recorded_neighbour_count):
     pipeline = FlatTablePipeline(
-        neighbour_count=RECORDED_NEIGHBOUR_COUNT, min_samples_per_leaf=15
+        neighbour_count=recorded_neighbour_count, min_samples_per_leaf=15
     )
     pipeline.fit(scenes[:120])
     return pipeline
@@ -84,9 +95,9 @@ def test_flat_table_columns_are_named_like_eql_variables(schema):
     )
 
 
-def test_flat_table_row_keeps_every_attribute(scenes, schema):
+def test_flat_table_row_keeps_every_attribute(scenes, schema, recorded_neighbour_count):
     scene = scenes[0]
-    row = FlatTable(RECORDED_NEIGHBOUR_COUNT).row(scene)
+    row = FlatTable(recorded_neighbour_count).row(scene)
     assert (
         row[schema.scene_column("friction_coefficient")] == scene.friction_coefficient
     )
@@ -94,12 +105,14 @@ def test_flat_table_row_keeps_every_attribute(scenes, schema):
         row[schema.neighbour_column(3, "distance_band")]
         == scene.neighbours[3].distance_band
     )
-    assert set(row) == set(FlatTable(RECORDED_NEIGHBOUR_COUNT).columns)
+    assert set(row) == set(FlatTable(recorded_neighbour_count).columns)
 
 
-def test_flat_table_rejects_a_scene_of_another_neighbour_count(scenes):
+def test_flat_table_rejects_a_scene_of_another_neighbour_count(
+    scenes, recorded_neighbour_count
+):
     with pytest.raises(FlatTableSchemaMismatchError):
-        FlatTable(RECORDED_NEIGHBOUR_COUNT + 1).row(scenes[0])
+        FlatTable(recorded_neighbour_count + 1).row(scenes[0])
 
 
 # %% stratification per cause
@@ -126,9 +139,11 @@ def test_unfitted_pipeline_refuses_to_serve_a_model():
         RelationalPipeline().registry_for(None)
 
 
-def test_two_causes_in_one_query_are_rejected(relational_pipeline):
+def test_two_causes_in_one_query_are_rejected(
+    relational_pipeline, recorded_neighbour_count
+):
     query = scene_query(
-        [neighbour_query() for _ in range(RECORDED_NEIGHBOUR_COUNT)],
+        [neighbour_query() for _ in range(recorded_neighbour_count)],
         friction_coefficient=cause,
         crowding_count=cause,
     )
@@ -157,7 +172,7 @@ def _adjusted_by_region(outcome):
     "pipeline_name", ["relational_pipeline", "flat_table_pipeline"]
 )
 def test_both_pipelines_find_the_highest_friction_the_surest_lift(
-    request, asker, pipeline_name
+    request, asker, pipeline_name, recorded_neighbour_count
 ):
     """
     The synthetic attempts hold the target for certain at the highest friction level
@@ -165,7 +180,7 @@ def test_both_pipelines_find_the_highest_friction_the_surest_lift(
     of the ladder and lowest at its bottom for either pipeline.
     """
     pipeline = request.getfixturevalue(pipeline_name)
-    outcome = asker.ask(pipeline, FrictionCausesLift(RECORDED_NEIGHBOUR_COUNT))
+    outcome = asker.ask(pipeline, FrictionCausesLift(recorded_neighbour_count))
 
     assert outcome.answered
     adjusted = _adjusted_by_region(outcome)
@@ -177,10 +192,10 @@ def test_both_pipelines_find_the_highest_friction_the_surest_lift(
     "pipeline_name", ["relational_pipeline", "flat_table_pipeline"]
 )
 def test_both_pipelines_find_an_empty_neighbourhood_the_surest_lift(
-    request, asker, pipeline_name
+    request, asker, pipeline_name, recorded_neighbour_count
 ):
     pipeline = request.getfixturevalue(pipeline_name)
-    outcome = asker.ask(pipeline, CrowdingCausesLift(RECORDED_NEIGHBOUR_COUNT))
+    outcome = asker.ask(pipeline, CrowdingCausesLift(recorded_neighbour_count))
 
     assert outcome.answered
     adjusted = _adjusted_by_region(outcome)
@@ -188,42 +203,44 @@ def test_both_pipelines_find_an_empty_neighbourhood_the_surest_lift(
 
 
 def test_relational_pipeline_answers_about_a_clutter_of_another_size(
-    relational_pipeline, asker
+    relational_pipeline, asker, recorded_neighbour_count
 ):
     outcome = asker.ask(
-        relational_pipeline, FrictionCausesLift(RECORDED_NEIGHBOUR_COUNT + 2)
+        relational_pipeline, FrictionCausesLift(recorded_neighbour_count + 2)
     )
     assert outcome.answered
     assert len(outcome.effects) == len(FrictionLadder().levels)
 
 
 def test_flat_table_pipeline_refuses_a_clutter_of_another_size(
-    flat_table_pipeline, asker
+    flat_table_pipeline, asker, recorded_neighbour_count
 ):
     outcome = asker.ask(
-        flat_table_pipeline, FrictionCausesLift(RECORDED_NEIGHBOUR_COUNT + 2)
+        flat_table_pipeline, FrictionCausesLift(recorded_neighbour_count + 2)
     )
     assert not outcome.answered
     assert outcome.refusal == Refusal.SCHEMA_MISMATCH
 
 
 def test_relational_pipeline_answers_a_question_about_one_neighbour(
-    relational_pipeline, asker
+    relational_pipeline, asker, recorded_neighbour_count
 ):
     outcome = asker.ask(
         relational_pipeline,
-        ClosingAxisSideCausesDisturbance(RECORDED_NEIGHBOUR_COUNT, neighbour_index=2),
+        ClosingAxisSideCausesDisturbance(recorded_neighbour_count, neighbour_index=2),
     )
     assert outcome.answered
     assert set(_adjusted_by_region(outcome)) == {"along", "across"}
 
 
-def test_each_cause_gets_its_own_model(relational_pipeline, schema, asker):
+def test_each_cause_gets_its_own_model(
+    relational_pipeline, schema, asker, recorded_neighbour_count
+):
     """
     Every distinct cause asked about fitted one further model, on top of the plain one.
     """
-    asker.ask(relational_pipeline, FrictionCausesLift(RECORDED_NEIGHBOUR_COUNT))
-    asker.ask(relational_pipeline, CrowdingCausesLift(RECORDED_NEIGHBOUR_COUNT))
+    asker.ask(relational_pipeline, FrictionCausesLift(recorded_neighbour_count))
+    asker.ask(relational_pipeline, CrowdingCausesLift(recorded_neighbour_count))
 
     assert relational_pipeline.fit_report.model_count == 1 + len(
         relational_pipeline.cause_models
@@ -249,10 +266,10 @@ def test_held_out_likelihood_covers_some_attempts(request, scenes, pipeline_name
 
 
 def test_flat_table_pipeline_cannot_score_a_clutter_of_another_size(
-    flat_table_pipeline,
+    flat_table_pipeline, recorded_neighbour_count
 ):
     other_size = synthetic_clutter_pick_scenes(
-        np.random.default_rng(1), scene_count=5, object_count=RECORDED_NEIGHBOUR_COUNT
+        np.random.default_rng(1), scene_count=5, object_count=recorded_neighbour_count
     )
     report = flat_table_pipeline.log_likelihood(other_size)
     assert report.covered_scene_count == 0

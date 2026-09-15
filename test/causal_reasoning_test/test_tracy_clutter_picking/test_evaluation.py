@@ -7,7 +7,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.tracy_clutter_picking.dataset import ClutterPickDataset
+from experiments.causal_reasoning.tracy_clutter_picking.dataset import (
+    ClutterPickDataset,
+)
 from experiments.causal_reasoning.tracy_clutter_picking.evaluation import (
     Refusal,
     describe_region,
@@ -30,24 +32,30 @@ from random_events.product_algebra import SimpleEvent
 from random_events.set import Set
 from random_events.variable import Continuous, Symbolic
 
-RECORDED_NEIGHBOUR_COUNT = 5
+
+@pytest.fixture(scope="module")
+def recorded_neighbour_count() -> int:
+    """
+    How many neighbours the synthetic attempts are recorded with.
+    """
+    return 5
 
 
 @pytest.fixture(scope="module")
-def cases():
+def cases(recorded_neighbour_count):
     return [
-        FrictionCausesLift(RECORDED_NEIGHBOUR_COUNT),
-        CrowdingCausesLift(RECORDED_NEIGHBOUR_COUNT + 2),
+        FrictionCausesLift(recorded_neighbour_count),
+        CrowdingCausesLift(recorded_neighbour_count + 2),
     ]
 
 
 @pytest.fixture(scope="module")
-def report(cases):
+def report(cases, recorded_neighbour_count):
     dataset = ClutterPickDataset(
         synthetic_clutter_pick_scenes(
             np.random.default_rng(0),
             scene_count=120,
-            object_count=RECORDED_NEIGHBOUR_COUNT + 1,
+            object_count=recorded_neighbour_count + 1,
         )
     )
     return evaluate(dataset, min_samples_per_leaf=15, cases=cases)
@@ -79,17 +87,19 @@ def test_describe_region_writes_symbols_by_name():
 # %% the comparison
 
 
-def test_catalogue_asks_each_kind_of_cause_at_the_recorded_size_and_at_others():
-    catalogue = query_catalogue(RECORDED_NEIGHBOUR_COUNT)
+def test_catalogue_asks_each_kind_of_cause_at_the_recorded_size_and_at_others(
+    recorded_neighbour_count,
+):
+    catalogue = query_catalogue(recorded_neighbour_count)
     counts = [case.neighbour_count for case in catalogue]
-    assert counts.count(RECORDED_NEIGHBOUR_COUNT) == 3
+    assert counts.count(recorded_neighbour_count) == 3
     assert len(set(counts)) == 3
 
 
-def test_report_splits_the_dataset(report):
+def test_report_splits_the_dataset(report, recorded_neighbour_count):
     assert report.training_scene_count == 96
     assert report.test_scene_count == 24
-    assert report.recorded_neighbour_count == RECORDED_NEIGHBOUR_COUNT
+    assert report.recorded_neighbour_count == recorded_neighbour_count
 
 
 def test_report_records_every_question_for_every_pipeline(report, cases):
