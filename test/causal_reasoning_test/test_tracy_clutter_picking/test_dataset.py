@@ -4,7 +4,6 @@ Tests for the synthetic attempts and their on-disk dataset.
 
 from __future__ import annotations
 
-import os
 from dataclasses import replace
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +12,8 @@ from threading import Thread
 import numpy as np
 import pytest
 from requests import HTTPError
+
+from ...pytest_environment import runs_in_continuous_integration
 
 from experiments.causal_reasoning.tracy_clutter_picking.dataset import (
     ClutterPickDataset,
@@ -35,12 +36,6 @@ from experiments.causal_reasoning.tracy_clutter_picking.synthetic import (
     SyntheticPickOutcomes,
     synthetic_clutter_pick_scenes,
 )
-
-CONTINUOUS_INTEGRATION_VARIABLE = "CI"
-"""
-The environment variable a continuous-integration run sets, where the network is not
-relied on.
-"""
 
 
 @pytest.fixture
@@ -191,7 +186,7 @@ def test_missing_hosted_dataset_raises(hosted_file):
 
 
 @pytest.mark.skipif(
-    os.environ.get(CONTINUOUS_INTEGRATION_VARIABLE, "false").lower() == "true",
+    runs_in_continuous_integration(),
     reason="fetches the hosted attempts over the network",
 )
 def test_hosted_attempts_are_fetched_from_their_repository(tmp_path):
