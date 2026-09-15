@@ -29,7 +29,7 @@ def main(
     seed: int = 0, headless: bool = False, screenshots: Optional[Path] = None
 ) -> None:
     """
-    Draw one random ten-carton layout and pick its target, at wall-clock speed.
+    Draw one random ten-carton layout and pick its target.
 
     :param seed: Seed of the layout's randomness.
     :param headless: Whether to run without MuJoCo's viewer window.
@@ -45,7 +45,6 @@ def main(
     )
     episode = PickEpisode(
         headless=headless,
-        real_time_factor=None if headless else 1.0,
         screenshot_directory=screenshots,
         keep_viewer_open=True,
     )
