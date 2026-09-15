@@ -74,7 +74,7 @@ the grippers' own grasp geometry (their fingertip pads, driving knuckle and the 
 angle that closes the pads to a given width), the contact parameters in
 `adapters/mujoco_tuning.py` and the `RealTimeSimulation` in
 `adapters/real_time_simulation.py`. The `tracy_mujoco_addons/` subpackage holds only
-what is specific to picking: `live_motion.py`, where a `MotionRunner` ticks Giskard's
+what is specific to picking: `live_motion.py`, where a `MotionRunner` runs Giskard's
 own control loop against the physically simulated world, and
 `pick_and_place_action.py`, the pick and place actions built on it. Giskard drives the simulated robot live: every control cycle's command
 becomes the servos' set point through the world state, and the physics steps in

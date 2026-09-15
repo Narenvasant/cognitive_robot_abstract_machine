@@ -2,9 +2,10 @@
 Runs Giskard's own control loop against the live, physically simulated world.
 
 Every control cycle Giskard writes its command into the world state, the MuJoCo
-synchronizer hands that to the joints' servos as their set point, and the physics steps
-in between. A motion is therefore reached in the physics, as fast and as hard as the
-servos allow, rather than planned kinematically first and played back afterwards.
+synchronizer hands that to the joints' servos as their set point, and the executor's
+pacer steps the physics before the next cycle. A motion is therefore reached in the
+physics, as fast and as hard as the servos allow, rather than planned kinematically
+first and played back afterwards.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from giskardpy.executor import Executor
+from giskardpy.executor import Executor, SteppedSimulationPacer
 from giskardpy.motion_statechart.context import MotionStatechartContext
 from giskardpy.motion_statechart.goals.collision_avoidance import (
     ExternalCollisionAvoidance,
@@ -25,7 +26,7 @@ from giskardpy.motion_statechart.tasks.cartesian_tasks import (
 )
 from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList
 from giskardpy.qp.qp_controller_config import QPControllerConfig
-from typing_extensions import Callable, Dict, List, Optional
+from typing_extensions import Dict, List, Optional
 
 from coraplex.datastructures.enums import Arms
 from coraplex.exceptions import MotionDidNotFinish
@@ -129,23 +130,16 @@ class MotionRunner:
         """
         return 1.0 / self.target_frequency
 
-    def run(
-        self,
-        task: Task,
-        avoid_collisions: bool,
-        stop_when: Optional[Callable[[], bool]] = None,
-    ) -> None:
+    def run(self, task: Task, avoid_collisions: bool) -> None:
         """
-        Tick ``task`` against the live world until Giskard's own motion ends, advancing
-        the physics one control period per tick.
+        Run ``task`` against the live world until Giskard's own motion ends, with the
+        executor's pacer stepping the physics one control period per tick.
 
         :param task: The Giskard task to run.
         :param avoid_collisions: Whether Giskard's own ``ExternalCollisionAvoidance``
             runs alongside. Set False for a goal whose own point is to approach and
             touch an object, since avoidance would otherwise treat that object as an
             obstacle and make the goal unreachable.
-        :param stop_when: Checked after every cycle; the motion stops early once it
-            returns True.
         :raises MotionDidNotFinish: If the goal was not reached within
             :attr:`max_ticks`.
         """
@@ -165,22 +159,14 @@ class MotionRunner:
                     prediction_horizon=self.prediction_horizon,
                     verbose=False,
                 ),
-            )
+            ),
+            pacer=SteppedSimulationPacer(self.simulation),
         )
         executor.compile(motion_statechart)
         try:
-            for _ in range(self.max_ticks):
-                executor.tick()
-                self.simulation.advance(self.tick_period)
-                if motion_statechart.is_end_motion():
-                    return
-                if stop_when is not None and stop_when():
-                    return
-        finally:
-            executor.set_velocity_acceleration_jerk_to_zero()
-            motion_statechart.cleanup_nodes(context=executor.context)
-            executor.context.cleanup()
-        raise MotionDidNotFinish(failed_motions=[task])
+            executor.tick_until_end(timeout=self.max_ticks)
+        except TimeoutError as error:
+            raise MotionDidNotFinish(failed_motions=[task]) from error
 
     def settle(self, joint_names: List[str], timeout: Optional[float] = None) -> None:
         """
@@ -273,7 +259,6 @@ class MotionRunner:
         targets: Dict[str, float],
         avoid_collisions: bool = True,
         settle_timeout: Optional[float] = None,
-        stop_when: Optional[Callable[[], bool]] = None,
     ) -> None:
         """
         Move joints to target positions with Giskard's own
@@ -283,7 +268,6 @@ class MotionRunner:
         :param targets: Target position by joint name.
         :param avoid_collisions: See :meth:`run`.
         :param settle_timeout: See :meth:`settle`.
-        :param stop_when: See :meth:`run`.
         """
         joint_connections = [
             self.world.get_connection_by_name(name) for name in targets
@@ -291,7 +275,7 @@ class MotionRunner:
         goal_state = JointState.from_mapping(
             dict(zip(joint_connections, targets.values()))
         )
-        self.run(JointPositionList(goal_state=goal_state), avoid_collisions, stop_when)
+        self.run(JointPositionList(goal_state=goal_state), avoid_collisions)
         self.settle(list(targets), settle_timeout)
 
     def park_arms(
