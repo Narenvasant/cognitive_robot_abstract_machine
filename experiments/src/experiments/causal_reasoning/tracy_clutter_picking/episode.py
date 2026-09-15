@@ -60,7 +60,7 @@ class BodyPositions:
         :return: Their current centres, copied out of the simulator's live state so the
             reading stays put once the simulation moves on.
         """
-        positions = simulation.mirror.simulator.get_bodies_positions(names).result
+        positions = simulation.mujoco_mirror.simulator.get_bodies_positions(names).result
         return cls({name: np.array(position) for name, position in positions.items()})
 
     def horizontal_displacement(self, other: BodyPositions, name: str) -> float:
@@ -230,7 +230,7 @@ class PickEpisode:
         """
         if self.screenshot_directory is None:
             return
-        image = simulation.mirror.simulator.capture_rgb(
+        image = simulation.mujoco_mirror.simulator.capture_rgb(
             camera_name=self.scene.camera_name,
             height=self.screenshot_height,
             width=self.screenshot_width,

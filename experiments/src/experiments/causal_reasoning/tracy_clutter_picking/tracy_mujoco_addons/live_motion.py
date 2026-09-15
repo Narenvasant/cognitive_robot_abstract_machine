@@ -192,7 +192,7 @@ class MotionRunner:
         """
         if timeout is None:
             timeout = self.settle_timeout
-        simulator = self.simulation.mirror.simulator
+        simulator = self.simulation.mujoco_mirror.simulator
         set_points = {
             joint_name: self.world.state[
                 self.world.get_connection_by_name(joint_name).raw_dof.id
@@ -386,7 +386,7 @@ class MotionRunner:
         raw_angle = gripper.knuckle_angle_for_half_width(target_inner_x)
         raw_dof = gripper.knuckle_degree_of_freedom
 
-        simulator = self.simulation.mirror.simulator
+        simulator = self.simulation.mujoco_mirror.simulator
         target_name = target_body.name.name
         left_fingertip_name = gripper.left_fingertip.name.name
         right_fingertip_name = gripper.right_fingertip.name.name
