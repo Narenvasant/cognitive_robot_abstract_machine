@@ -14,6 +14,7 @@ from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.pick
     TopDownGraspGeometry,
     bounding_box_center_world,
 )
+from semantic_digital_twin.api import RobotSpecification
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.tracy import Tracy
 from semantic_digital_twin.utils import tracy_installed
@@ -32,9 +33,7 @@ def mounted_tracy() -> tuple[World, Tracy]:
         world.add_kinematic_structure_entity(
             Body(name=PrefixedName(name="root", prefix="world"))
         )
-    tracy_world = Tracy.parse_description()
-    mount_pose = Tracy.floor_mount_pose(tracy_world, x=0.0, y=0.0)
-    robot = Tracy.mount_stationary(world, tracy_world, mount_pose)
+    robot = RobotSpecification(Tracy).spawn(world)
     return world, robot
 
 
