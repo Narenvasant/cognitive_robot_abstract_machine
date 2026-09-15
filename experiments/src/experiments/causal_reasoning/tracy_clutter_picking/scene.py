@@ -9,17 +9,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 from coraplex.datastructures.enums import Arms
-from typing_extensions import Dict, List
+from typing_extensions import List
 
 from experiments.causal_reasoning.tracy_clutter_picking.domain import ClutterSceneLayout
 from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.live_motion import (
     arm_of,
 )
 from semantic_digital_twin.adapters.multi_sim import MujocoCamera, MujocoLight
-from semantic_digital_twin.adapters.mujoco_tuning import (
-    MujocoContactParameters,
-    equip_for_mujoco,
-)
 from semantic_digital_twin.api import BodySpecification, Connection6DoFSpecification
 from semantic_digital_twin.datastructures.definitions import (
     GripperState,
@@ -32,9 +28,10 @@ from semantic_digital_twin.spatial_types.spatial_types import (
     Point3,
 )
 from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.contact import ContactParameters
 from semantic_digital_twin.world_description.geometry import Box, Color, Scale
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
-from semantic_digital_twin.world_description.world_entity import Actuator, Body
+from semantic_digital_twin.world_description.world_entity import Body
 
 
 @dataclass
@@ -81,8 +78,8 @@ class MilkClutterWorld:
     Where Tracy's own root is bolted along the scene's y-axis, in metres.
     """
 
-    surface_contact: MujocoContactParameters = field(
-        default_factory=MujocoContactParameters.surface
+    surface_contact: ContactParameters = field(
+        default_factory=ContactParameters.create_for_surface
     )
     """
     The contact parameters of the table top the cartons stand on.
@@ -130,11 +127,6 @@ class MilkClutterWorld:
     The cartons, in the order of :attr:`ClutterSceneLayout.objects`.
     """
 
-    actuators: Dict[str, Actuator] = field(init=False, default_factory=dict)
-    """
-    Every arm and gripper joint's own actuator, keyed by joint name.
-    """
-
     def __post_init__(self):
         tracy_world = Tracy.parse_description()
         mount_pose = Tracy.floor_mount_pose(tracy_world, x=self.mount_x, y=self.mount_y)
@@ -147,7 +139,7 @@ class MilkClutterWorld:
         self.table_top_z = self.robot.table_top_z
         self._add_milks()
         self._add_camera_and_light()
-        self._equip_robot()
+        self._pose_robot()
 
     @staticmethod
     def milk_name(index: int) -> str:
@@ -177,12 +169,12 @@ class MilkClutterWorld:
         ]
 
     @property
-    def grasp_contact(self) -> MujocoContactParameters:
+    def grasp_contact(self) -> ContactParameters:
         """
         The contact parameters of the grasp: the layout's own friction coefficient on a
-        grasped object's solver settings.
+        grasped object's contact stiffness and impedance.
         """
-        return MujocoContactParameters.grasped_object(
+        return ContactParameters.create_for_grasped_object(
             sliding_friction=self.layout.friction_coefficient
         )
 
@@ -209,7 +201,7 @@ class MilkClutterWorld:
                 )
             )
         gripper = arm_of(self.robot, self.pick_arm).end_effector
-        MujocoContactParameters(friction=self.grasp_contact.friction).apply_to(
+        ContactParameters(friction=self.grasp_contact.friction).apply_to(
             [gripper.left_fingertip, gripper.right_fingertip]
         )
         self.surface_contact.apply_to([self.robot.root])
@@ -294,10 +286,9 @@ class MilkClutterWorld:
             )
         )
 
-    def _equip_robot(self) -> None:
+    def _pose_robot(self) -> None:
         """
-        Park both arms, open the picking gripper, close the other, and equip the robot
-        for physical simulation.
+        Park both arms, open the picking gripper and close the other.
         """
         for arm in self.robot.get_arms():
             arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(self.world)
@@ -308,4 +299,3 @@ class MilkClutterWorld:
             GripperState.OPEN
         ).apply_to(self.world)
         self.world.notify_state_change()
-        self.actuators = equip_for_mujoco(self.robot)

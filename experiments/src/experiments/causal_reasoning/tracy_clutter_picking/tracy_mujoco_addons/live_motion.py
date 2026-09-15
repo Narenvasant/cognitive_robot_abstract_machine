@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 
 from giskardpy.executor import Executor, SteppedSimulationPacer
 from giskardpy.motion_statechart.context import MotionStatechartContext
@@ -30,7 +31,7 @@ from typing_extensions import Dict, List, Optional
 
 from coraplex.datastructures.enums import Arms
 from coraplex.exceptions import MotionDidNotFinish
-from semantic_digital_twin.adapters.real_time_simulation import RealTimeSimulation
+from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.datastructures.definitions import (
     GripperState,
     StaticJointState,
@@ -66,9 +67,11 @@ class MotionRunner:
     ticking Giskard's own control loop in lockstep with the physics.
     """
 
-    simulation: RealTimeSimulation
+    simulation: MujocoSim
     """
-    The running simulation of the world the motions are run in.
+    The simulation of the world the motions are run in; it has to be started with
+    :meth:`~semantic_digital_twin.adapters.multi_sim.MujocoSim.start_stepped_simulation`
+    already.
     """
 
     target_frequency: int = 50
@@ -96,10 +99,9 @@ class MotionRunner:
     set point for the motion to count as settled.
     """
 
-    settle_timeout: float = 10.0
+    settle_timeout: timedelta = timedelta(seconds=10)
     """
-    Simulated seconds to wait for the servos to settle once Giskard's own motion has
-    ended.
+    Simulated time to wait for the servos to settle once Giskard's own motion has ended.
     """
 
     squeeze_margin: float = 0.001
@@ -110,10 +112,10 @@ class MotionRunner:
     Kept small, since it is commanded penetration into a rigid object.
     """
 
-    grasp_settle_time: float = 0.5
+    grasp_settle_time: timedelta = timedelta(milliseconds=500)
     """
-    Simulated seconds the fingers are held at their closing target before the caller
-    moves the arm, so the servos build up their holding force against the object.
+    Simulated time the fingers are held at their closing target before the caller moves
+    the arm, so the servos build up their holding force against the object.
     """
 
     @property
@@ -124,11 +126,11 @@ class MotionRunner:
         return self.simulation.world
 
     @property
-    def tick_period(self) -> float:
+    def tick_period(self) -> timedelta:
         """
-        Simulated seconds one control cycle stands for.
+        Simulated time one control cycle stands for.
         """
-        return 1.0 / self.target_frequency
+        return timedelta(seconds=1 / self.target_frequency)
 
     def run(self, task: Task, avoid_collisions: bool) -> None:
         """
@@ -168,27 +170,29 @@ class MotionRunner:
         except TimeoutError as error:
             raise MotionDidNotFinish(failed_motions=[task]) from error
 
-    def settle(self, joint_names: List[str], timeout: Optional[float] = None) -> None:
+    def settle(
+        self, joint_names: List[str], timeout: Optional[timedelta] = None
+    ) -> None:
         """
         Advance the physics until every one of ``joint_names`` has reached its set
         point, or the timeout passes.
 
         :param joint_names: The joints to wait for.
-        :param timeout: Simulated seconds to wait; :attr:`settle_timeout` if not given.
+        :param timeout: Simulated time to wait; :attr:`settle_timeout` if not given.
         """
         if timeout is None:
             timeout = self.settle_timeout
-        simulator = self.simulation.mujoco_mirror.simulator
+        simulator = self.simulation.simulator
         set_points = {
             joint_name: self.world.state[
                 self.world.get_connection_by_name(joint_name).raw_dof.id
             ].position
             for joint_name in joint_names
         }
-        simulated_time = 0.0
+        simulated_time = timedelta()
         errors: Dict[str, float] = {}
         while simulated_time < timeout:
-            self.simulation.advance(self.tick_period)
+            self.simulation.step_simulation(self.tick_period)
             simulated_time += self.tick_period
             errors = {
                 joint_name: abs(
@@ -200,19 +204,19 @@ class MotionRunner:
                 return
         worst_joint = max(errors, key=errors.get)
         logger.warning(
-            "Motion did not settle within %.0fs; worst joint %s is %.3f rad off.",
+            "Motion did not settle within %s; worst joint %s is %.3f rad off.",
             timeout,
             worst_joint,
             errors[worst_joint],
         )
 
-    def hold(self, duration: float) -> None:
+    def hold(self, duration: timedelta) -> None:
         """
         Advance the physics with every set point held where it is.
 
-        :param duration: Simulated seconds to hold.
+        :param duration: Simulated time to hold.
         """
-        self.simulation.advance(duration)
+        self.simulation.step_simulation(duration)
 
     def reach(
         self,
@@ -258,7 +262,7 @@ class MotionRunner:
         self,
         targets: Dict[str, float],
         avoid_collisions: bool = True,
-        settle_timeout: Optional[float] = None,
+        settle_timeout: Optional[timedelta] = None,
     ) -> None:
         """
         Move joints to target positions with Giskard's own
@@ -304,7 +308,7 @@ class MotionRunner:
         robot: Tracy,
         arm_side: Arms,
         state: GripperState,
-        settle_timeout: float = 3.0,
+        settle_timeout: timedelta = timedelta(seconds=3),
     ) -> None:
         """
         Open or close an arm's gripper.
@@ -315,7 +319,7 @@ class MotionRunner:
         :param robot: The robot whose gripper is driven.
         :param arm_side: Which arm's gripper to drive.
         :param state: The gripper state to command, e.g. :attr:`GripperState.CLOSE`.
-        :param settle_timeout: Simulated seconds to wait for the fingers to settle.
+        :param settle_timeout: Simulated time to wait for the fingers to settle.
         """
         goal_state = arm_of(robot, arm_side).end_effector.get_joint_state_by_type(state)
         # every connection of the mimic linkage shares one raw degree of freedom, so
@@ -370,7 +374,7 @@ class MotionRunner:
         raw_angle = gripper.knuckle_angle_for_half_width(target_inner_x)
         raw_dof = gripper.knuckle_degree_of_freedom
 
-        simulator = self.simulation.mujoco_mirror.simulator
+        simulator = self.simulation.simulator
         target_name = target_body.name.name
         left_fingertip_name = gripper.left_fingertip.name.name
         right_fingertip_name = gripper.right_fingertip.name.name

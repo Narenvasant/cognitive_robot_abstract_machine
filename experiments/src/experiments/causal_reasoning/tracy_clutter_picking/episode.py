@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -36,7 +37,7 @@ from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.live
 from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.pick_and_place_action import (
     PickUpActionMujoco,
 )
-from semantic_digital_twin.adapters.real_time_simulation import RealTimeSimulation
+from semantic_digital_twin.adapters.multi_sim import MujocoSim
 
 logger = logging.getLogger(__name__)
 
@@ -53,14 +54,14 @@ class BodyPositions:
     """
 
     @classmethod
-    def read(cls, simulation: RealTimeSimulation, names: List[str]) -> BodyPositions:
+    def read(cls, simulation: MujocoSim, names: List[str]) -> BodyPositions:
         """
-        :param simulation: The running simulation to read from.
+        :param simulation: The started simulation to read from.
         :param names: The bodies to read.
         :return: Their current centres, copied out of the simulator's live state so the
             reading stays put once the simulation moves on.
         """
-        positions = simulation.mujoco_mirror.simulator.get_bodies_positions(names).result
+        positions = simulation.simulator.get_bodies_positions(names).result
         return cls({name: np.array(position) for name, position in positions.items()})
 
     def horizontal_displacement(self, other: BodyPositions, name: str) -> float:
@@ -92,13 +93,6 @@ class PickEpisode:
     Whether to run without MuJoCo's viewer window.
     """
 
-    real_time_factor: Optional[float] = None
-    """
-    See
-    :attr:`~semantic_digital_twin.adapters.real_time_simulation.RealTimeSimulation.real_time_factor`;
-    unpaced by default, for collecting data in batch.
-    """
-
     screenshot_directory: Optional[Path] = None
     """
     Where to save a screenshot before and after the pick, or ``None`` for none.
@@ -116,9 +110,9 @@ class PickEpisode:
     anything a carton merely nudged by the fingers reaches.
     """
 
-    settle_time: float = 1.0
+    settle_time: timedelta = timedelta(seconds=1)
     """
-    Simulated seconds the scene is left to come to rest before and after the pick.
+    Simulated time the scene is left to come to rest before and after the pick.
     """
 
     screenshot_width: int = 640
@@ -148,16 +142,14 @@ class PickEpisode:
         """
         self.scene = MilkClutterWorld(layout)
         names = [milk.name.name for milk in self.scene.milks]
-        with RealTimeSimulation(
-            world=self.scene.world,
-            headless=self.headless,
-            real_time_factor=self.real_time_factor,
-        ) as simulation:
-            simulation.advance(self.settle_time)
+        simulation = MujocoSim(world=self.scene.world, headless=self.headless)
+        simulation.start_stepped_simulation()
+        try:
+            simulation.step_simulation(self.settle_time)
             before = BodyPositions.read(simulation, names)
             self._screenshot(simulation, "before_pick")
             self._pick(simulation)
-            simulation.advance(self.settle_time)
+            simulation.step_simulation(self.settle_time)
             after = BodyPositions.read(simulation, names)
             self._screenshot(simulation, "after_pick")
             outcome = self._outcome(before, after)
@@ -168,9 +160,11 @@ class PickEpisode:
             )
             if self.keep_viewer_open and not self.headless:
                 self._wait_for_viewer(simulation)
+        finally:
+            simulation.stop_simulation()
         return outcome
 
-    def _pick(self, simulation: RealTimeSimulation) -> None:
+    def _pick(self, simulation: MujocoSim) -> None:
         """
         Pick the target with the left arm, closing the fingers along the layout's grasp
         yaw.
@@ -221,7 +215,7 @@ class PickEpisode:
             ],
         )
 
-    def _screenshot(self, simulation: RealTimeSimulation, label: str) -> None:
+    def _screenshot(self, simulation: MujocoSim, label: str) -> None:
         """
         Save what the scene camera sees, if a screenshot directory was given.
 
@@ -230,7 +224,7 @@ class PickEpisode:
         """
         if self.screenshot_directory is None:
             return
-        image = simulation.mujoco_mirror.simulator.capture_rgb(
+        image = simulation.simulator.capture_rgb(
             camera_name=self.scene.camera_name,
             height=self.screenshot_height,
             width=self.screenshot_width,
@@ -239,11 +233,11 @@ class PickEpisode:
         Image.fromarray(image).save(self.screenshot_directory / f"{label}.png")
 
     @staticmethod
-    def _wait_for_viewer(simulation: RealTimeSimulation) -> None:
+    def _wait_for_viewer(simulation: MujocoSim) -> None:
         """
         Keep stepping the physics until the viewer window is closed.
 
         :param simulation: The running simulation.
         """
-        while simulation.is_running:
-            simulation.advance(0.02)
+        while simulation.simulator.renderer.is_running():
+            simulation.step_simulation(timedelta(milliseconds=20))

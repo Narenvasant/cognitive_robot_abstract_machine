@@ -48,7 +48,6 @@ def test_scene_stands_every_carton_on_the_table(layout):
     ]
     assert scene.target is scene.milks[layout.target_index]
     assert len(scene.neighbours) == len(layout.objects) - 1
-    assert scene.actuators
 
 
 def test_high_friction_uncrowded_target_is_lifted(surest_layout):

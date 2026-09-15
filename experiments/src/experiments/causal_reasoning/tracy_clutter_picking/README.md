@@ -60,7 +60,7 @@ it summed out by backdoor adjustment.
 
 | file | what it holds |
 |---|---|
-| `scene.py` | `MilkClutterWorld`: Tracy, its table, the cartons, a fixed camera and a light, built from a layout and equipped with position servos |
+| `scene.py` | `MilkClutterWorld`: Tracy, its table, the cartons, a fixed camera and a light, built from a layout |
 | `episode.py` | `PickEpisode`: park, pick the target with `PickUpActionMujoco`, measure how far it rose and how far each neighbour moved |
 | `demo.py` | watch one attempt in the viewer, or render before/after screenshots headless |
 | `layout_sampler.py` | `ClutterLayoutSampler`: a jittered grid of ten cartons in a table or bin environment, a random target, a friction level and a grasp yaw |
@@ -69,17 +69,20 @@ it summed out by backdoor adjustment.
 | `dataset.py` | the attempts on disk, the hosted set of them fetched into the user's cache, their train/test split, and success rates grouped by any key |
 
 Tracy is mounted, servoed and simulated with what `semantic_digital_twin` provides for
-that: `Tracy.parse_description`, `Tracy.mount_stationary`, `Tracy.equip_for_mujoco`,
-the grippers' own grasp geometry (their fingertip pads, driving knuckle and the knuckle
+that: `Tracy.parse_description`, `Tracy.mount_stationary`, the UR10e arms and Robotiq
+2F-85 grippers declaring their joints' servos on the degrees of freedom when the robot
+is set up (`robots/ur10e_arm.py`, `robots/robotiq_85_gripper.py`, the latter also
+holding the grasp geometry: the fingertip pads, the driving knuckle and the knuckle
 angle that closes the pads to a given width), the contact parameters in
-`adapters/mujoco_tuning.py` and the `RealTimeSimulation` in
-`adapters/real_time_simulation.py`. The `tracy_mujoco_addons/` subpackage holds only
-what is specific to picking: `live_motion.py`, where a `MotionRunner` runs Giskard's
-own control loop against the physically simulated world, and
-`pick_and_place_action.py`, the pick and place actions built on it. Giskard drives the simulated robot live: every control cycle's command
-becomes the servos' set point through the world state, and the physics steps in
-between, so the robot reaches every pose in the physics rather than in the world's
-belief only.
+`world_description/contact.py`, and `MujocoSim`'s stepped mode
+(`start_stepped_simulation`/`step_simulation`), which gives every servoed degree of
+freedom its own position servo in the MuJoCo model. The `tracy_mujoco_addons/`
+subpackage holds only what is specific to picking: `live_motion.py`, where a
+`MotionRunner` runs Giskard's own control loop against the physically simulated world,
+and `pick_and_place_action.py`, the pick and place actions built on it. Giskard drives
+the simulated robot live: every control cycle's command becomes the servos' set point
+through the world state, and the physics steps in between, so the robot reaches every
+pose in the physics rather than in the world's belief only.
 
 ## The pipelines
 
