@@ -13,7 +13,6 @@ from typing_extensions import Dict, List
 
 from experiments.causal_reasoning.tracy_clutter_picking.domain import ClutterSceneLayout
 from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.live_motion import (
-    RobotiqGripper,
     arm_of,
 )
 from semantic_digital_twin.adapters.multi_sim import MujocoCamera, MujocoLight
@@ -210,9 +209,9 @@ class MilkClutterWorld:
                     ),
                 )
             )
-        gripper = RobotiqGripper(self.pick_arm)
+        gripper = arm_of(self.robot, self.pick_arm).end_effector
         MujocoContactParameters(friction=self.grasp_contact.friction).apply_to(
-            [gripper.left_fingertip(self.robot), gripper.right_fingertip(self.robot)]
+            [gripper.left_fingertip, gripper.right_fingertip]
         )
         self.surface_contact.apply_to([self.robot.root])
 
