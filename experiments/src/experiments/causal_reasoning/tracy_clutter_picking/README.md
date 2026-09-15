@@ -69,12 +69,14 @@ it summed out by backdoor adjustment.
 | `dataset.py` | the attempts on disk, the hosted set of them fetched into the user's cache, their train/test split, and success rates grouped by any key |
 
 Tracy is mounted, servoed and simulated with what `semantic_digital_twin` provides for
-that: `Tracy.parse_description`, `Tracy.mount_stationary`, the UR10e arms and Robotiq
-2F-85 grippers declaring their joints' servos on the degrees of freedom when the robot
-is set up (`robots/ur10e_arm.py`, `robots/robotiq_85_gripper.py`, the latter also
-holding the grasp geometry: the fingertip pads, the driving knuckle and the knuckle
-angle that closes the pads to a given width), the contact parameters in
-`world_description/contact.py`, and `MujocoSim`'s stepped mode
+that: `RobotSpecification.spawn` bolts it into the world (a stationary robot gets a
+fixed odom), its table is a robot part of its own (`TracyTable`, a `Table`), the UR10e
+arms and Robotiq 2F-85 grippers declare their joints' servos on the degrees of freedom
+when the robot is set up (`robots/ur10e_arm.py`, `robots/robotiq_85_gripper.py`, the
+latter also holding the grasp geometry: the fingertip pads, the driving knuckle and the
+knuckle angle that closes the pads to a given width), the contact parameters in
+`world_description/contact.py` are simulator properties of the shapes, and `MujocoSim`'s
+stepped mode
 (`start_stepped_simulation`/`step_simulation`), which gives every servoed degree of
 freedom its own position servo in the MuJoCo model. The `tracy_mujoco_addons/`
 subpackage holds only what is specific to picking: `live_motion.py`, where a

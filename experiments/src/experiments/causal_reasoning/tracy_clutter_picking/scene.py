@@ -16,7 +16,11 @@ from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.live
     arm_of,
 )
 from semantic_digital_twin.adapters.multi_sim import MujocoCamera, MujocoLight
-from semantic_digital_twin.api import BodySpecification, Connection6DoFSpecification
+from semantic_digital_twin.api import (
+    BodySpecification,
+    Connection6DoFSpecification,
+    RobotSpecification,
+)
 from semantic_digital_twin.datastructures.definitions import (
     GripperState,
     StaticJointState,
@@ -128,15 +132,18 @@ class MilkClutterWorld:
     """
 
     def __post_init__(self):
-        tracy_world = Tracy.parse_description()
-        mount_pose = Tracy.floor_mount_pose(tracy_world, x=self.mount_x, y=self.mount_y)
         self.world = World()
         with self.world.modify_world():
             self.world.add_kinematic_structure_entity(
                 Body(name=PrefixedName(name="root", prefix="clutter"))
             )
-        self.robot = Tracy.mount_stationary(self.world, tracy_world, mount_pose)
-        self.table_top_z = self.robot.table_top_z
+        self.robot = RobotSpecification(
+            Tracy,
+            world_T_odom=HomogeneousTransformationMatrix.from_xyz_rpy(
+                x=self.mount_x, y=self.mount_y
+            ),
+        ).spawn(self.world)
+        self.table_top_z = self.robot.table.top_z
         self._add_milks()
         self._add_camera_and_light()
         self._pose_robot()
@@ -266,7 +273,7 @@ class MilkClutterWorld:
             bounds, distance_factor=self.camera_distance_factor
         )
         quaternion_xyzw = pose.to_quaternion().to_np().tolist()
-        self.world.root.simulator_additional_properties.append(
+        self.world.root.add_simulator_property(
             MujocoCamera(
                 name=self.camera_name,
                 body=self.world.root,
@@ -274,7 +281,7 @@ class MilkClutterWorld:
                 quaternion=[quaternion_xyzw[3]] + quaternion_xyzw[:3],
             )
         )
-        self.world.root.simulator_additional_properties.append(
+        self.world.root.add_simulator_property(
             MujocoLight(
                 name=self.light_name,
                 body=self.world.root,
