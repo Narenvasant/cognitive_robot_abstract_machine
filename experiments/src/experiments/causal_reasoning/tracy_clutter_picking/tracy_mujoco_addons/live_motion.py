@@ -372,7 +372,7 @@ class MotionRunner:
             half_width = (bounding_box.max_x - bounding_box.min_x) / 2
         target_inner_x = max(0.0, half_width - squeeze_margin)
         raw_angle = gripper.knuckle_angle_for_half_width(target_inner_x)
-        raw_dof = gripper.knuckle_degree_of_freedom
+        raw_dof = gripper.knuckle_joint.raw_dof
 
         simulator = self.simulation.simulator
         target_name = target_body.name.name
