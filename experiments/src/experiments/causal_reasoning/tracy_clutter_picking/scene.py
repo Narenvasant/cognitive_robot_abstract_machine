@@ -18,7 +18,7 @@ from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.live
 from semantic_digital_twin.adapters.multi_sim import MujocoCamera, MujocoLight
 from semantic_digital_twin.adapters.mujoco_tuning import (
     MujocoContactParameters,
-    make_touchable,
+    equip_for_mujoco,
 )
 from semantic_digital_twin.api import BodySpecification, Connection6DoFSpecification
 from semantic_digital_twin.datastructures.definitions import (
@@ -137,15 +137,14 @@ class MilkClutterWorld:
 
     def __post_init__(self):
         tracy_world = Tracy.parse_description()
-        mount_position, self.table_top_z = Tracy.floor_mount_position(
-            tracy_world, x=self.mount_x, y=self.mount_y
-        )
+        mount_pose = Tracy.floor_mount_pose(tracy_world, x=self.mount_x, y=self.mount_y)
         self.world = World()
         with self.world.modify_world():
             self.world.add_kinematic_structure_entity(
                 Body(name=PrefixedName(name="root", prefix="clutter"))
             )
-        self.robot = Tracy.mount_stationary(self.world, tracy_world, mount_position)
+        self.robot = Tracy.mount_stationary(self.world, tracy_world, mount_pose)
+        self.table_top_z = self.robot.table_top_z
         self._add_milks()
         self._add_camera_and_light()
         self._equip_robot()
@@ -247,7 +246,7 @@ class MilkClutterWorld:
                 x=position.x, y=position.y, z=position.z, yaw=yaw
             ),
         )
-        make_touchable(carton, self.grasp_contact)
+        self.grasp_contact.apply_to([carton])
         return carton
 
     def _add_camera_and_light(self) -> None:
@@ -309,4 +308,4 @@ class MilkClutterWorld:
             GripperState.OPEN
         ).apply_to(self.world)
         self.world.notify_state_change()
-        self.actuators = self.robot.equip_for_mujoco()
+        self.actuators = equip_for_mujoco(self.robot)

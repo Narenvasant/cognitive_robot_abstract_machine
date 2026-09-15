@@ -33,8 +33,8 @@ def mounted_tracy() -> tuple[World, Tracy]:
             Body(name=PrefixedName(name="root", prefix="world"))
         )
     tracy_world = Tracy.parse_description()
-    mount_position, _ = Tracy.floor_mount_position(tracy_world, x=0.0, y=0.0)
-    robot = Tracy.mount_stationary(world, tracy_world, mount_position)
+    mount_pose = Tracy.floor_mount_pose(tracy_world, x=0.0, y=0.0)
+    robot = Tracy.mount_stationary(world, tracy_world, mount_pose)
     return world, robot
 
 
