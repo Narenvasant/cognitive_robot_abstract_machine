@@ -10,7 +10,6 @@ servos allow, rather than planned kinematically first and played back afterwards
 from __future__ import annotations
 
 import logging
-from copy import deepcopy
 from dataclasses import dataclass
 
 from giskardpy.executor import Executor
@@ -26,7 +25,7 @@ from giskardpy.motion_statechart.tasks.cartesian_tasks import (
 )
 from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList
 from giskardpy.qp.qp_controller_config import QPControllerConfig
-from typing_extensions import Callable, Dict, List, Optional, Union
+from typing_extensions import Callable, Dict, List, Optional
 
 from coraplex.datastructures.enums import Arms
 from coraplex.exceptions import MotionDidNotFinish
@@ -37,16 +36,10 @@ from semantic_digital_twin.datastructures.definitions import (
 )
 from semantic_digital_twin.datastructures.joint_state import JointState
 from semantic_digital_twin.robots.robot_parts import Arm
-from semantic_digital_twin.robots.tracy import (
-    Tracy,
-    TracyJoint,
-    TracyLeftGripper,
-    TracyRightGripper,
-)
+from semantic_digital_twin.robots.tracy import Tracy
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
-from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFreedom
 from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger(__name__)
@@ -60,116 +53,6 @@ def arm_of(robot: Tracy, arm_side: Arms) -> Arm:
     :return: ``robot``'s own left or right arm.
     """
     return robot.left_arm if arm_side == Arms.LEFT else robot.right_arm
-
-
-# %% the gripper's own geometry
-
-
-@dataclass(frozen=True)
-class RobotiqGripper:
-    """
-    One of Tracy's Robotiq 2F-85 grippers, by the arm it hangs off, read directly off
-    Tracy's own end-effector and joint description.
-    """
-
-    arm_side: Arms
-    """
-    Which arm the gripper hangs off.
-    """
-
-    def end_effector(self, robot: Tracy) -> Union[TracyLeftGripper, TracyRightGripper]:
-        """
-        :param robot: The robot the gripper belongs to.
-        :return: The gripper, as Tracy's own description builds it.
-        """
-        return arm_of(robot, self.arm_side).end_effector
-
-    def left_fingertip(self, robot: Tracy) -> Body:
-        """
-        :param robot: The robot the gripper belongs to.
-        :return: The left fingertip pad's body.
-        """
-        return self.end_effector(robot).thumb.tip
-
-    def right_fingertip(self, robot: Tracy) -> Body:
-        """
-        :param robot: The robot the gripper belongs to.
-        :return: The right fingertip pad's body.
-        """
-        return self.end_effector(robot).finger.tip
-
-    @property
-    def knuckle_joint(self) -> TracyJoint:
-        """
-        Tracy's own name of the joint that actually drives the gripper; every other
-        finger joint in the mimic linkage follows it.
-        """
-        return (
-            TracyJoint.LEFT_GRIPPER_LEFT_KNUCKLE
-            if self.arm_side == Arms.LEFT
-            else TracyJoint.RIGHT_GRIPPER_LEFT_KNUCKLE
-        )
-
-    def knuckle_raw_dof(self, world: World) -> DegreeOfFreedom:
-        """
-        :param world: The world the gripper's own connections are described in.
-        :return: The raw degree of freedom driving the knuckle.
-        """
-        return world.get_connection_by_name(self.knuckle_joint).raw_dof
-
-    def closing_raw_angle_for_half_width(
-        self,
-        world: World,
-        target_half_width: float,
-        iterations: int = 30,
-    ) -> float:
-        """
-        The knuckle's raw angle at which the fingertip pads' own inner faces first reach
-        ``target_half_width`` out from the gripper's own centreline.
-
-        The pad's inner position decreases monotonically as the knuckle closes, so
-        bisection against an isolated scratch copy of ``world`` converges reliably.
-
-        :param world: The live world to clone for the search; never itself modified.
-        :param target_half_width: The half-width, in metres, to close to.
-        :param iterations: Bisection steps; 30 narrows the joint's own ~0.8 rad range to
-            well under a micro-radian.
-        :return: The raw angle.
-        """
-        scratch_world = deepcopy(world)
-        [scratch_robot] = scratch_world.get_semantic_annotations_by_type(Tracy)
-        gripper_root = self.end_effector(scratch_robot).root
-        left_fingertip = self.left_fingertip(scratch_robot)
-        raw_dof = self.knuckle_raw_dof(scratch_world)
-
-        def inner_x(raw_angle: float) -> float:
-            """
-            The left pad's innermost point along the closing axis at one raw angle,
-            moving the scratch world's own state directly.
-            """
-            scratch_world.state[raw_dof.id].position = raw_angle
-            scratch_world.notify_state_change()
-            scratch_world.update_forward_kinematics()
-            return (
-                left_fingertip.collision.as_bounding_box_collection_in_frame(
-                    gripper_root
-                )
-                .bounding_box()
-                .min_x
-            )
-
-        lower, upper = raw_dof.limits.lower.position, raw_dof.limits.upper.position
-        if target_half_width >= inner_x(lower):
-            return lower
-        if target_half_width <= inner_x(upper):
-            return upper
-        for _ in range(iterations):
-            midpoint = (lower + upper) / 2
-            if inner_x(midpoint) > target_half_width:
-                lower = midpoint
-            else:
-                upper = midpoint
-        return upper
 
 
 # %% running motions live
@@ -493,20 +376,20 @@ class MotionRunner:
         """
         if squeeze_margin is None:
             squeeze_margin = self.squeeze_margin
-        gripper = RobotiqGripper(arm_side)
+        gripper = arm_of(robot, arm_side).end_effector
         if half_width is None:
             bounding_box = target_body.collision.as_bounding_box_collection_in_frame(
-                gripper.end_effector(robot).root
+                gripper.root
             ).bounding_box()
             half_width = (bounding_box.max_x - bounding_box.min_x) / 2
         target_inner_x = max(0.0, half_width - squeeze_margin)
-        raw_angle = gripper.closing_raw_angle_for_half_width(self.world, target_inner_x)
-        raw_dof = gripper.knuckle_raw_dof(self.world)
+        raw_angle = gripper.knuckle_angle_for_half_width(target_inner_x)
+        raw_dof = gripper.knuckle_degree_of_freedom
 
         simulator = self.simulation.mirror.simulator
         target_name = target_body.name.name
-        left_fingertip_name = gripper.left_fingertip(robot).name.name
-        right_fingertip_name = gripper.right_fingertip(robot).name.name
+        left_fingertip_name = gripper.left_fingertip.name.name
+        right_fingertip_name = gripper.right_fingertip.name.name
 
         def both_fingertips_touching() -> bool:
             """

@@ -34,7 +34,6 @@ from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.base import ActionDescription
 from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.live_motion import (
     MotionRunner,
-    RobotiqGripper,
     arm_of,
 )
 from semantic_digital_twin.datastructures.definitions import GripperState
@@ -106,17 +105,12 @@ class TopDownGraspGeometry:
         :return: The fixed offset from the arm's own tool frame to its gripper's own
             finger-tip midpoint, in the tool frame's own local axes.
         """
-        gripper = RobotiqGripper(self.arm_side)
-        tool_frame = arm_of(self.robot, self.arm_side).end_effector.tool_frame
+        gripper = arm_of(self.robot, self.arm_side).end_effector
         root_transform_tool = self.world.compute_forward_kinematics_np(
-            self.world.root, tool_frame
+            self.world.root, gripper.tool_frame
         )
-        left_center = bounding_box_center_world(
-            self.world, gripper.left_fingertip(self.robot)
-        )
-        right_center = bounding_box_center_world(
-            self.world, gripper.right_fingertip(self.robot)
-        )
+        left_center = bounding_box_center_world(self.world, gripper.left_fingertip)
+        right_center = bounding_box_center_world(self.world, gripper.right_fingertip)
         finger_midpoint = (left_center + right_center) / 2
         offset_in_root_frame = finger_midpoint - root_transform_tool[:3, 3]
         return root_transform_tool[:3, :3].T @ offset_in_root_frame

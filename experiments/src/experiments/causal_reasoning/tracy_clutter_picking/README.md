@@ -70,12 +70,13 @@ it summed out by backdoor adjustment.
 
 Tracy is mounted, servoed and simulated with what `semantic_digital_twin` provides for
 that: `Tracy.parse_description`, `Tracy.mount_stationary`, `Tracy.equip_for_mujoco`,
-the contact parameters in `adapters/mujoco_tuning.py` and the `RealTimeSimulation` in
+the grippers' own grasp geometry (their fingertip pads, driving knuckle and the knuckle
+angle that closes the pads to a given width), the contact parameters in
+`adapters/mujoco_tuning.py` and the `RealTimeSimulation` in
 `adapters/real_time_simulation.py`. The `tracy_mujoco_addons/` subpackage holds only
 what is specific to picking: `live_motion.py`, where a `MotionRunner` ticks Giskard's
-own control loop against the physically simulated world and the Robotiq gripper is
-closed to an object's width, and `pick_and_place_action.py`, the pick and place actions
-built on it. Giskard drives the simulated robot live: every control cycle's command
+own control loop against the physically simulated world, and
+`pick_and_place_action.py`, the pick and place actions built on it. Giskard drives the simulated robot live: every control cycle's command
 becomes the servos' set point through the world state, and the physics steps in
 between, so the robot reaches every pose in the physics rather than in the world's
 belief only.
