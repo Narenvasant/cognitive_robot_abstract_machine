@@ -71,20 +71,20 @@ it summed out by backdoor adjustment.
 Tracy is mounted, servoed and simulated with what `semantic_digital_twin` provides for
 that: `RobotSpecification.spawn` bolts it into the world (a stationary robot gets a
 fixed odom), its table is a robot part of its own (`TracyTable`, a `Table`), the UR10e
-arms and Robotiq 2F-85 grippers declare their joints' servos on the degrees of freedom
-when the robot is set up (`robots/ur10e_arm.py`, `robots/robotiq_85_gripper.py`, the
-latter also holding the grasp geometry: the fingertip pads, the driving knuckle and the
-knuckle angle that closes the pads to a given width), the contact parameters in
-`world_description/contact.py` are simulator properties of the shapes, and `MujocoSim`'s
-stepped mode
-(`start_stepped_simulation`/`step_simulation`), which gives every servoed degree of
-freedom its own position servo in the MuJoCo model. The `tracy_mujoco_addons/`
-subpackage holds only what is specific to picking: `live_motion.py`, where a
-`MotionRunner` runs Giskard's own control loop against the physically simulated world,
-and `pick_and_place_action.py`, the pick and place actions built on it. Giskard drives
-the simulated robot live: every control cycle's command becomes the servos' set point
-through the world state, and the physics steps in between, so the robot reaches every
-pose in the physics rather than in the world's belief only.
+arms and Robotiq 2F-85 grippers declare a `PositionServo` actuator on each of their
+degrees of freedom when the robot is set up (`robots/ur10e_arm.py`,
+`robots/robotiq_85_gripper.py`, the latter also holding the grasp geometry: the
+fingertip pads, the driving knuckle and the knuckle angle that closes the pads to a
+given width), the contact parameters in `world_description/contact.py` are simulator
+properties of the shapes, and `MujocoSim`'s stepped mode
+(`start_stepped_simulation`/`step_simulation`) realises every position servo as a
+MuJoCo actuator. The `tracy_mujoco_addons/` subpackage holds only what is specific to
+picking: `live_motion.py`, where a `MotionRunner` runs Giskard's own control loop
+against the physically simulated world, and `pick_and_place_action.py`, the pick and
+place actions built on it. Giskard drives the simulated robot live: every control
+cycle's command becomes the servos' set point through the world state, and the physics
+steps in between, so the robot reaches every pose in the physics rather than in the
+world's belief only.
 
 ## The pipelines
 
