@@ -38,8 +38,9 @@ from semantic_digital_twin.datastructures.definitions import (
 )
 from semantic_digital_twin.datastructures.joint_state import JointState
 from semantic_digital_twin.robots.robot_parts import Arm
+from semantic_digital_twin.robots.robotiq_85_gripper import Robotiq85Gripper
 from semantic_digital_twin.robots.tracy import Tracy
-from semantic_digital_twin.spatial_types.spatial_types import Pose
+from semantic_digital_twin.spatial_types.spatial_types import Point3, Pose
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from semantic_digital_twin.world_description.world_entity import Body
@@ -110,6 +111,13 @@ class MotionRunner:
     to close, so they press into it firmly rather than merely touching.
 
     Kept small, since it is commanded penetration into a rigid object.
+    """
+
+    closing_threshold: float = 0.0005
+    """
+    How close, in metres, the distance between the fingertip frames has to come to its
+    goal for a closing to count as done: well under the squeeze margin, so the squeeze
+    is not lost to the tolerance.
     """
 
     grasp_settle_time: timedelta = timedelta(milliseconds=500)
@@ -333,6 +341,29 @@ class MotionRunner:
             raw_targets, avoid_collisions=False, settle_timeout=settle_timeout
         )
 
+    @staticmethod
+    def _pad_depth(gripper: Robotiq85Gripper) -> float:
+        """
+        How far a fingertip pad's inner face sits inside its own frame along the
+        closing axis: the distance between the fingertip frames is the pad-to-pad
+        width plus twice this.
+
+        :param gripper: The gripper whose pads are measured, at any opening.
+        :return: The depth, in metres.
+        """
+        world = gripper._world
+        frame_x = world.compute_forward_kinematics_np(
+            gripper.root, gripper.left_fingertip
+        )[0, 3]
+        inner_face_x = (
+            gripper.left_fingertip.collision.as_bounding_box_collection_in_frame(
+                gripper.root
+            )
+            .bounding_box()
+            .min_x
+        )
+        return frame_x - inner_face_x
+
     def close_gripper_around(
         self,
         robot: Tracy,
@@ -350,6 +381,9 @@ class MotionRunner:
         object's half-width along the closing axis minus the squeeze margin, and are then
         held there so the squeeze is actually applied: a face contact holds on friction
         alone, but a point or edge contact slips straight back out without it.
+
+        The closing is a Cartesian goal on the distance between the two fingertip
+        frames; Giskard finds the knuckle angle that realises it.
 
         :param robot: The robot whose gripper is driven.
         :param arm_side: Which arm's gripper to drive.
@@ -370,9 +404,8 @@ class MotionRunner:
                 gripper.root
             ).bounding_box()
             half_width = (bounding_box.max_x - bounding_box.min_x) / 2
-        target_inner_x = max(0.0, half_width - squeeze_margin)
-        raw_angle = gripper.knuckle_angle_for_half_width(target_inner_x)
-        raw_dof = gripper.knuckle_joint.raw_dof
+        target_half_width = max(0.0, half_width - squeeze_margin)
+        frame_distance = 2 * (target_half_width + self._pad_depth(gripper))
 
         simulator = self.simulation.simulator
         target_name = target_body.name.name
@@ -391,9 +424,19 @@ class MotionRunner:
             ).result
             return target_name in left_contacts and target_name in right_contacts
 
-        knuckle = self.world.get_connection_by_name(raw_dof.name.name)
-        goal_state = JointState.from_mapping({knuckle: raw_angle})
-        self.run(JointPositionList(goal_state=goal_state), avoid_collisions=False)
+        # the pads stay parallel, so one fingertip frame moves purely along the
+        # other's closing axis and the distance between them is a 1-D goal
+        self.run(
+            CartesianPosition(
+                root_link=gripper.right_fingertip,
+                tip_link=gripper.left_fingertip,
+                goal_point=Point3(
+                    frame_distance, 0.0, 0.0, reference_frame=gripper.right_fingertip
+                ),
+                threshold=self.closing_threshold,
+            ),
+            avoid_collisions=False,
+        )
         # the fingers stop on the object short of their set point, so the servos are
         # given a fixed squeeze time rather than waited for to settle
         self.hold(self.grasp_settle_time)
@@ -401,6 +444,6 @@ class MotionRunner:
             "%s: gripper closed to its own half-width-sized target (%.4fm); "
             "both fingertips %s the object.",
             target_body.name,
-            target_inner_x,
+            target_half_width,
             "reached" if both_fingertips_touching() else "never reached",
         )

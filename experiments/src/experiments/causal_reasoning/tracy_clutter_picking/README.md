@@ -74,14 +74,14 @@ fixed odom), its table is a robot part of its own (`TracyTable`, a `Table`), the
 arms and Robotiq 2F-85 grippers declare a `PositionServo` actuator on each of their
 degrees of freedom when the robot is set up (`robots/ur10e_arm.py`,
 `robots/robotiq_85_gripper.py`, the latter also holding the grasp geometry: the
-fingertip pads, the driving knuckle and the knuckle angle that closes the pads to a
-given width), the contact parameters in `world_description/contact.py` are simulator
+fingertip pads and the driving knuckle), the contact parameters in `world_description/contact.py` are simulator
 properties of the shapes, and `MujocoSim`'s stepped mode
 (`start_stepped_simulation`/`step_simulation`) realises every position servo as a
 MuJoCo actuator. The `tracy_mujoco_addons/` subpackage holds only what is specific to
 picking: `live_motion.py`, where a `MotionRunner` runs Giskard's own control loop
-against the physically simulated world, and `pick_and_place_action.py`, the pick and
-place actions built on it. Giskard drives the simulated robot live: every control
+against the physically simulated world and closes the gripper on an object with a
+Cartesian goal on the distance between its two fingertip frames, and
+`pick_and_place_action.py`, the pick and place actions built on it. Giskard drives the simulated robot live: every control
 cycle's command becomes the servos' set point through the world state, and the physics
 steps in between, so the robot reaches every pose in the physics rather than in the
 world's belief only.
