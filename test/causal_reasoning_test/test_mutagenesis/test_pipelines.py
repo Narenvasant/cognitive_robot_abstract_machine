@@ -21,9 +21,12 @@ from experiments.causal_reasoning.mutagenesis.exceptions import (
     PipelineNotFittedError,
 )
 from experiments.causal_reasoning.mutagenesis.flat_table import (
+    AbsentPart,
     FlatTable,
     MoleculeSchema,
+    MoleculeView,
     PartAttribute,
+    TableLayout,
 )
 from experiments.causal_reasoning.mutagenesis.pipelines import (
     CauseStratification,
@@ -76,6 +79,24 @@ def flat_table_pipeline(molecules):
     return pipeline
 
 
+@pytest.fixture(scope="module")
+def unrolled_pipeline(molecules):
+    pipeline = FlatTablePipeline(
+        flat_table=FlatTable.unrolled_for(molecules[:120]), min_samples_per_leaf=15
+    )
+    pipeline.fit(molecules[:120])
+    return pipeline
+
+
+@pytest.fixture(scope="module")
+def scalars_only_pipeline(molecules):
+    pipeline = FlatTablePipeline(
+        flat_table=FlatTable(TableLayout.SCALARS), min_samples_per_leaf=15
+    )
+    pipeline.fit(molecules[:120])
+    return pipeline
+
+
 # %% flat table
 
 
@@ -98,13 +119,73 @@ def test_flat_table_columns_are_named_like_eql_variables(schema):
     )
 
 
-def test_flat_table_row_holds_scalars_and_counts_only(molecules, schema, atom_count):
+def test_propositional_row_holds_scalars_and_counts_only(molecules, schema, atom_count):
     molecule = molecules[0]
     row = FlatTable().row(molecule)
     assert row[schema.scalar_column("logp")] == molecule.logp
     assert row[schema.aggregation_column("chlorine_count")] == atom_count
     assert set(row) == set(FlatTable().columns)
     assert not any(schema.part_attribute(column) for column in row)
+
+
+def test_scalars_only_row_holds_no_counts(molecules, schema):
+    row = FlatTable(TableLayout.SCALARS).row(molecules[0])
+    assert set(row) == set(schema.scalar_columns)
+
+
+def test_unrolled_row_lists_every_part_by_position(molecules, schema, atom_count):
+    table = FlatTable.unrolled_for(molecules)
+    molecule = molecules[0]
+    row = table.row(molecule)
+    assert table.part_widths == {"atoms": atom_count, "bonds": 4}
+    for index, atom in enumerate(molecule.atoms):
+        assert (
+            row[schema.part_column(PartAttribute("atoms", index, "element"))]
+            == atom.element
+        )
+    assert row[schema.part_column(PartAttribute("bonds", 3, "bond_type"))] == (
+        molecule.bonds[3].bond_type
+    )
+    assert set(row) == set(table.columns)
+
+
+def test_unrolled_row_pads_the_positions_a_molecule_does_not_fill(schema):
+    small, large = synthetic_mutagenesis_molecules(
+        np.random.default_rng(3), molecule_count=2, atom_count=2, bond_count=2
+    )
+    large.atoms.append(large.atoms[0])
+    table = FlatTable.unrolled_for([small, large])
+    row = table.row(small)
+    assert table.fits(small) and table.fits(large)
+    assert row[schema.part_column(PartAttribute("atoms", 2, "element"))] == (
+        AbsentPart.ABSENT
+    )
+    assert row[schema.part_column(PartAttribute("atoms", 2, "charge"))] == (
+        table.padding.real
+    )
+    assert row[schema.part_column(PartAttribute("atoms", 2, "bond_count"))] == (
+        table.padding.integer
+    )
+
+
+def test_unrolled_table_rejects_a_molecule_wider_than_itself(molecules):
+    table = FlatTable.unrolled_for(molecules)
+    wider = synthetic_mutagenesis_molecules(
+        np.random.default_rng(4), molecule_count=1, atom_count=5, bond_count=4
+    )[0]
+    assert not table.fits(wider)
+    with pytest.raises(FlatTableSchemaMismatchError):
+        table.row(wider)
+
+
+def test_each_layout_offers_the_views_it_holds(molecules):
+    assert (
+        FlatTable(TableLayout.SCALARS).columns_of(MoleculeView.SCALARS_AND_COUNTS)
+        is None
+    )
+    assert FlatTable().columns_of(MoleculeView.WHOLE_MOLECULE) is None
+    unrolled = FlatTable.unrolled_for(molecules)
+    assert unrolled.columns_of(MoleculeView.WHOLE_MOLECULE) == unrolled.columns
 
 
 def test_schema_tells_a_part_attribute_from_a_molecule_variable(schema):
@@ -208,7 +289,12 @@ def test_both_pipelines_find_chlorine_the_cause_of_mutagenicity(
 )
 def test_both_pipelines_answer_about_the_indicator(request, asker, pipeline_name):
     pipeline = request.getfixturevalue(pipeline_name)
-    outcome = asker.ask(pipeline, IndicatorCausesMutagenicity())
+    outcome = asker.ask(
+        pipeline,
+        IndicatorCausesMutagenicity(
+            confounder_name="branching_atom_count", confounder_noun="branching count"
+        ),
+    )
 
     assert outcome.answered
     assert set(_adjusted_by_region(outcome)) == {"True", "False"}
@@ -247,6 +333,38 @@ def test_flat_table_pipeline_refuses_an_atom_cause(flat_table_pipeline, asker):
     assert outcome.refusal == Refusal.SCHEMA_MISMATCH
 
 
+def test_unrolled_pipeline_answers_about_the_atom_at_a_position(
+    unrolled_pipeline, asker, atom_count
+):
+    outcome = asker.ask(unrolled_pipeline, BranchingAtomsCauseTerminalAtom())
+    assert outcome.answered
+    assert set(_adjusted_by_region(outcome)) == {
+        str(count) for count in range(atom_count + 1)
+    }
+
+
+def test_unrolled_pipeline_answers_an_atom_cause(unrolled_pipeline, asker):
+    outcome = asker.ask(unrolled_pipeline, ElementCausesTerminalAtom())
+    assert outcome.answered
+    assert set(_adjusted_by_region(outcome)) == {"cl", "h"}
+
+
+def test_scalars_only_pipeline_refuses_a_count_cause(
+    scalars_only_pipeline, asker, chlorine_causes_mutagenicity
+):
+    outcome = asker.ask(scalars_only_pipeline, chlorine_causes_mutagenicity)
+    assert outcome.refusal == Refusal.SCHEMA_MISMATCH
+
+
+def test_scalars_only_pipeline_answers_a_scalar_question(scalars_only_pipeline, asker):
+    outcome = asker.ask(
+        scalars_only_pipeline,
+        IndicatorCausesMutagenicity(confounder_name="logp", confounder_noun="logp"),
+    )
+    assert outcome.answered
+    assert set(_adjusted_by_region(outcome)) == {"True", "False"}
+
+
 def test_an_effect_that_never_occurs_is_reported(relational_pipeline, asker):
     """
     No synthetic atom is carbon, so no region of the cause gives the effect any
@@ -265,7 +383,10 @@ def test_each_cause_gets_its_own_model(
     Every distinct cause asked about fitted one further model, on top of the plain one.
     """
     asker.ask(relational_pipeline, chlorine_causes_mutagenicity)
-    asker.ask(relational_pipeline, IndicatorCausesMutagenicity())
+    asker.ask(
+        relational_pipeline,
+        IndicatorCausesMutagenicity(confounder_name="logp", confounder_noun="logp"),
+    )
 
     assert relational_pipeline.fit_report.model_count == 1 + len(
         relational_pipeline.cause_models
@@ -280,34 +401,68 @@ def test_each_cause_gets_its_own_model(
 
 
 @pytest.mark.parametrize(
-    "pipeline_name", ["relational_pipeline", "flat_table_pipeline"]
+    "pipeline_name",
+    [
+        "relational_pipeline",
+        "flat_table_pipeline",
+        "unrolled_pipeline",
+        "scalars_only_pipeline",
+    ],
 )
-def test_held_out_likelihood_covers_some_molecules(request, molecules, pipeline_name):
+def test_every_pipeline_scores_the_scalars(request, molecules, pipeline_name):
     pipeline = request.getfixturevalue(pipeline_name)
-    report = pipeline.log_likelihood(molecules[120:])
+    report = pipeline.log_likelihood(molecules[120:], MoleculeView.SCALARS)
     assert report.molecule_count == 30
     assert 0 < report.covered_molecule_count <= report.molecule_count
     assert np.isfinite(report.mean_log_likelihood)
 
 
-def test_both_plain_models_are_the_same_tree(
-    relational_pipeline, flat_table_pipeline, molecules
+def test_plain_models_on_the_same_columns_are_the_same_tree(
+    relational_pipeline, flat_table_pipeline, unrolled_pipeline, molecules
 ):
     """
-    The relational circuit's class-level circuit and the flat-table tree are fitted on
-    the same rows with the same settings, so they score held-out molecules alike.
+    The relational circuit's class-level circuit and the propositional tree are fitted
+    on the same rows with the same settings, so they score held-out molecules alike on
+    the scalars and counts.
     """
-    relational = relational_pipeline.log_likelihood(molecules[120:])
-    flat = flat_table_pipeline.log_likelihood(molecules[120:])
+    relational = relational_pipeline.log_likelihood(
+        molecules[120:], MoleculeView.SCALARS_AND_COUNTS
+    )
+    flat = flat_table_pipeline.log_likelihood(
+        molecules[120:], MoleculeView.SCALARS_AND_COUNTS
+    )
     assert np.allclose(relational.log_likelihoods, flat.log_likelihoods)
 
 
-def test_only_the_relational_pipeline_scores_whole_molecules(
-    relational_pipeline, flat_table_pipeline, molecules
+def test_only_the_pipelines_modelling_parts_score_whole_molecules(
+    relational_pipeline,
+    flat_table_pipeline,
+    unrolled_pipeline,
+    scalars_only_pipeline,
+    molecules,
 ):
-    whole = relational_pipeline.whole_molecule_log_likelihood(molecules[120:])
-    scalars_and_counts = relational_pipeline.log_likelihood(molecules[120:])
-    assert flat_table_pipeline.whole_molecule_log_likelihood(molecules[120:]) is None
-    assert whole.molecule_count == 30
-    assert 0 < whole.covered_molecule_count <= scalars_and_counts.covered_molecule_count
-    assert np.isfinite(whole.mean_log_likelihood)
+    held_out = molecules[120:]
+    assert (
+        flat_table_pipeline.log_likelihood(held_out, MoleculeView.WHOLE_MOLECULE)
+        is None
+    )
+    assert (
+        scalars_only_pipeline.log_likelihood(held_out, MoleculeView.SCALARS_AND_COUNTS)
+        is None
+    )
+    for pipeline in (relational_pipeline, unrolled_pipeline):
+        assert pipeline.models_parts
+        whole = pipeline.log_likelihood(held_out, MoleculeView.WHOLE_MOLECULE)
+        assert whole.molecule_count == 30
+        assert 0 < whole.covered_molecule_count
+        assert np.isfinite(whole.mean_log_likelihood)
+
+
+def test_unrolled_pipeline_cannot_score_a_molecule_wider_than_its_table(
+    unrolled_pipeline,
+):
+    wider = synthetic_mutagenesis_molecules(
+        np.random.default_rng(4), molecule_count=3, atom_count=5, bond_count=4
+    )
+    report = unrolled_pipeline.log_likelihood(wider, MoleculeView.WHOLE_MOLECULE)
+    assert report.covered_molecule_count == 0

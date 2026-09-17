@@ -37,11 +37,13 @@ from experiments.causal_reasoning.mutagenesis.dataset import (
     MutagenicRate,
 )
 from experiments.causal_reasoning.mutagenesis.domain import (
+    MutagenesisMolecule,
     MutagenesisMoleculeAggregations,
 )
 from experiments.causal_reasoning.mutagenesis.exceptions import (
     FlatTableSchemaMismatchError,
 )
+from experiments.causal_reasoning.mutagenesis.flat_table import MoleculeView
 from experiments.causal_reasoning.mutagenesis.pipelines import (
     CausalQueryPipeline,
     FitReport,
@@ -50,6 +52,7 @@ from experiments.causal_reasoning.mutagenesis.pipelines import (
 )
 from experiments.causal_reasoning.mutagenesis.queries import (
     CausalQueryCase,
+    atom_level_cases,
     query_catalogue,
 )
 
@@ -432,15 +435,12 @@ class PipelineReport:
     What its fits cost.
     """
 
-    likelihood: LikelihoodReport
+    likelihoods: Dict[MoleculeView, Optional[LikelihoodReport]] = field(
+        default_factory=dict
+    )
     """
-    How well its plain model explains the held-out molecules' own scalars and counts.
-    """
-
-    whole_molecule_likelihood: Optional[LikelihoodReport] = None
-    """
-    How well its plain model explains the held-out molecules with every atom and bond,
-    or ``None`` if it has no model of them.
+    How well its plain model explains the held-out molecules, per view; ``None`` for
+    a view the pipeline models less than.
     """
 
     outcomes: List[QueryOutcome] = field(default_factory=list)
@@ -452,7 +452,12 @@ class PipelineReport:
 @dataclass
 class EvaluationReport:
     """
-    The comparison of both pipelines on one dataset.
+    The comparison of every pipeline on one split of one dataset.
+    """
+
+    random_seed: int
+    """
+    The seed of the split and of the questions' Monte-Carlo grounding.
     """
 
     training_molecule_count: int
@@ -504,11 +509,76 @@ class EvaluationReport:
     One report per pipeline.
     """
 
-    shared_coverage_log_likelihoods: Dict[str, float] = field(default_factory=dict)
+    shared_coverage_log_likelihoods: Dict[MoleculeView, Dict[str, float]] = field(
+        default_factory=dict
+    )
     """
-    Each pipeline's mean log-likelihood over the held-out molecules every pipeline
-    covers, so the numbers are comparable, keyed by pipeline name.
+    Per view, each pipeline's mean log-likelihood over the held-out molecules every
+    pipeline modelling that view covers, so the numbers are comparable, keyed by
+    pipeline name.
     """
+
+    def pipeline(self, name: str) -> PipelineReport:
+        """
+        :param name: A pipeline's name.
+        :return: Its report.
+        """
+        [report] = [report for report in self.pipelines if report.name == name]
+        return report
+
+
+def shared_coverage_log_likelihoods(
+    log_likelihoods: Dict[str, np.ndarray],
+) -> Dict[str, float]:
+    """
+    :param log_likelihoods: Each pipeline's log-likelihood per held-out molecule, by
+        pipeline name.
+    :return: Each pipeline's mean over the molecules every pipeline covers.
+    """
+    covered_by_all = np.all(
+        [np.isfinite(values) for values in log_likelihoods.values()], axis=0
+    )
+    return {
+        name: (
+            float(values[covered_by_all].mean())
+            if covered_by_all.any()
+            else float("nan")
+        )
+        for name, values in log_likelihoods.items()
+    }
+
+
+def configured_pipelines(
+    molecules: Sequence[MutagenesisMolecule],
+    min_samples_per_leaf: Optional[int],
+    plain_min_samples_per_leaf: Optional[int],
+) -> List[CausalQueryPipeline]:
+    """
+    :param molecules: The molecules the pipelines will be fitted on.
+    :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
+        tree may hold; the pipelines' own default if not given.
+    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
+        tree may hold; the pipelines' own default if not given.
+    :return: Every pipeline, unfitted, with those settings.
+    """
+    configured = pipelines(molecules)
+    for pipeline in configured:
+        if min_samples_per_leaf is not None:
+            pipeline.min_samples_per_leaf = min_samples_per_leaf
+        if plain_min_samples_per_leaf is not None:
+            pipeline.plain_min_samples_per_leaf = plain_min_samples_per_leaf
+    return configured
+
+
+def score_every_view(
+    pipeline: CausalQueryPipeline, molecules: Sequence[MutagenesisMolecule]
+) -> Dict[MoleculeView, Optional[LikelihoodReport]]:
+    """
+    :param pipeline: A fitted pipeline.
+    :param molecules: The held-out molecules.
+    :return: The pipeline's likelihood report per view.
+    """
+    return {view: pipeline.log_likelihood(molecules, view) for view in MoleculeView}
 
 
 def evaluate(
@@ -518,9 +588,10 @@ def evaluate(
     min_samples_per_leaf: Optional[int] = None,
     plain_min_samples_per_leaf: Optional[int] = None,
     cases: Optional[Sequence[CausalQueryCase]] = None,
+    time_repeats: bool = True,
 ) -> EvaluationReport:
     """
-    Fit both pipelines on part of the dataset, score them on the rest, and ask them
+    Fit every pipeline on part of the dataset, score them on the rest, and ask them
     every question.
 
     :param dataset: The molecules.
@@ -531,11 +602,13 @@ def evaluate(
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
         tree may hold; the pipelines' own default if not given.
     :param cases: The questions to ask; defaults to :func:`query_catalogue`.
+    :param time_repeats: Whether to ask every question a second time to time it alone.
     :return: The comparison.
     """
     training, test = dataset.split(train_fraction, np.random.default_rng(random_seed))
     cases = list(cases or query_catalogue())
     report = EvaluationReport(
+        random_seed=random_seed,
         training_molecule_count=len(training.molecules),
         test_molecule_count=len(test.molecules),
         mutagenic_rate=dataset.mutagenic_rate,
@@ -554,39 +627,409 @@ def evaluate(
         ),
     )
     asker = QuestionAsker(random_seed=random_seed)
-    log_likelihoods: Dict[str, np.ndarray] = {}
-    for pipeline in pipelines():
-        if min_samples_per_leaf is not None:
-            pipeline.min_samples_per_leaf = min_samples_per_leaf
-        if plain_min_samples_per_leaf is not None:
-            pipeline.plain_min_samples_per_leaf = plain_min_samples_per_leaf
+    log_likelihoods: Dict[MoleculeView, Dict[str, np.ndarray]] = {
+        view: {} for view in MoleculeView
+    }
+    for pipeline in configured_pipelines(
+        training.molecules, min_samples_per_leaf, plain_min_samples_per_leaf
+    ):
         report.min_samples_per_leaf = pipeline.min_samples_per_leaf
         report.plain_min_samples_per_leaf = pipeline.plain_min_samples_per_leaf
         fit = pipeline.fit(training.molecules)
-        likelihood = pipeline.log_likelihood(test.molecules)
-        log_likelihoods[pipeline.name] = likelihood.log_likelihoods
         pipeline_report = PipelineReport(
             name=pipeline.name,
             fit=fit,
-            likelihood=likelihood,
-            whole_molecule_likelihood=pipeline.whole_molecule_log_likelihood(
-                test.molecules
-            ),
+            likelihoods=score_every_view(pipeline, test.molecules),
         )
+        for view, likelihood in pipeline_report.likelihoods.items():
+            if likelihood is not None:
+                log_likelihoods[view][pipeline.name] = likelihood.log_likelihoods
         for case in cases:
             pipeline_report.outcomes.append(asker.ask(pipeline, case))
-        for outcome in pipeline_report.outcomes:
-            outcome.repeat_duration = asker.time_repeat(pipeline, outcome.case)
+        if time_repeats:
+            for outcome in pipeline_report.outcomes:
+                outcome.repeat_duration = asker.time_repeat(pipeline, outcome.case)
         report.pipelines.append(pipeline_report)
-    covered_by_all = np.all(
-        [np.isfinite(values) for values in log_likelihoods.values()], axis=0
-    )
     report.shared_coverage_log_likelihoods = {
-        name: (
-            float(values[covered_by_all].mean())
-            if covered_by_all.any()
-            else float("nan")
-        )
-        for name, values in log_likelihoods.items()
+        view: shared_coverage_log_likelihoods(values)
+        for view, values in log_likelihoods.items()
     }
+    return report
+
+
+# %% the order of the atoms
+
+
+@dataclass
+class PermutedOutcomes:
+    """
+    What one pipeline made of one question over several orderings of the atoms and
+    bonds.
+    """
+
+    pipeline_name: str
+    """
+    The pipeline that was asked.
+    """
+
+    case: CausalQueryCase
+    """
+    The question.
+    """
+
+    outcomes: List[QueryOutcome] = field(default_factory=list)
+    """
+    One outcome per ordering.
+    """
+
+    @property
+    def answered(self) -> List[QueryOutcome]:
+        """
+        The outcomes that were answered.
+        """
+        return [outcome for outcome in self.outcomes if outcome.answered]
+
+    @property
+    def best_regions(self) -> List[str]:
+        """
+        The distinct most effective cause regions found over the orderings.
+        """
+        return sorted(
+            {outcome.most_effective.cause_region for outcome in self.answered}
+        )
+
+    @property
+    def largest_adjusted_difference(self) -> float:
+        """
+        Over the cause regions every answered ordering distinguishes, the largest
+        difference between orderings in the effect's adjusted probability; ``nan`` if
+        fewer than two orderings were answered.
+        """
+        answered = self.answered
+        if len(answered) < 2:
+            return float("nan")
+        adjusted_by_region = [
+            {
+                effect.cause_region: effect.adjusted_probability
+                for effect in outcome.effects
+            }
+            for outcome in answered
+        ]
+        shared_regions = set.intersection(
+            *(set(by_region) for by_region in adjusted_by_region)
+        )
+        if not shared_regions:
+            return float("nan")
+        return max(
+            max(by_region[region] for by_region in adjusted_by_region)
+            - min(by_region[region] for by_region in adjusted_by_region)
+            for region in shared_regions
+        )
+
+
+@dataclass
+class PermutationReport:
+    """
+    How the pipelines' answers and likelihoods move when the atoms and bonds of every
+    molecule are put in another order.
+    """
+
+    ordering_count: int
+    """
+    How many random orderings were tried.
+    """
+
+    questions: List[PermutedOutcomes] = field(default_factory=list)
+    """
+    One entry per pipeline and question.
+    """
+
+    whole_molecule_likelihoods: Dict[str, List[LikelihoodReport]] = field(
+        default_factory=dict
+    )
+    """
+    Per pipeline that models whole molecules, its held-out likelihood report under
+    each ordering.
+    """
+
+    def largest_likelihood_difference(self, pipeline_name: str) -> float:
+        """
+        :param pipeline_name: A pipeline modelling whole molecules.
+        :return: The largest difference between orderings in its mean whole-molecule
+            log-likelihood.
+        """
+        means = [
+            report.mean_log_likelihood
+            for report in self.whole_molecule_likelihoods[pipeline_name]
+        ]
+        return float(np.nanmax(means) - np.nanmin(means))
+
+
+def permutation_study(
+    dataset: MutagenesisDataset,
+    ordering_count: int = 3,
+    train_fraction: float = 0.8,
+    random_seed: int = 0,
+    min_samples_per_leaf: Optional[int] = None,
+    plain_min_samples_per_leaf: Optional[int] = None,
+    cases: Optional[Sequence[CausalQueryCase]] = None,
+) -> PermutationReport:
+    """
+    Put every molecule's atoms and bonds in a random order, several times over, and
+    each time refit the pipelines that model the parts and ask them the questions
+    about atoms. The split is the same every time; only the order within a molecule
+    changes.
+
+    :param dataset: The molecules.
+    :param ordering_count: How many random orderings to try.
+    :param train_fraction: Share of molecules to fit on.
+    :param random_seed: Seed of the split, the orderings and the Monte-Carlo grounding.
+    :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
+        tree may hold; the pipelines' own default if not given.
+    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
+        tree may hold; the pipelines' own default if not given.
+    :param cases: The questions to ask; defaults to :func:`atom_level_cases`.
+    :return: The study.
+    """
+    training, test = dataset.split(train_fraction, np.random.default_rng(random_seed))
+    cases = list(cases or atom_level_cases())
+    asker = QuestionAsker(random_seed=random_seed)
+    report = PermutationReport(ordering_count=ordering_count)
+    questions: Dict[Tuple[str, str], PermutedOutcomes] = {}
+    for ordering in range(ordering_count):
+        random_state = np.random.default_rng([random_seed, ordering])
+        shuffled_training = training.with_shuffled_parts(random_state)
+        shuffled_test = test.with_shuffled_parts(random_state)
+        for pipeline in configured_pipelines(
+            shuffled_training.molecules,
+            min_samples_per_leaf,
+            plain_min_samples_per_leaf,
+        ):
+            if not pipeline.models_parts:
+                continue
+            pipeline.fit(shuffled_training.molecules)
+            likelihood = pipeline.log_likelihood(
+                shuffled_test.molecules, MoleculeView.WHOLE_MOLECULE
+            )
+            report.whole_molecule_likelihoods.setdefault(pipeline.name, []).append(
+                likelihood
+            )
+            for case in cases:
+                questions.setdefault(
+                    (pipeline.name, case.name),
+                    PermutedOutcomes(pipeline_name=pipeline.name, case=case),
+                ).outcomes.append(asker.ask(pipeline, case))
+    report.questions = list(questions.values())
+    return report
+
+
+# %% several splits
+
+
+@dataclass
+class SplitReport:
+    """
+    The comparison repeated over several random splits of the dataset.
+    """
+
+    reports: List[EvaluationReport] = field(default_factory=list)
+    """
+    One comparison per split.
+    """
+
+    @property
+    def pipeline_names(self) -> List[str]:
+        """
+        The pipelines' names, in the order they were run.
+        """
+        return [pipeline.name for pipeline in self.reports[0].pipelines]
+
+    def coverage(self, pipeline_name: str, view: MoleculeView) -> List[float]:
+        """
+        :param pipeline_name: A pipeline's name.
+        :param view: How much of a molecule to look at.
+        :return: The pipeline's held-out coverage per split.
+        """
+        return [
+            report.pipeline(pipeline_name).likelihoods[view].coverage
+            for report in self.reports
+        ]
+
+    def shared_log_likelihood(
+        self, pipeline_name: str, view: MoleculeView
+    ) -> List[float]:
+        """
+        :param pipeline_name: A pipeline's name.
+        :param view: How much of a molecule to look at.
+        :return: The pipeline's mean log-likelihood over the molecules every pipeline
+            modelling that view covers, per split.
+        """
+        return [
+            report.shared_coverage_log_likelihoods[view][pipeline_name]
+            for report in self.reports
+        ]
+
+    def outcomes(self, pipeline_name: str, case_index: int) -> List[QueryOutcome]:
+        """
+        :param pipeline_name: A pipeline's name.
+        :param case_index: A question's position in the catalogue.
+        :return: What the pipeline made of that question, per split.
+        """
+        return [
+            report.pipeline(pipeline_name).outcomes[case_index]
+            for report in self.reports
+        ]
+
+
+def split_study(
+    dataset: MutagenesisDataset,
+    random_seeds: Sequence[int] = (0, 1, 2, 3, 4),
+    train_fraction: float = 0.8,
+    min_samples_per_leaf: Optional[int] = None,
+    plain_min_samples_per_leaf: Optional[int] = None,
+    cases: Optional[Sequence[CausalQueryCase]] = None,
+) -> SplitReport:
+    """
+    Repeat the comparison over several random splits.
+
+    :param dataset: The molecules.
+    :param random_seeds: One seed per split.
+    :param train_fraction: Share of molecules to fit on.
+    :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
+        tree may hold; the pipelines' own default if not given.
+    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
+        tree may hold; the pipelines' own default if not given.
+    :param cases: The questions to ask; defaults to :func:`query_catalogue`.
+    :return: The study.
+    """
+    return SplitReport(
+        reports=[
+            evaluate(
+                dataset,
+                train_fraction=train_fraction,
+                random_seed=random_seed,
+                min_samples_per_leaf=min_samples_per_leaf,
+                plain_min_samples_per_leaf=plain_min_samples_per_leaf,
+                cases=cases,
+                time_repeats=False,
+            )
+            for random_seed in random_seeds
+        ]
+    )
+
+
+# %% how much training data it takes
+
+
+@dataclass(frozen=True)
+class LearningCurvePoint:
+    """
+    One pipeline's held-out likelihood at one training-set size on one split.
+    """
+
+    pipeline_name: str
+    """
+    The pipeline.
+    """
+
+    train_fraction: float
+    """
+    Share of the molecules it was fitted on.
+    """
+
+    random_seed: int
+    """
+    The seed of the split.
+    """
+
+    likelihoods: Dict[MoleculeView, Optional[LikelihoodReport]]
+    """
+    Its likelihood report per view.
+    """
+
+
+@dataclass
+class LearningCurveReport:
+    """
+    How the pipelines' held-out likelihoods grow with the training set.
+    """
+
+    points: List[LearningCurvePoint] = field(default_factory=list)
+    """
+    Every measurement.
+    """
+
+    @property
+    def train_fractions(self) -> List[float]:
+        """
+        The training-set sizes measured, ascending.
+        """
+        return sorted({point.train_fraction for point in self.points})
+
+    @property
+    def pipeline_names(self) -> List[str]:
+        """
+        The pipelines measured, in the order they were run.
+        """
+        return list(dict.fromkeys(point.pipeline_name for point in self.points))
+
+    def points_of(
+        self, pipeline_name: str, train_fraction: float
+    ) -> List[LearningCurvePoint]:
+        """
+        :param pipeline_name: A pipeline's name.
+        :param train_fraction: A training-set size.
+        :return: The pipeline's measurements at that size, one per split.
+        """
+        return [
+            point
+            for point in self.points
+            if point.pipeline_name == pipeline_name
+            and point.train_fraction == train_fraction
+        ]
+
+
+def learning_curve(
+    dataset: MutagenesisDataset,
+    train_fractions: Sequence[float] = (0.2, 0.4, 0.6, 0.8),
+    random_seeds: Sequence[int] = (0, 1, 2),
+    plain_min_samples_per_leaf: Optional[int] = None,
+) -> LearningCurveReport:
+    """
+    Fit every pipeline's plain model on growing shares of the dataset and score the
+    same held-out molecules each time.
+
+    The held-out molecules are the last fifth of every split's shuffle, whatever the
+    training share, so every size is scored on the same molecules.
+
+    :param dataset: The molecules.
+    :param train_fractions: The training-set sizes to measure.
+    :param random_seeds: One seed per split.
+    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
+        tree may hold; the pipelines' own default if not given.
+    :return: The curve.
+    """
+    report = LearningCurveReport()
+    for random_seed in random_seeds:
+        available, test = dataset.split(
+            max(train_fractions), np.random.default_rng(random_seed)
+        )
+        for train_fraction in train_fractions:
+            training = available.molecules[
+                : round(
+                    train_fraction / max(train_fractions) * len(available.molecules)
+                )
+            ]
+            for pipeline in configured_pipelines(
+                training, None, plain_min_samples_per_leaf
+            ):
+                pipeline.fit(training)
+                report.points.append(
+                    LearningCurvePoint(
+                        pipeline_name=pipeline.name,
+                        train_fraction=train_fraction,
+                        random_seed=random_seed,
+                        likelihoods=score_every_view(pipeline, test.molecules),
+                    )
+                )
     return report

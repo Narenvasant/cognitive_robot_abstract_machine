@@ -8,7 +8,7 @@ live-dataset tests.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
@@ -281,6 +281,30 @@ class MutagenesisDataset:
             )
             for value, molecules in sorted(by_value.items())
         }
+
+    def with_shuffled_parts(self, random_state: np.random.Generator) -> Self:
+        """
+        The same molecules with their atoms and bonds in a random order each.
+
+        :param random_state: Source of randomness for the orders.
+        :return: The dataset with reordered parts.
+        """
+        return type(self)(
+            [
+                replace(
+                    molecule,
+                    atoms=[
+                        molecule.atoms[index]
+                        for index in random_state.permutation(len(molecule.atoms))
+                    ],
+                    bonds=[
+                        molecule.bonds[index]
+                        for index in random_state.permutation(len(molecule.bonds))
+                    ],
+                )
+                for molecule in self.molecules
+            ]
+        )
 
     def split(
         self, train_fraction: float, random_state: np.random.Generator

@@ -56,6 +56,8 @@ from experiments.causal_reasoning.mutagenesis.exceptions import (
 from experiments.causal_reasoning.mutagenesis.flat_table import (
     FlatTable,
     MoleculeSchema,
+    MoleculeView,
+    TableLayout,
 )
 
 # %% what a fit reports
@@ -320,11 +322,19 @@ class CausalQueryPipeline(ABC):
         return PipelineRegistry(pipeline=self)
 
     @property
+    @abstractmethod
     def table(self) -> FlatTable:
         """
-        The molecules' own scalars and aggregation counts as rows.
+        The molecules as rows of what the pipeline's plain model is fitted on.
         """
-        return FlatTable(self.schema)
+
+    @property
+    @abstractmethod
+    def models_parts(self) -> bool:
+        """
+        Whether the pipeline models the atoms and bonds themselves, so that the order a
+        molecule lists them in can matter to it.
+        """
 
     def fit(self, molecules: Sequence[MutagenesisMolecule]) -> FitReport:
         """
@@ -391,42 +401,40 @@ class CausalQueryPipeline(ABC):
         return self._registry_for(cause_name)
 
     @abstractmethod
-    def molecule_circuit(self) -> ProbabilisticCircuit:
+    def plain_circuit_of(self, view: MoleculeView) -> Optional[ProbabilisticCircuit]:
         """
-        The plain model's joint over a molecule's own scalars and aggregation counts.
+        The plain model's joint over as much of a molecule as the view asks for.
 
-        :return: The circuit.
+        :param view: How much of a molecule to look at.
+        :return: The circuit, or ``None`` if the pipeline models less than that.
         :raises PipelineNotFittedError: If :meth:`fit` never ran.
         """
 
     def log_likelihood(
-        self, molecules: Sequence[MutagenesisMolecule]
-    ) -> LikelihoodReport:
-        """
-        Score held-out molecules under the plain model, on their own scalars and
-        aggregation counts.
-
-        :param molecules: The molecules to score.
-        :return: The report.
-        """
-        circuit = self.molecule_circuit()
-        rows = [self.table.row(molecule) for molecule in molecules]
-        return LikelihoodReport.from_log_likelihoods(
-            log_likelihoods_of_rows(circuit, rows)
-        )
-
-    def whole_molecule_log_likelihood(
-        self, molecules: Sequence[MutagenesisMolecule]
+        self, molecules: Sequence[MutagenesisMolecule], view: MoleculeView
     ) -> Optional[LikelihoodReport]:
         """
-        Score held-out molecules under the plain model on everything recorded about
-        them: their scalars, their counts, and every atom and bond.
+        Score held-out molecules under the plain model, on as much of them as the view
+        asks for.
 
         :param molecules: The molecules to score.
-        :return: The report, or ``None`` if the pipeline has no model of the atoms and
-            bonds.
+        :param view: How much of a molecule to look at.
+        :return: The report, or ``None`` if the pipeline models less than the view; a
+            molecule the pipeline's table has no row for counts as outside the support.
         """
-        return None
+        circuit = self.plain_circuit_of(view)
+        if circuit is None:
+            return None
+        log_likelihoods = np.full(len(molecules), -np.inf)
+        fitting = [
+            index
+            for index, molecule in enumerate(molecules)
+            if self.table.fits(molecule)
+        ]
+        if fitting:
+            rows = [self.table.row(molecules[index]) for index in fitting]
+            log_likelihoods[fitting] = log_likelihoods_of_rows(circuit, rows)
+        return LikelihoodReport.from_log_likelihoods(log_likelihoods)
 
 
 def log_likelihoods_of_rows(
@@ -570,24 +578,49 @@ class RelationalPipeline(CausalQueryPipeline):
         )
         return RelationalCircuitRegistry(relational_probabilistic_circuit=model)
 
-    def molecule_circuit(self) -> ProbabilisticCircuit:
+    @property
+    def table(self) -> FlatTable:
+        return FlatTable(TableLayout.PROPOSITIONAL, schema=self.schema)
+
+    @property
+    def models_parts(self) -> bool:
+        return True
+
+    def plain_circuit_of(self, view: MoleculeView) -> Optional[ProbabilisticCircuit]:
         if self.plain_model is None:
             raise PipelineNotFittedError(self.name)
-        return self.plain_model.class_probabilistic_circuit
+        class_circuit = self.plain_model.class_probabilistic_circuit
+        if view is MoleculeView.SCALARS:
+            scalar_columns = set(self.schema.scalar_columns)
+            return class_circuit.marginal(
+                [
+                    variable
+                    for variable in class_circuit.variables
+                    if variable.name in scalar_columns
+                ]
+            )
+        return class_circuit
 
-    def whole_molecule_log_likelihood(
-        self, molecules: Sequence[MutagenesisMolecule]
+    def log_likelihood(
+        self, molecules: Sequence[MutagenesisMolecule], view: MoleculeView
     ) -> Optional[LikelihoodReport]:
         """
-        Score held-out molecules under the plain model on everything recorded about
-        them, the way the relational circuit factorizes a molecule: the class circuit
-        over its scalars and counts, times each part template over one atom or bond
-        given those counts.
+        Score held-out molecules under the plain model, on as much of them as the view
+        asks for. A whole molecule is scored the way the relational circuit factorizes
+        it: the class circuit over its scalars and counts, times each part template
+        over one atom or bond given those counts.
 
         :param molecules: The molecules to score.
+        :param view: How much of a molecule to look at.
         :return: The report.
         """
-        log_likelihoods = self.log_likelihood(molecules).log_likelihoods.copy()
+        if view is not MoleculeView.WHOLE_MOLECULE:
+            return super().log_likelihood(molecules, view)
+        log_likelihoods = (
+            super()
+            .log_likelihood(molecules, MoleculeView.SCALARS_AND_COUNTS)
+            .log_likelihoods.copy()
+        )
         for (
             part_field,
             template,
@@ -678,9 +711,14 @@ class FlatTableRegistry(ModelRegistry):
 @dataclass
 class FlatTablePipeline(CausalQueryPipeline):
     """
-    Joint probability trees fitted on the molecules flattened into one table of their
-    own scalars and aggregation counts, each wrapped as a :class:`~probabilistic_model.p
-    robabilistic_circuit.causal.causal_circuit.CausalCircuit`.
+    Joint probability trees fitted on the molecules flattened into one table, each
+    wrapped as a
+    :class:`~probabilistic_model.probabilistic_circuit.causal.causal_circuit.CausalCircuit`.
+    """
+
+    flat_table: FlatTable = field(default_factory=FlatTable)
+    """
+    The table the molecules are flattened into.
     """
 
     plain_circuit: Optional[ProbabilisticCircuit] = None
@@ -695,7 +733,15 @@ class FlatTablePipeline(CausalQueryPipeline):
 
     @property
     def name(self) -> str:
-        return "flat-table tree"
+        return f"{self.flat_table.layout} tree"
+
+    @property
+    def table(self) -> FlatTable:
+        return self.flat_table
+
+    @property
+    def models_parts(self) -> bool:
+        return self.flat_table.layout.has_parts
 
     def _training_dataframe(self) -> pd.DataFrame:
         return self.table.dataframe(self.training_molecules)
@@ -728,14 +774,32 @@ class FlatTablePipeline(CausalQueryPipeline):
         )
         return FlatTableRegistry(circuit=circuit)
 
-    def molecule_circuit(self) -> ProbabilisticCircuit:
+    def plain_circuit_of(self, view: MoleculeView) -> Optional[ProbabilisticCircuit]:
         if self.plain_circuit is None:
             raise PipelineNotFittedError(self.name)
-        return self.plain_circuit
+        columns = self.table.columns_of(view)
+        if columns is None:
+            return None
+        column_set = set(columns)
+        return self.plain_circuit.marginal(
+            [
+                variable
+                for variable in self.plain_circuit.variables
+                if variable.name in column_set
+            ]
+        )
 
 
-def pipelines() -> List[CausalQueryPipeline]:
+def pipelines(molecules: Sequence[MutagenesisMolecule]) -> List[CausalQueryPipeline]:
     """
-    :return: Both pipelines, unfitted.
+    :param molecules: The molecules the pipelines will be fitted on, which size the
+        unrolled table.
+    :return: Every pipeline, unfitted: the relational circuit and one flat-table tree
+        per layout.
     """
-    return [RelationalPipeline(), FlatTablePipeline()]
+    return [
+        RelationalPipeline(),
+        FlatTablePipeline(flat_table=FlatTable(TableLayout.PROPOSITIONAL)),
+        FlatTablePipeline(flat_table=FlatTable.unrolled_for(molecules)),
+        FlatTablePipeline(flat_table=FlatTable(TableLayout.SCALARS)),
+    ]

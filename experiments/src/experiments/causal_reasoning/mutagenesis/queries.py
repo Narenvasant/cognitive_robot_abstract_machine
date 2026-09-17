@@ -207,19 +207,29 @@ class CountCausesMutagenicity(CausalQueryCase):
 @dataclass(frozen=True, kw_only=True)
 class IndicatorCausesMutagenicity(CausalQueryCase):
     """
-    Does the ``ind1`` structural indicator cause mutagenicity, once the branching-atom
-    count, which rises with the fused rings the indicator marks, is adjusted for?
+    Does the ``ind1`` structural indicator cause mutagenicity, once one other attribute
+    of the molecule is adjusted for?
+    """
+
+    confounder_name: str
+    """
+    The molecule attribute or aggregation count to adjust for.
+    """
+
+    confounder_noun: str
+    """
+    The confounder in words, such as ``branching-atom count``.
     """
 
     @property
     def name(self) -> str:
-        return "indicator_causes_mutagenicity"
+        return f"indicator_causes_mutagenicity_adjusting_{self.confounder_name}"
 
     @property
     def question(self) -> str:
         return (
             "Does the ind1 indicator cause a molecule to be mutagenic, adjusting for "
-            "its branching-atom count?"
+            f"its {self.confounder_noun}?"
         )
 
     def build(self) -> Match:
@@ -227,7 +237,7 @@ class IndicatorCausesMutagenicity(CausalQueryCase):
             self._open_atoms(),
             self._open_bonds(),
             indicator_1=cause,
-            branching_atom_count=confounder,
+            **{self.confounder_name: confounder},
         )
         query.causes_effect(query.variable.mutagenic == True)
         return query
@@ -366,12 +376,10 @@ class ElementCausesTerminalAtom(CausalQueryCase):
         return f"atom {self.atom_index} is terminal"
 
 
-def query_catalogue() -> List[CausalQueryCase]:
+def molecule_level_cases() -> List[CausalQueryCase]:
     """
-    Every question of the experiment: the molecule-level causes of mutagenicity first,
-    then the questions whose cause or effect lives on one atom.
-
-    :return: The questions, in the order they are asked.
+    :return: The questions whose cause and effect are both molecule attributes or
+        counts, in the order they are asked.
     """
     return [
         CountCausesMutagenicity(
@@ -383,8 +391,33 @@ def query_catalogue() -> List[CausalQueryCase]:
         CountCausesMutagenicity(
             statistic_name="double_bond_count", count_noun="double bonds"
         ),
-        IndicatorCausesMutagenicity(),
+        IndicatorCausesMutagenicity(
+            confounder_name="logp", confounder_noun="hydrophobicity (logp)"
+        ),
+        IndicatorCausesMutagenicity(
+            confounder_name="branching_atom_count",
+            confounder_noun="branching-atom count",
+        ),
+    ]
+
+
+def atom_level_cases() -> List[CausalQueryCase]:
+    """
+    :return: The questions whose cause or effect lives on one atom, in the order they
+        are asked.
+    """
+    return [
         IndicatorCausesElement(element=MutagenesisElement.CARBON),
         BranchingAtomsCauseTerminalAtom(),
         ElementCausesTerminalAtom(),
     ]
+
+
+def query_catalogue() -> List[CausalQueryCase]:
+    """
+    Every question of the experiment: the molecule-level causes of mutagenicity first,
+    then the questions whose cause or effect lives on one atom.
+
+    :return: The questions, in the order they are asked.
+    """
+    return molecule_level_cases() + atom_level_cases()

@@ -16,8 +16,12 @@ from experiments.causal_reasoning.mutagenesis.evaluation import (
     Refusal,
     describe_region,
     evaluate,
+    learning_curve,
+    permutation_study,
     regions_partition_the_cause,
+    split_study,
 )
+from experiments.causal_reasoning.mutagenesis.flat_table import MoleculeView
 from experiments.causal_reasoning.mutagenesis.queries import (
     BranchingAtomsCauseTerminalAtom,
     CountCausesMutagenicity,
@@ -58,6 +62,28 @@ def dataset():
 @pytest.fixture(scope="module")
 def report(cases, dataset):
     return evaluate(dataset, min_samples_per_leaf=15, cases=cases)
+
+
+@pytest.fixture(scope="module")
+def permutations(dataset):
+    return permutation_study(
+        dataset,
+        ordering_count=2,
+        min_samples_per_leaf=15,
+        cases=[BranchingAtomsCauseTerminalAtom()],
+    )
+
+
+@pytest.fixture(scope="module")
+def splits(cases, dataset):
+    return split_study(
+        dataset, random_seeds=(0, 1), min_samples_per_leaf=15, cases=cases
+    )
+
+
+@pytest.fixture(scope="module")
+def curve(dataset):
+    return learning_curve(dataset, train_fractions=(0.4, 0.8), random_seeds=(0,))
 
 
 # %% describing regions
@@ -112,6 +138,17 @@ def test_overlapping_regions_do_not_partition_the_cause():
 # %% the dataset
 
 
+def test_shuffling_the_parts_keeps_every_molecule(dataset):
+    shuffled = dataset.with_shuffled_parts(np.random.default_rng(0))
+    assert len(shuffled.molecules) == len(dataset.molecules)
+    for original, reordered in zip(dataset.molecules, shuffled.molecules):
+        assert reordered.mutagenic == original.mutagenic
+        assert sorted(atom.charge for atom in reordered.atoms) == sorted(
+            atom.charge for atom in original.atoms
+        )
+        assert len(reordered.bonds) == len(original.bonds)
+
+
 def test_mutagenic_rate_by_groups_the_molecules(dataset):
     rates = dataset.mutagenic_rate_by(lambda molecule: molecule.mutagenic)
     assert set(rates) == {False, True}
@@ -133,6 +170,7 @@ def test_catalogue_asks_molecule_level_causes_then_atom_level_questions():
         CountCausesMutagenicity,
         CountCausesMutagenicity,
         IndicatorCausesMutagenicity,
+        IndicatorCausesMutagenicity,
         IndicatorCausesElement,
         BranchingAtomsCauseTerminalAtom,
         ElementCausesTerminalAtom,
@@ -148,35 +186,95 @@ def test_report_splits_the_dataset(report):
 def test_report_records_every_question_for_every_pipeline(report, cases):
     assert [pipeline.name for pipeline in report.pipelines] == [
         "relational circuit",
-        "flat-table tree",
+        "propositional tree",
+        "unrolled tree",
+        "scalars-only tree",
     ]
     for pipeline in report.pipelines:
         assert [outcome.case for outcome in pipeline.outcomes] == cases
 
 
-def test_only_the_relational_pipeline_answers_about_one_atom(report):
-    relational, flat = report.pipelines
+def test_the_propositional_tree_alone_refuses_the_question_about_one_atom(report):
+    relational, propositional, unrolled, scalars_only = report.pipelines
     assert relational.outcomes[1].answered
-    assert flat.outcomes[1].refusal == Refusal.SCHEMA_MISMATCH
+    assert unrolled.outcomes[1].answered
+    assert propositional.outcomes[1].refusal == Refusal.SCHEMA_MISMATCH
+    assert scalars_only.outcomes[1].refusal == Refusal.SCHEMA_MISMATCH
 
 
-def test_shared_coverage_likelihood_is_reported_per_pipeline(report):
-    assert set(report.shared_coverage_log_likelihoods) == {
+def test_shared_coverage_likelihood_is_reported_per_view(report):
+    shared = report.shared_coverage_log_likelihoods
+    assert set(shared[MoleculeView.SCALARS]) == {
         pipeline.name for pipeline in report.pipelines
+    }
+    assert set(shared[MoleculeView.WHOLE_MOLECULE]) == {
+        "relational circuit",
+        "unrolled tree",
     }
 
 
-def test_only_the_relational_pipeline_reports_a_whole_molecule_likelihood(report):
-    relational, flat = report.pipelines
-    assert relational.whole_molecule_likelihood is not None
-    assert flat.whole_molecule_likelihood is None
+# %% the studies
+
+
+def test_reordering_the_atoms_leaves_the_relational_answer_alone(permutations):
+    [relational] = [
+        question
+        for question in permutations.questions
+        if question.pipeline_name == "relational circuit"
+    ]
+    assert len(relational.answered) == permutations.ordering_count
+    assert relational.largest_adjusted_difference == pytest.approx(0.0, abs=1e-9)
+    assert permutations.largest_likelihood_difference("relational circuit") == (
+        pytest.approx(0.0, abs=1e-9)
+    )
+
+
+def test_the_permutation_study_covers_the_pipelines_modelling_parts(permutations):
+    assert {question.pipeline_name for question in permutations.questions} == {
+        "relational circuit",
+        "unrolled tree",
+    }
+    assert set(permutations.whole_molecule_likelihoods) == {
+        "relational circuit",
+        "unrolled tree",
+    }
+
+
+def test_the_split_study_reports_every_split(splits, cases):
+    assert [report.random_seed for report in splits.reports] == [0, 1]
+    assert (
+        len(splits.shared_log_likelihood("relational circuit", MoleculeView.SCALARS))
+        == 2
+    )
+    assert len(splits.outcomes("unrolled tree", 0)) == 2
+
+
+def test_the_learning_curve_measures_every_pipeline_at_every_size(curve):
+    assert curve.train_fractions == [0.4, 0.8]
+    assert curve.pipeline_names == [
+        "relational circuit",
+        "propositional tree",
+        "unrolled tree",
+        "scalars-only tree",
+    ]
+    for name in curve.pipeline_names:
+        for train_fraction in curve.train_fractions:
+            [point] = curve.points_of(name, train_fraction)
+            assert point.likelihoods[MoleculeView.SCALARS] is not None
 
 
 # %% rendering
 
 
-def test_markdown_report_names_every_question_and_marks_the_verdicts(report, cases):
-    markdown = MarkdownReport(report).render()
+def test_markdown_report_names_every_question_and_marks_the_verdicts(
+    report, cases, permutations, splits, curve
+):
+    markdown = MarkdownReport(
+        report, permutations=permutations, splits=splits, curve=curve
+    ).render()
+    assert "## Does the order of the atoms matter?" in markdown
+    assert "## Over several splits" in markdown
+    assert "## How much training data it takes" in markdown
     for case in cases:
         assert case.question in markdown
     assert Verdict.ANSWERED in markdown
