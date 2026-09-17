@@ -31,9 +31,9 @@ from krrood.parametrization.parameterizer import (
     ModelQueryParameters,
     UnderspecifiedParameters,
 )
+from probabilistic_model.learning.jpt.jpt import JointProbabilityTree
 from probabilistic_model.learning.jpt.variables import infer_variables_from_dataframe
 from probabilistic_model.learning.learning_method import (
-    JointProbabilityTreeLearning,
     LearningMethod,
     StratifiedLearning,
 )
@@ -277,7 +277,7 @@ class CausalQueryPipeline(ABC):
     few enough for a stratum to still split on what else drives the effect.
 
     See
-    :attr:`~probabilistic_model.learning.learning_method.JointProbabilityTreeLearning.min_samples_per_leaf`.
+    :attr:`~probabilistic_model.learning.jpt.jpt.JointProbabilityTree.min_samples_per_leaf`.
     """
 
     plain_min_samples_per_leaf: float = 50
@@ -501,12 +501,12 @@ class RelationalPipeline(CausalQueryPipeline):
             fit.
         :return: The learning method fitting a circuit that way.
         """
-        tree_learning = JointProbabilityTreeLearning(
+        tree_learning = JointProbabilityTree(
             min_samples_per_leaf=min_samples_per_leaf
         )
         if stratified_columns is None:
             return tree_learning
-        return StratifiedLearning(columns=stratified_columns, method=tree_learning)
+        return StratifiedLearning(variables=stratified_columns, method=tree_learning)
 
     def _new_model(
         self,
@@ -665,7 +665,7 @@ class FlatTablePipeline(CausalQueryPipeline):
 
     def _fit_plain_model(self) -> CircuitSize:
         dataframe = self._training_dataframe()
-        self.plain_circuit = JointProbabilityTreeLearning(
+        self.plain_circuit = JointProbabilityTree(
             min_samples_per_leaf=self.plain_min_samples_per_leaf
         ).fit(dataframe, infer_variables_from_dataframe(dataframe))
         return CircuitSize.of(self.plain_circuit)
@@ -675,8 +675,8 @@ class FlatTablePipeline(CausalQueryPipeline):
         if cause_name not in dataframe.columns:
             raise FlatTableSchemaMismatchError([cause_name])
         self.cause_circuits[cause_name] = StratifiedLearning(
-            columns=[cause_name],
-            method=JointProbabilityTreeLearning(
+            variables=[cause_name],
+            method=JointProbabilityTree(
                 min_samples_per_leaf=self.min_samples_per_leaf
             ),
         ).fit(dataframe, infer_variables_from_dataframe(dataframe))
