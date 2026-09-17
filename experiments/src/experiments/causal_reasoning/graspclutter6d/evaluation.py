@@ -751,17 +751,20 @@ class PermutationReport:
     ordering.
     """
 
-    def largest_likelihood_difference(self, pipeline_name: str) -> float:
+    def largest_likelihood_drop(
+        self, pipeline_name: str, in_dataset_order: float
+    ) -> float:
         """
         :param pipeline_name: A pipeline modelling whole scenes.
-        :return: The largest difference between orderings in its mean whole-scene
-            log-likelihood.
+        :param in_dataset_order: Its mean whole-scene log-likelihood with the parts in
+            the order the dataset lists them.
+        :return: How far below that the worst ordering took it.
         """
         means = [
             report.mean_log_likelihood
             for report in self.whole_scene_likelihoods[pipeline_name]
         ]
-        return float(np.nanmax(means) - np.nanmin(means))
+        return float(in_dataset_order - np.nanmin(means))
 
 
 def permutation_study(

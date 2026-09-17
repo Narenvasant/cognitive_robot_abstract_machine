@@ -2,7 +2,7 @@
 Flattening scenes into one table, named the way EQL names the same attributes, so a
 query built for the relational pipeline reads the flat table's columns unchanged.
 
-A scene holds between two and twenty object instances and no canonical order over them,
+A scene holds between five and twenty object instances and no canonical order over them,
 so a flat table has to choose what to do with the parts. The three layouts are the
 choices a flat learner has: keep only the scene's own scalars, add the aggregation
 counts the relational model derives from the parts, or unroll the parts into one block

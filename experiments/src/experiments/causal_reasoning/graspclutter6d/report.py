@@ -22,6 +22,7 @@ from experiments.causal_reasoning.graspclutter6d.evaluation import (
     SplitReport,
 )
 from experiments.causal_reasoning.graspclutter6d.flat_table import SceneView
+from experiments.causal_reasoning.graspclutter6d.pipelines import LikelihoodReport
 
 
 class Verdict(StrEnum):
@@ -160,7 +161,7 @@ class MarkdownReport:
             "every object in it keeps a grasp) with one exchangeable part per object "
             "instance (size, diameter, visibility, occlusion, graspability) and one per "
             "camera frame (camera, distance, proximity, clarity). A scene holds between "
-            "two and twenty object instances, and they have no canonical order; the "
+            "five and twenty object instances, and they have no canonical order; the "
             "annotation file lists them in the order they were labelled, and nothing "
             "ties a position to an identity.",
             "",
@@ -422,29 +423,59 @@ class MarkdownReport:
         )
         lines += [
             "",
-            "The whole-scene likelihood of the same held-out scenes under each "
-            "ordering:",
+            "The whole-scene likelihood of the same held-out scenes with the parts in "
+            "the order the dataset lists them, and under each reordering. The "
+            "dataset's order is not arbitrary throughout: a scene's frames are "
+            "numbered by the recording rig, four cameras per pose in a fixed sequence, "
+            "so which camera took frame *i* is the same in every scene, and a column "
+            "that addresses a viewpoint by position addresses a real thing. Its "
+            "objects carry no such order. *Largest drop* is how far below the "
+            "dataset-order likelihood the worst reordering took each pipeline.",
             "",
         ]
         lines += self._table(
-            ["pipeline"]
+            ["pipeline", "dataset order, coverage / mean log-likelihood"]
             + [
-                f"ordering {ordering}, coverage / mean log-likelihood"
+                f"reordering {ordering}, coverage / mean log-likelihood"
                 for ordering in range(permutations.ordering_count)
             ]
-            + ["largest difference"],
+            + ["largest drop"],
             [
-                [name]
+                [name, self._likelihood_cell(self._whole_scene_in_dataset_order(name))]
+                + [self._likelihood_cell(report) for report in reports]
                 + [
-                    f"{self._percent(report.coverage)} / "
-                    f"{self._number(report.mean_log_likelihood, 2)}"
-                    for report in reports
+                    self._number(
+                        permutations.largest_likelihood_drop(
+                            name,
+                            self._whole_scene_in_dataset_order(
+                                name
+                            ).mean_log_likelihood,
+                        ),
+                        2,
+                    )
                 ]
-                + [self._number(permutations.largest_likelihood_difference(name), 2)]
                 for name, reports in permutations.whole_scene_likelihoods.items()
             ],
         )
         return lines
+
+    def _whole_scene_in_dataset_order(self, pipeline_name: str) -> LikelihoodReport:
+        """
+        :param pipeline_name: A pipeline modelling whole scenes.
+        :return: Its held-out whole-scene likelihood with the parts in the order the
+            dataset lists them.
+        """
+        return self.report.pipeline(pipeline_name).likelihoods[SceneView.WHOLE_SCENE]
+
+    def _likelihood_cell(self, likelihood: LikelihoodReport) -> str:
+        """
+        :param likelihood: A likelihood report.
+        :return: Its coverage and mean log-likelihood in one cell.
+        """
+        return (
+            f"{self._percent(likelihood.coverage)} / "
+            f"{self._number(likelihood.mean_log_likelihood, 2)}"
+        )
 
     def _splits(self) -> List[str]:
         splits = self.splits
@@ -654,7 +685,7 @@ class MarkdownReport:
 
     def _permutation_findings(self) -> List[str]:
         """
-        Which pipelines' answers moved when the objects were reordered.
+        Which pipelines' answers moved when the parts were reordered.
         """
         lines = []
         by_pipeline = {}
@@ -671,15 +702,15 @@ class MarkdownReport:
                 for question in questions
                 if len(question.best_regions) > 1
             ]
-            likelihood_difference = self.permutations.largest_likelihood_difference(
-                name
+            likelihood_drop = self.permutations.largest_likelihood_drop(
+                name, self._whole_scene_in_dataset_order(name).mean_log_likelihood
             )
             sentence = (
-                f"- Reordering the objects moved the {name}'s adjusted effect "
+                f"- Reordering the parts moved the {name}'s adjusted effect "
                 "probabilities by up to "
                 f"{self._number(max(differences), 2) if differences else '-'}"
-                " and its whole-scene mean log-likelihood by "
-                f"{self._number(likelihood_difference, 2)}"
+                " and took its whole-scene mean log-likelihood down by up to "
+                f"{self._number(likelihood_drop, 2)} from the dataset's own order"
             )
             if unstable:
                 sentence += "; it changed the most effective setting of " + ", ".join(

@@ -50,7 +50,7 @@ candidates is antipodal at the friction coefficient the dataset's own toolkit de
 (0.4) and does not collide.
 
 954 of the thousand scenes are listed under one of the dataset's two object catalogues
-and are the ones used here. They hold 2 to 20 object instances each, drawn from 200
+and are the ones used here. They hold 5 to 20 object instances each, drawn from 200
 object models, and 52 annotated frames each.
 
 The three per-scene annotation files are read either from an extracted copy of the
@@ -97,7 +97,7 @@ frame happens to be first.
 
 ## Why three flat tables
 
-A scene has between 2 and 20 object instances and no canonical order over them. The
+A scene has between 5 and 20 object instances and no canonical order over them. The
 annotation file lists them in the order they were labelled, and nothing ties a position
 in that list to an identity. A flat learner, which needs a fixed set of columns, therefore
 has three choices, and each is a pipeline here:
@@ -165,6 +165,85 @@ different object of every scene afterwards. Repeating the comparison over severa
 splits gives the spread of every number. Fitting on a growing share of the scenes shows
 how much data each pipeline needs to explain a whole scene, objects and viewpoints
 included, which only the relational circuit and the unrolled tree can score at all.
+
+## What the results show
+
+Numbers from `results.md`: one 763/191 split with seed 0 for the questions and timings,
+five splits for the spreads, three random orderings of the parts. Every number below is
+in there, in the table it came from.
+
+**Which questions each pipeline can ask.** The relational circuit and the unrolled tree
+answer all eight questions; the propositional tree answers the five whose cause and effect
+are scene attributes or counts and refuses the three about an individual object, because
+it has no column for one; the scalars-only tree answers one question in eight, the
+catalogue question adjusted for extent, because that is the only one that mentions
+nothing it lacks. This is the same pattern on every one of the five splits. The relational
+circuit refused the object-size question on one of the five splits as not
+support-deterministic: the grounded circuit mixes one copy of the object template per
+sampled count, and on that split the copies overlapped on `size`, so backdoor adjustment
+had no disjoint regions to intervene on and the circuit said so rather than answer.
+
+**Where every pipeline has the columns, every pipeline answers alike.** On the five
+scene-level questions the relational circuit and the propositional tree agree to the
+third decimal, as they must: the relational circuit's class circuit *is* the
+propositional tree, fitted on the same eight columns. The unrolled tree agrees with them
+on the most effective setting on four of the five and is within 0.01 on the fifth. What
+the shared answers say about GraspClutter6D: the dataset's own catalogue of 200 objects
+leaves every object graspable more often than the YCB-Video objects or a mix of both
+(0.41 against 0.36 and 0.33, adjusting for how far the clutter is spread), and adjusting
+for the small-object count instead moves that by a hundredth. The count questions have
+mild trends and noisy extremes. Going from no small objects to eleven or twelve takes the
+adjusted probability from 0.45 to 0.20–0.24, and the occluded-object count runs the other
+way, from 0.16–0.19 at four to six occluded objects to 0.52–0.67 at sixteen to eighteen;
+but the settings the report names as *most effective* — 15 small objects at 0.50, 19
+occluded objects at 1.00 — are strata of four and of one scene, and the five splits
+disagree on them (small-object count: 1, 3 or 15). Read the trend, not the extreme. The
+naive and adjusted columns agree almost everywhere: within a stratum of the cause, the
+clutter's extent carried no further information about graspability.
+
+**The answers about an object depend on which object "object 0" is, unless the model
+treats objects as exchangeable.** Asked how many occluded objects cause one object to
+lose every grasp, the relational circuit gives a monotone answer about an exchangeable
+object: 0.06 with no occluded objects rising smoothly to 0.16 with twenty. The unrolled
+tree, asked the same question about the object listed first, answers 0.33 at zero
+occluded objects falling to 0.00 at seventeen — the opposite direction, and about a
+different thing. Reordering the parts three times moves the unrolled tree's adjusted
+probabilities by up to 0.33 and flips its most effective setting on two of the three
+object questions; the relational circuit's answers do not move at all, on any question,
+under any ordering, because nothing about an exchangeable part can depend on where it was
+listed. Over the five splits the relational circuit finds the same most effective setting
+of the occluded-count question every time (20), and the unrolled tree alternates between
+0 and 1.
+
+**Whole-scene likelihood, and what the dataset's order is worth.** In the order the
+dataset lists the parts, the unrolled tree explains the held-out scenes it covers far
+better than the relational circuit: a mean whole-scene log-likelihood of +31 against −14
+over the scenes both cover. Under any random reordering that number falls to −88, and
+its coverage from 67% to 41–46%, while the relational circuit's stays at −16 and 84%. The
+reason is that a scene's frames are numbered by the recording rig, four cameras per pose
+in a fixed sequence, so which camera took frame *i* is the same in every scene and the
+viewpoint columns address a real thing: in the dataset's order that column is
+deterministic, worth log 4 for each of the 52 frames on its own, and the camera's
+distance to the objects at position *i* is close to the same across scenes as well. The
+relational circuit treats a viewpoint as exchangeable and pays for the camera every time.
+This is the one place the flat table's position-as-identity assumption is right, and it
+is right about the rig, not about the scene; the object columns, which carry no such
+identity, are the ones whose causal answers flip. A flat learner has no way to tell the
+two kinds of column apart, and a relational model has no way to use the first kind.
+
+**Cost.** The relational circuit's plain fit takes 146 seconds against 35 for the
+propositional tree and 486 for the unrolled tree, whose 363,000 nodes are forty times
+the relational circuit's 36,000. Once fitted, the trees answer a question in 0.2 to
+15 seconds (the clear-viewpoint question, over a count that runs from 0 to 52, takes the
+propositional tree 116 seconds) and the relational circuit in 75 to 217, the difference
+being Monte-Carlo grounding over the counts the query leaves open.
+
+What the comparison does not show: that the relational circuit gives better causal
+answers than a flat tree on questions both can pose from the same counts. On those
+columns it is that tree. What it shows is which questions a flat learner can pose at all,
+that its answers about parts are answers about a listing order, and that the one thing
+the listing order does encode here — the camera rig — is exactly the thing an
+exchangeable model cannot see.
 
 ## Running it
 

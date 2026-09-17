@@ -27,9 +27,11 @@ from experiments.causal_reasoning.graspclutter6d.queries import (
 )
 from experiments.causal_reasoning.graspclutter6d.report import MarkdownReport
 
-LEAF_SHARE = 0.1
+LEAF_SHARE = 0.2
 """
-The share of its training rows a leaf may hold in these tests.
+The share of its training rows a leaf may hold in these tests: wide enough that a
+stratum of eight synthetic scenes still spans an interval of the confounder for the
+adjustment to sum over.
 """
 
 
@@ -198,3 +200,25 @@ def test_the_report_names_every_pipeline_and_every_question(comparison):
         assert pipeline.name in rendered
     for case in query_catalogue():
         assert case.question in rendered
+
+
+def test_the_report_compares_reorderings_against_the_datasets_own_order(
+    comparison, reorderings
+):
+    rendered = MarkdownReport(comparison, permutations=reorderings).render()
+    relational = comparison.pipeline("relational circuit")
+    in_dataset_order = relational.likelihoods[SceneView.WHOLE_SCENE]
+    assert "dataset order" in rendered
+    assert (
+        f"{100 * in_dataset_order.coverage:.1f}% / "
+        f"{in_dataset_order.mean_log_likelihood:.2f}"
+    ) in rendered
+    assert reorderings.largest_likelihood_drop(
+        "relational circuit", in_dataset_order.mean_log_likelihood
+    ) == pytest.approx(
+        in_dataset_order.mean_log_likelihood
+        - min(
+            report.mean_log_likelihood
+            for report in reorderings.whole_scene_likelihoods["relational circuit"]
+        )
+    )
