@@ -31,11 +31,14 @@ from krrood.parametrization.parameterizer import (
     ModelQueryParameters,
     UnderspecifiedParameters,
 )
-from probabilistic_model.learning.jpt.jpt import JointProbabilityTree
 from probabilistic_model.learning.jpt.variables import infer_variables_from_dataframe
+from probabilistic_model.learning.learning_method import (
+    JointProbabilityTreeLearning,
+    LearningMethod,
+    StratifiedLearning,
+)
 from probabilistic_model.probabilistic_circuit.relational.causal import (
     RelationalCausalCircuit,
-    Stratification,
 )
 from probabilistic_model.probabilistic_circuit.relational.rspn import (
     RelationalProbabilisticCircuit,
@@ -274,7 +277,7 @@ class CausalQueryPipeline(ABC):
     few enough for a stratum to still split on what else drives the effect.
 
     See
-    :attr:`~probabilistic_model.probabilistic_circuit.relational.rspn.RelationalProbabilisticCircuit.min_samples_per_leaf`.
+    :attr:`~probabilistic_model.learning.learning_method.JointProbabilityTreeLearning.min_samples_per_leaf`.
     """
 
     plain_min_samples_per_leaf: float = 50
@@ -488,11 +491,45 @@ class RelationalPipeline(CausalQueryPipeline):
     def name(self) -> str:
         return "relational circuit"
 
-    def _new_model(self, min_samples_per_leaf: float) -> RelationalProbabilisticCircuit:
+    @staticmethod
+    def _learning_method(
+        min_samples_per_leaf: float, stratified_columns: Optional[List[str]]
+    ) -> LearningMethod:
+        """
+        :param min_samples_per_leaf: The fewest training rows a leaf may hold.
+        :param stratified_columns: The columns to stratify by, or ``None`` for a plain
+            fit.
+        :return: The learning method fitting a circuit that way.
+        """
+        tree_learning = JointProbabilityTreeLearning(
+            min_samples_per_leaf=min_samples_per_leaf
+        )
+        if stratified_columns is None:
+            return tree_learning
+        return StratifiedLearning(columns=stratified_columns, method=tree_learning)
+
+    def _new_model(
+        self,
+        min_samples_per_leaf: float,
+        stratification: CauseStratification = CauseStratification(None, None),
+    ) -> RelationalProbabilisticCircuit:
+        """
+        :param min_samples_per_leaf: The fewest training rows a leaf of the class
+            circuit and of the neighbour template may hold.
+        :param stratification: What the fit is stratified by; nothing by default.
+        :return: The model, not yet fitted.
+        """
         return RelationalProbabilisticCircuit(
             ClutterPickScene,
             monte_carlo_sample_count=self.monte_carlo_sample_count,
-            min_samples_per_leaf=min_samples_per_leaf,
+            learning_method=self._learning_method(
+                min_samples_per_leaf, stratification.class_columns
+            ),
+            part_learning_methods={
+                self.schema.neighbours_field: self._learning_method(
+                    min_samples_per_leaf, stratification.neighbour_attributes
+                )
+            },
         )
 
     @staticmethod
@@ -515,21 +552,8 @@ class RelationalPipeline(CausalQueryPipeline):
 
     def _fit_cause_model(self, cause_name: str) -> CircuitSize:
         stratification = CauseStratification.for_variable(cause_name, self.schema)
-        model = self._new_model(self.min_samples_per_leaf)
-        RelationalCausalCircuit().fit(
-            model,
-            [to_dao(scene) for scene in self.training_scenes],
-            Stratification(
-                class_columns=stratification.class_columns,
-                part_columns=(
-                    None
-                    if stratification.neighbour_attributes is None
-                    else {
-                        self.schema.neighbours_field: stratification.neighbour_attributes
-                    }
-                ),
-            ),
-        )
+        model = self._new_model(self.min_samples_per_leaf, stratification)
+        model.fit([to_dao(scene) for scene in self.training_scenes])
         self.cause_models[cause_name] = model
         return self._size_of(model)
 
@@ -641,24 +665,21 @@ class FlatTablePipeline(CausalQueryPipeline):
 
     def _fit_plain_model(self) -> CircuitSize:
         dataframe = self._training_dataframe()
-        self.plain_circuit = JointProbabilityTree(
-            annotated_variables=infer_variables_from_dataframe(dataframe),
-            min_samples_per_leaf=self.plain_min_samples_per_leaf,
-        ).fit(dataframe)
+        self.plain_circuit = JointProbabilityTreeLearning(
+            min_samples_per_leaf=self.plain_min_samples_per_leaf
+        ).fit(dataframe, infer_variables_from_dataframe(dataframe))
         return CircuitSize.of(self.plain_circuit)
 
     def _fit_cause_model(self, cause_name: str) -> CircuitSize:
         dataframe = self._training_dataframe()
         if cause_name not in dataframe.columns:
             raise FlatTableSchemaMismatchError([cause_name])
-        self.cause_circuits[cause_name] = (
-            RelationalCausalCircuit._fit_stratified_class_circuit(
-                dataframe,
-                infer_variables_from_dataframe(dataframe),
-                cause_name,
-                self.min_samples_per_leaf,
-            )
-        )
+        self.cause_circuits[cause_name] = StratifiedLearning(
+            columns=[cause_name],
+            method=JointProbabilityTreeLearning(
+                min_samples_per_leaf=self.min_samples_per_leaf
+            ),
+        ).fit(dataframe, infer_variables_from_dataframe(dataframe))
         return CircuitSize.of(self.cause_circuits[cause_name])
 
     def _has_cause_model(self, cause_name: str) -> bool:
