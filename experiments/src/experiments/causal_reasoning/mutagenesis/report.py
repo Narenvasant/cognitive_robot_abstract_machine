@@ -210,11 +210,8 @@ class MarkdownReport:
             "counts left open, mixes one copy of the atom template per sampled count, "
             "and those copies overlap on the atom's element without being identical "
             "(a copy for a molecule with no chlorine has no chlorine atom, a copy for "
-            "one with some has). Support-determinism verification only inspects a "
-            "sum whose children are disjoint somewhere, so it lets that mixture "
-            "through, and the regions then read off it carry more probability "
-            "together than one; the experiment refuses an answer whose regions do "
-            "not partition the cause rather than report it.",
+            "one with some has), so the grounded circuit is not support-deterministic "
+            "over the element and there is no disjoint region of it to intervene on.",
         ]
         return lines
 

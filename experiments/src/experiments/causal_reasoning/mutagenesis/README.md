@@ -113,16 +113,17 @@ circuit answers 3. Neither answers 4, for two different reasons, see below.
   molecule with the indicator set has 0.52 carbon atoms per atom against 0.44 without,
   and an atom of a molecule with 25 branching atoms is terminal with probability 0.34
   against 0.51 at 8. Both match the raw atom counts.
-- The atom-level cause exposes a gap in the framework, not in the data. Grounding with
-  the counts left open mixes one copy of the atom template per sampled count, and
-  those copies overlap on the element without being identical (a copy for a molecule
-  with no chlorine has no chlorine atom, a copy for one with some has).
-  `CausalCircuit.verify_support_determinism` only inspects a sum whose children are
-  disjoint somewhere, so it lets that mixture through, and the regions read off it
-  carry more probability together than one, with the carbon region counted twice.
-  The experiment checks that the regions partition the cause and refuses the answer
-  instead of reporting it. The flat table refuses the same question because it has
-  no column for an atom's element.
+- The atom-level cause is refused by both, for different reasons. Grounding with the
+  counts left open mixes one copy of the atom template per sampled count, and those
+  copies overlap on the element without being identical (a copy for a molecule with
+  no chlorine has no chlorine atom, a copy for one with some has), so the grounded
+  circuit is not support-deterministic over the element and verification rejects
+  it. Verification used to let such a mixture through, because it only inspected a
+  sum whose children were disjoint somewhere; the regions then read off it carried
+  more probability together than one, with the carbon region counted twice. It now
+  treats any sum whose children differ on the cause as a split, and the experiment
+  still checks that the regions it reports partition the cause. The flat table
+  refuses the same question because it has no column for an atom's element.
 - On a molecule's own attributes and counts both pipelines cover 89.5% of the
   held-out molecules at a mean log-likelihood of -8.24. Only the relational circuit
   scores whole molecules, atoms and bonds included; there it covers 60.5%, because one

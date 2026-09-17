@@ -77,9 +77,9 @@ One row per question, one column per pipeline. An answered cell says, in words, 
 | Does the ind1 indicator cause a molecule to be mutagenic, adjusting for its branching-atom count? | answered: with ind1 = True, the molecule is mutagenic with probability 0.94, the highest of any setting; with ind1 = False it is only 0.37. | answered: with ind1 = True, the molecule is mutagenic with probability 0.94, the highest of any setting; with ind1 = False it is only 0.37. |
 | Does the ind1 indicator cause atom 0 of a molecule to be carbon? | answered: with ind1 = True, atom 0 is carbon with probability 0.52, the highest of any setting; with ind1 = False it is only 0.44. | refused: the fitted table has no column for the queried variables. |
 | How many branching atoms cause atom 0 of a molecule to be terminal, with a single bond? | answered: with 8 branching atoms, atom 0 is terminal with probability 0.51, the highest of any setting; with 25 branching atoms it is only 0.34. | refused: the fitted table has no column for the queried variables. |
-| Does the element of atom 0 of a molecule cause it to be terminal, with a single bond? | refused: the cause regions read off the model overlap. | refused: the fitted table has no column for the queried variables. |
+| Does the element of atom 0 of a molecule cause it to be terminal, with a single bond? | refused: the model is not support-deterministic over the cause. | refused: the fitted table has no column for the queried variables. |
 
-The questions whose cause and effect are both molecule-level attributes or counts can be put to either pipeline. A question whose effect is one atom's own attribute has no column in the flat table, so only a model that grounds itself for the queried atoms can answer it. A question whose cause is one atom's own attribute is refused by both. The flat table has no column for it. The relational circuit, grounding with the molecule's counts left open, mixes one copy of the atom template per sampled count, and those copies overlap on the atom's element without being identical (a copy for a molecule with no chlorine has no chlorine atom, a copy for one with some has). Support-determinism verification only inspects a sum whose children are disjoint somewhere, so it lets that mixture through, and the regions then read off it carry more probability together than one; the experiment refuses an answer whose regions do not partition the cause rather than report it.
+The questions whose cause and effect are both molecule-level attributes or counts can be put to either pipeline. A question whose effect is one atom's own attribute has no column in the flat table, so only a model that grounds itself for the queried atoms can answer it. A question whose cause is one atom's own attribute is refused by both. The flat table has no column for it. The relational circuit, grounding with the molecule's counts left open, mixes one copy of the atom template per sampled count, and those copies overlap on the atom's element without being identical (a copy for a molecule with no chlorine has no chlorine atom, a copy for one with some has), so the grounded circuit is not support-deterministic over the element and there is no disjoint region of it to intervene on.
 
 ## Fit and likelihood
 
@@ -87,10 +87,10 @@ What each pipeline cost and how well it explains molecules it never saw. *Models
 
 | pipeline | models fitted | training seconds | nodes | edges | held-out coverage | mean log-likelihood (covered) | mean log-likelihood (covered by both) |
 |---|---|---|---|---|---|---|---|
-| relational circuit | 6 | 28.20 | 7507 | 7489 | 89.5% | -8.24 | -8.24 |
-| flat-table tree | 5 | 6.90 | 678 | 673 | 89.5% | -8.24 | -8.24 |
+| relational circuit | 6 | 27.13 | 7507 | 7489 | 89.5% | -8.24 | -8.24 |
+| flat-table tree | 5 | 5.10 | 678 | 673 | 89.5% | -8.24 | -8.24 |
 
-A held-out molecule is more than its scalars and counts: it is also every one of its atoms and bonds. Only a pipeline that models the parts can score those, as the class circuit over the scalars and counts times each part template over one atom or bond given the counts.
+A held-out molecule is more than its scalars and counts: it is also every one of its atoms and bonds. Only a pipeline that models the parts can score those, as the class circuit over the scalars and counts times each part template over one atom or bond given the counts. A molecule is covered only if every one of its atoms and bonds lies inside its template's leaves, so one atom of a rare element, or one partial charge outside the fitted ranges, puts the whole molecule outside.
 
 | pipeline | held-out coverage (whole molecule) | mean log-likelihood (whole molecule, covered) |
 |---|---|---|
@@ -102,25 +102,25 @@ Wall-clock time from asking to the answer or the refusal. The *first ask* of a c
 
 | question | relational circuit, first ask | relational circuit, asked again | flat-table tree, first ask | flat-table tree, asked again |
 |---|---|---|---|---|
-| branching_atom_count_causes_mutagenicity | 7.35 | 2.62 | 2.48 | 0.30 |
-| aromatic_bond_count_causes_mutagenicity | 6.32 | 2.63 | 1.26 | 0.23 |
-| double_bond_count_causes_mutagenicity | 6.09 | 3.00 | 1.35 | 0.13 |
-| indicator_causes_mutagenicity | 5.07 | 1.71 | 2.08 | 0.15 |
-| indicator_causes_carbon_atom_0 | 3.22 | 3.93 | 0.00 | 0.00 |
-| branching_atom_count_causes_terminal_atom_0 | 3.06 | 3.92 | 0.00 | 0.00 |
-| element_causes_terminal_atom_0 | 5.03 | 1.05 | 0.00 | 0.00 |
+| branching_atom_count_causes_mutagenicity | 5.66 | 1.75 | 1.32 | 0.32 |
+| aromatic_bond_count_causes_mutagenicity | 6.88 | 3.07 | 1.50 | 0.26 |
+| double_bond_count_causes_mutagenicity | 6.49 | 3.44 | 1.13 | 0.13 |
+| indicator_causes_mutagenicity | 5.40 | 2.70 | 1.15 | 0.15 |
+| indicator_causes_carbon_atom_0 | 3.18 | 4.02 | 0.00 | 0.00 |
+| branching_atom_count_causes_terminal_atom_0 | 3.27 | 3.54 | 0.00 | 0.00 |
+| element_causes_terminal_atom_0 | 4.56 | 0.27 | 0.00 | 0.00 |
 
 ## What the results show
 
-- The relational circuit answered 6 of 7 questions, refusing `element_causes_terminal_atom_0` because the cause regions read off the model overlap.
+- The relational circuit answered 6 of 7 questions, refusing `element_causes_terminal_atom_0` because the model is not support-deterministic over the cause.
 - The flat-table tree answered 4 of 7 questions, refusing `indicator_causes_carbon_atom_0` because the fitted table has no column for the queried variables; `branching_atom_count_causes_terminal_atom_0` because the fitted table has no column for the queried variables; `element_causes_terminal_atom_0` because the fitted table has no column for the queried variables.
 - On `branching_atom_count_causes_mutagenicity`, both pipelines find 17 branching atoms the most effective setting (adjusted probabilities 1.00, 1.00).
 - On `aromatic_bond_count_causes_mutagenicity`, both pipelines find 14 aromatic bonds the most effective setting (adjusted probabilities 1.00, 1.00).
 - On `double_bond_count_causes_mutagenicity`, both pipelines find 9 double bonds the most effective setting (adjusted probabilities 1.00, 1.00).
 - On `indicator_causes_mutagenicity`, both pipelines find ind1 = True the most effective setting (adjusted probabilities 0.94, 0.94).
 - On a molecule's own attributes and counts, the pipelines assign the same mean log-likelihood (-8.24) to the held-out molecules and cover the same share of them (89.5%): the relational circuit's class-level circuit and the flat-table tree are fitted on the same rows with the same settings, so they are the same tree. The relational circuit differs in what it models besides: the atoms and bonds.
-- The relational circuit takes 2.97 seconds per answered question on average once its models are fitted.
-- The flat-table tree takes 0.20 seconds per answered question on average once its models are fitted.
+- The relational circuit takes 3.09 seconds per answered question on average once its models are fitted.
+- The flat-table tree takes 0.21 seconds per answered question on average once its models are fitted.
 
 ## How many branching atoms cause a molecule to be mutagenic, adjusting for the ind1 indicator?
 
@@ -342,7 +342,7 @@ One row per region of the cause the model distinguishes. *P(region)* is how much
 
 ### relational circuit
 
-Refused: the cause regions read off the model overlap.
+Refused: the model is not support-deterministic over the cause.
 
 ### flat-table tree
 

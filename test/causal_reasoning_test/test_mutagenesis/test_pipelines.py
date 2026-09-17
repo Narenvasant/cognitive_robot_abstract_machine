@@ -217,7 +217,7 @@ def test_both_pipelines_answer_about_the_indicator(request, asker, pipeline_name
 def test_relational_pipeline_answers_about_one_atom(relational_pipeline, asker):
     outcome = asker.ask(
         relational_pipeline,
-        IndicatorCausesElement(element=MutagenesisElement.HYDROGEN),
+        IndicatorCausesElement(element=MutagenesisElement.CHLORINE),
     )
     assert outcome.answered
     assert set(_adjusted_by_region(outcome)) == {"True", "False"}
