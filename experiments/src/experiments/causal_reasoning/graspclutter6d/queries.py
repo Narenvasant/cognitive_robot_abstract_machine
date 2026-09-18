@@ -468,6 +468,37 @@ def object_level_cases() -> List[CausalQueryCase]:
     ]
 
 
+def ground_truth_cases() -> List[CausalQueryCase]:
+    """
+    The questions asked of the synthetic model: every count and the catalogue as a
+    cause of graspability, each adjusted for the number of objects, which is the
+    model's one confounder, and the questions whose cause or effect lives on one
+    object.
+
+    :return: The questions, in the order they are asked.
+    """
+    return (
+        [
+            CountCausesGraspability(
+                statistic_name=statistic_name,
+                count_noun=count_noun,
+                confounders=(OBJECT_COUNT,),
+            )
+            for statistic_name, count_noun in (
+                ("small_object_count", "small objects"),
+                ("occluded_object_count", "occluded objects"),
+                ("clear_viewpoint_count", "clear viewpoints"),
+            )
+        ]
+        + [
+            CatalogueCausesGraspability(
+                confounder_name=OBJECT_COUNT.name, confounder_noun=OBJECT_COUNT.noun
+            )
+        ]
+        + object_level_cases()
+    )
+
+
 def query_catalogue() -> List[CausalQueryCase]:
     """
     Every question of the experiment: the scene-level causes of graspability first, then

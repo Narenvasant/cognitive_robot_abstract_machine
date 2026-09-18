@@ -1,8 +1,8 @@
 """
 Fit every pipeline on the GraspClutter6D scenes, ask them every question of the
 catalogue, repeat that over random orderings of the parts and over random splits,
-measure how the likelihoods grow with the training set, and write it all out as
-Markdown.
+measure how the likelihoods grow with the training set, score every pipeline against the
+known truth of a synthetic model of the same domain, and write it all out as Markdown.
 
 Run with::
 
@@ -35,6 +35,7 @@ from experiments.causal_reasoning.graspclutter6d.dataset import (
 )
 from experiments.causal_reasoning.graspclutter6d.evaluation import (
     evaluate,
+    ground_truth_study,
     learning_curve,
     permutation_study,
     split_study,
@@ -123,9 +124,16 @@ def main(
         random_seeds=range(seed, seed + min(split_count, 3)),
         plain_min_samples_per_leaf=plain_min_samples_per_leaf,
     )
+    logger.info("Scoring against the synthetic model's truth")
+    truth = ground_truth_study(
+        random_seed=seed,
+        min_samples_per_leaf=min_samples_per_leaf,
+        plain_min_samples_per_leaf=plain_min_samples_per_leaf,
+        min_region_support=min_region_support,
+    )
     output.write_text(
         MarkdownReport(
-            report, permutations=permutations, splits=splits, curve=curve
+            report, permutations=permutations, splits=splits, curve=curve, truth=truth
         ).render()
     )
     logger.info("Wrote %s", output)

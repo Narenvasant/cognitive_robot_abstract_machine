@@ -343,6 +343,14 @@ class CausalQueryPipeline(ABC):
         order a scene lists them in can matter to it.
         """
 
+    @property
+    @abstractmethod
+    def order_invariant(self) -> bool:
+        """
+        Whether fitting on the same scenes with their parts in another order gives the
+        same model, so that a study over reorderings need fit it once.
+        """
+
     def fit(self, scenes: Sequence[GraspClutterScene]) -> FitReport:
         """
         Fit the plain model, and keep the scenes for the cause-specific fits.
@@ -645,6 +653,10 @@ class RelationalPipeline(CausalQueryPipeline):
     def models_parts(self) -> bool:
         return True
 
+    @property
+    def order_invariant(self) -> bool:
+        return True
+
     def _part_training_values(self, part: PartAttribute) -> List[Any]:
         return [
             vars(one)[part.attribute]
@@ -809,6 +821,10 @@ class FlatTablePipeline(CausalQueryPipeline):
     @property
     def models_parts(self) -> bool:
         return self.flat_table.layout.has_parts
+
+    @property
+    def order_invariant(self) -> bool:
+        return not self.flat_table.layout.has_parts
 
     def _part_training_values(self, part: PartAttribute) -> List[Any]:
         column = self.schema.part_column(part)

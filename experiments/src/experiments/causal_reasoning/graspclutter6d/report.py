@@ -15,6 +15,7 @@ from typing_extensions import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from experiments.causal_reasoning.graspclutter6d.evaluation import (
     EvaluationReport,
+    GroundTruthReport,
     InterventionalEffect,
     LearningCurveReport,
     PermutationReport,
@@ -62,6 +63,11 @@ class MarkdownReport:
     The likelihoods over growing training sets, if run.
     """
 
+    truth: Optional[GroundTruthReport] = None
+    """
+    The error against the synthetic model's known interventional probabilities, if run.
+    """
+
     def render(self) -> str:
         """
         :return: The whole document.
@@ -81,6 +87,8 @@ class MarkdownReport:
             sections.append(self._splits())
         if self.curve is not None:
             sections.append(self._learning_curve())
+        if self.truth is not None:
+            sections.append(self._ground_truth())
         sections.append(self._findings())
         for case_index in range(len(self._first_pipeline.outcomes)):
             sections.append(self._effects(case_index))
@@ -725,6 +733,102 @@ class MarkdownReport:
                     ]
                 rows.append(row)
             lines += self._table(header, rows)
+        return lines
+
+    def _ground_truth(self) -> List[str]:
+        truth = self.truth
+        lines = [
+            "## Error against known truth",
+            "",
+            "Scenes sampled from a structural causal model over the same domain, whose "
+            "interventional probabilities are computed by construction: the cause is "
+            "forced to a value in the mechanism and the effect's rate read off "
+            f"{'{:,}'.format(200000)} forced scenes. The number of objects is the "
+            "model's one confounder, driving both the causes and the effect, and the "
+            "scenes list their small objects first, so a column that addresses an "
+            "object by position is systematically misleading. Every pipeline was "
+            f"fitted on {truth.scene_count} scenes per setting and asked the questions "
+            "adjusted for the number of objects; *mean* and *max absolute error* are "
+            "over every supported cause region of every answered question, the "
+            "*support-weighted* error weighs each region by the training rows it "
+            "holds, *worst ordering* is the mean absolute error under the reordering "
+            "of the parts the pipeline did worst on, and *rank correlation* is "
+            "Spearman's between the answered and the true probabilities over a "
+            "question's regions. A count's extreme values are rare in the data and "
+            "rarer still within every stratum of the confounder, so no estimator "
+            "recovers their interventional probability well; the questions whose "
+            "cause or effect lives on one object are where the pipelines differ.",
+            "",
+        ]
+        lines += self._table(
+            [
+                "pipeline",
+                "questions answered",
+                "mean abs. error",
+                "support-weighted abs. error",
+                "max abs. error",
+                "mean abs. error, worst ordering",
+                "rank correlation with truth",
+            ],
+            [
+                [
+                    name,
+                    self._percent(truth.answered_share(name)),
+                    self._number(truth.mean_absolute_error(truth.of(name, ordering=0))),
+                    self._number(
+                        truth.weighted_absolute_error(truth.of(name, ordering=0))
+                    ),
+                    self._number(truth.max_absolute_error(truth.of(name, ordering=0))),
+                    self._number(truth.worst_ordering_mean_absolute_error(name)),
+                    self._number(
+                        truth.mean_rank_correlation(truth.of(name, ordering=0)), 2
+                    ),
+                ]
+                for name in truth.pipeline_names
+            ],
+        )
+        lines += ["", "Mean absolute error per setting of the model:", ""]
+        lines += self._table(
+            ["objects per scene", "confounding strength"] + truth.pipeline_names,
+            [
+                [
+                    str(configuration.object_count_centre),
+                    self._number(configuration.confounding_strength, 1),
+                ]
+                + [
+                    self._number(
+                        truth.mean_absolute_error(
+                            truth.of(name, configuration=configuration, ordering=0)
+                        )
+                    )
+                    for name in truth.pipeline_names
+                ]
+                for configuration in truth.configurations
+            ],
+        )
+        lines += ["", "Mean absolute error per question, over every setting:", ""]
+        case_names = list(
+            dict.fromkeys(outcome.case.name for _, outcome in truth.outcomes)
+        )
+        lines += self._table(
+            ["question"] + truth.pipeline_names,
+            [
+                [case_name]
+                + [
+                    self._number(
+                        truth.mean_absolute_error(
+                            [
+                                outcome
+                                for outcome in truth.of(name, ordering=0)
+                                if outcome.case.name == case_name
+                            ]
+                        )
+                    )
+                    for name in truth.pipeline_names
+                ]
+                for case_name in case_names
+            ],
+        )
         return lines
 
     def _findings(self) -> List[str]:

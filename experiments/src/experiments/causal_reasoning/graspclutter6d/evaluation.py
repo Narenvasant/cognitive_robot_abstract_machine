@@ -52,10 +52,22 @@ from experiments.causal_reasoning.graspclutter6d.pipelines import (
     LikelihoodReport,
     pipelines,
 )
+from experiments.causal_reasoning.graspclutter6d.domain import (
+    ObjectCatalogue,
+    ObjectSize,
+)
 from experiments.causal_reasoning.graspclutter6d.queries import (
     CausalQueryCase,
+    ground_truth_cases,
     object_level_cases,
     query_catalogue,
+)
+from experiments.causal_reasoning.graspclutter6d.synthetic_scm import (
+    Cause,
+    CausalQuestion,
+    Effect,
+    Intervention,
+    SceneStructuralCausalModel,
 )
 
 # %% what one question yields on one pipeline
@@ -392,11 +404,11 @@ class QueryOutcome:
         ordered = [
             effect for effect in self.supported_effects if effect.ordinal is not None
         ]
-        if len(ordered) < 3:
+        probabilities = [effect.adjusted_probability for effect in ordered]
+        if len(ordered) < 3 or len(set(probabilities)) == 1:
             return None
         correlation = spearmanr(
-            [effect.ordinal for effect in ordered],
-            [effect.adjusted_probability for effect in ordered],
+            [effect.ordinal for effect in ordered], probabilities
         ).statistic
         return None if math.isnan(correlation) else float(correlation)
 
@@ -1434,4 +1446,431 @@ def learning_curve(
                         likelihoods=score_every_view(pipeline, test.scenes),
                     )
                 )
+    return report
+
+
+# %% error against known truth
+
+
+@dataclass(frozen=True)
+class RegionError:
+    """
+    A pipeline's adjusted probability for one cause region against the model's true
+    interventional probability.
+    """
+
+    cause_region: str
+    """
+    The region, written out.
+    """
+
+    adjusted_probability: float
+    """
+    What the pipeline answered.
+    """
+
+    true_probability: float
+    """
+    What the model gives, by forced sampling.
+    """
+
+    support_count: int
+    """
+    How many training rows the region holds.
+    """
+
+    @property
+    def absolute_error(self) -> float:
+        """
+        How far the answer is from the truth.
+        """
+        return abs(self.adjusted_probability - self.true_probability)
+
+
+@dataclass
+class GroundTruthOutcome:
+    """
+    What one pipeline made of one question on one synthetic dataset, scored against the
+    truth.
+    """
+
+    pipeline_name: str
+    """
+    The pipeline that was asked.
+    """
+
+    case: CausalQueryCase
+    """
+    The question.
+    """
+
+    ordering: int
+    """
+    Which ordering of the parts the pipeline was fitted on: zero for the model's own,
+    which lists the small objects first, and counting up for random reorderings.
+    """
+
+    outcome: QueryOutcome
+    """
+    What the pipeline answered, or why it refused.
+    """
+
+    errors: List[RegionError] = field(default_factory=list)
+    """
+    One error per supported cause region the pipeline answered for.
+    """
+
+    @property
+    def answered(self) -> bool:
+        """
+        Whether the pipeline answered with at least one supported region.
+        """
+        return bool(self.errors)
+
+    @property
+    def mean_absolute_error(self) -> float:
+        """
+        The mean absolute error over the supported regions; ``nan`` if none.
+        """
+        if not self.errors:
+            return float("nan")
+        return float(np.mean([error.absolute_error for error in self.errors]))
+
+    @property
+    def max_absolute_error(self) -> float:
+        """
+        The largest absolute error over the supported regions; ``nan`` if none.
+        """
+        if not self.errors:
+            return float("nan")
+        return max(error.absolute_error for error in self.errors)
+
+    @property
+    def rank_correlation(self) -> float:
+        """
+        Spearman's rank correlation between the answered and the true probabilities
+        over the supported regions; ``nan`` with fewer than three.
+        """
+        answered = [error.adjusted_probability for error in self.errors]
+        true = [error.true_probability for error in self.errors]
+        if len(self.errors) < 3 or len(set(answered)) == 1 or len(set(true)) == 1:
+            return float("nan")
+        return float(spearmanr(answered, true).statistic)
+
+
+@dataclass(frozen=True)
+class GroundTruthConfiguration:
+    """
+    One setting of the synthetic model.
+    """
+
+    object_count_centre: int
+    """
+    The typical number of objects in a scene.
+    """
+
+    confounding_strength: float
+    """
+    How strongly the number of objects drives both the causes and the effect.
+    """
+
+
+@dataclass
+class GroundTruthReport:
+    """
+    Every pipeline's error against the synthetic model's truth, over the model's
+    settings and over reorderings of the parts.
+    """
+
+    scene_count: int
+    """
+    How many scenes each pipeline was fitted on per setting.
+    """
+
+    ordering_count: int
+    """
+    How many random reorderings were tried per setting.
+    """
+
+    outcomes: List[Tuple[GroundTruthConfiguration, GroundTruthOutcome]] = field(
+        default_factory=list
+    )
+    """
+    Every scored answer, with the setting it was scored under.
+    """
+
+    @property
+    def configurations(self) -> List[GroundTruthConfiguration]:
+        """
+        The settings, in the order they were run.
+        """
+        return list(dict.fromkeys(configuration for configuration, _ in self.outcomes))
+
+    @property
+    def pipeline_names(self) -> List[str]:
+        """
+        The pipelines, in the order they were run.
+        """
+        return list(
+            dict.fromkeys(outcome.pipeline_name for _, outcome in self.outcomes)
+        )
+
+    def of(
+        self,
+        pipeline_name: str,
+        configuration: Optional[GroundTruthConfiguration] = None,
+        ordering: Optional[int] = None,
+    ) -> List[GroundTruthOutcome]:
+        """
+        :param pipeline_name: A pipeline's name.
+        :param configuration: A setting to restrict to, or every setting.
+        :param ordering: An ordering to restrict to, or every ordering.
+        :return: The pipeline's scored answers.
+        """
+        return [
+            outcome
+            for scored_configuration, outcome in self.outcomes
+            if outcome.pipeline_name == pipeline_name
+            and (configuration is None or scored_configuration == configuration)
+            and (ordering is None or outcome.ordering == ordering)
+        ]
+
+    @staticmethod
+    def mean_absolute_error(outcomes: Sequence[GroundTruthOutcome]) -> float:
+        """
+        :param outcomes: Scored answers.
+        :return: The mean absolute error over every supported region of every answered
+            one; ``nan`` if none was answered.
+        """
+        errors = [
+            error.absolute_error for outcome in outcomes for error in outcome.errors
+        ]
+        return float(np.mean(errors)) if errors else float("nan")
+
+    @staticmethod
+    def weighted_absolute_error(outcomes: Sequence[GroundTruthOutcome]) -> float:
+        """
+        :param outcomes: Scored answers.
+        :return: The mean absolute error over every supported region of every answered
+            one, each region weighted by how many training rows it holds, so that the
+            sparse extremes of a count weigh as little as they do in the data; ``nan``
+            if none was answered.
+        """
+        errors = [error for outcome in outcomes for error in outcome.errors]
+        if not errors:
+            return float("nan")
+        weights = np.array([error.support_count for error in errors], dtype=float)
+        values = np.array([error.absolute_error for error in errors])
+        return float((weights * values).sum() / weights.sum())
+
+    @staticmethod
+    def max_absolute_error(outcomes: Sequence[GroundTruthOutcome]) -> float:
+        """
+        :param outcomes: Scored answers.
+        :return: The largest absolute error over every supported region of every
+            answered one; ``nan`` if none was answered.
+        """
+        errors = [
+            error.absolute_error for outcome in outcomes for error in outcome.errors
+        ]
+        return max(errors) if errors else float("nan")
+
+    @staticmethod
+    def mean_rank_correlation(outcomes: Sequence[GroundTruthOutcome]) -> float:
+        """
+        :param outcomes: Scored answers.
+        :return: The mean rank correlation with the truth over the answers that have
+            one; ``nan`` if none has.
+        """
+        correlations = [
+            outcome.rank_correlation
+            for outcome in outcomes
+            if not math.isnan(outcome.rank_correlation)
+        ]
+        return float(np.mean(correlations)) if correlations else float("nan")
+
+    def worst_ordering_mean_absolute_error(self, pipeline_name: str) -> float:
+        """
+        :param pipeline_name: A pipeline's name.
+        :return: Its mean absolute error under the reordering it did worst on, over
+            every setting; the model's own order if it was never refitted.
+        """
+        orderings = sorted({outcome.ordering for outcome in self.of(pipeline_name)})
+        return max(
+            self.mean_absolute_error(self.of(pipeline_name, ordering=ordering))
+            for ordering in orderings
+        )
+
+    def answered_share(self, pipeline_name: str) -> float:
+        """
+        :param pipeline_name: A pipeline's name.
+        :return: The share of its questions it answered with at least one supported
+            region.
+        """
+        outcomes = self.of(pipeline_name)
+        return float(np.mean([outcome.answered for outcome in outcomes]))
+
+
+def _region_value(effect: InterventionalEffect, cause: Cause) -> Any:
+    """
+    :param effect: One region's effect, whose region is written out.
+    :param cause: The cause the region is a value of.
+    :return: The value the region names, as the model forces it.
+    """
+    if cause is Cause.CATALOGUE:
+        return ObjectCatalogue(effect.cause_region)
+    if cause is Cause.OBJECT_SIZE:
+        return ObjectSize(effect.cause_region)
+    return int(effect.ordinal)
+
+
+@dataclass
+class TruthOracle:
+    """
+    The synthetic model's interventional probabilities, computed once per intervention
+    and effect.
+    """
+
+    model: SceneStructuralCausalModel
+    """
+    The model.
+    """
+
+    random_seed: int = 0
+    """
+    Seed of the forced samples, the same for every intervention.
+    """
+
+    sample_count: int = 200_000
+    """
+    How many forced scenes each probability is read off.
+    """
+
+    known: Dict[Tuple[Intervention, Effect], float] = field(default_factory=dict)
+    """
+    The probabilities computed so far.
+    """
+
+    def probability(self, intervention: Intervention, effect: Effect) -> float:
+        """
+        :param intervention: The cause and the value it is forced to.
+        :param effect: The event to read.
+        :return: The probability of the effect under the intervention.
+        """
+        key = (intervention, effect)
+        if key not in self.known:
+            self.known[key] = self.model.interventional_probability(
+                intervention,
+                effect,
+                np.random.default_rng(self.random_seed),
+                self.sample_count,
+            )
+        return self.known[key]
+
+    def score(
+        self, outcome: QueryOutcome, pipeline_name: str, ordering: int
+    ) -> GroundTruthOutcome:
+        """
+        :param outcome: What a pipeline answered.
+        :param pipeline_name: The pipeline.
+        :param ordering: Which ordering of the parts it was fitted on.
+        :return: The answer scored against the truth, over its supported regions.
+        """
+        question = CausalQuestion.of(outcome.case)
+        return GroundTruthOutcome(
+            pipeline_name=pipeline_name,
+            case=outcome.case,
+            ordering=ordering,
+            outcome=outcome,
+            errors=[
+                RegionError(
+                    cause_region=effect.cause_region,
+                    adjusted_probability=effect.adjusted_probability,
+                    true_probability=self.probability(
+                        Intervention(
+                            question.cause, _region_value(effect, question.cause)
+                        ),
+                        question.effect,
+                    ),
+                    support_count=effect.support_count,
+                )
+                for effect in outcome.supported_effects
+            ],
+        )
+
+
+def ground_truth_study(
+    configurations: Sequence[GroundTruthConfiguration] = (
+        GroundTruthConfiguration(5, 0.6),
+        GroundTruthConfiguration(10, 0.0),
+        GroundTruthConfiguration(10, 0.3),
+        GroundTruthConfiguration(10, 0.6),
+        GroundTruthConfiguration(20, 0.6),
+    ),
+    scene_count: int = 400,
+    ordering_count: int = 5,
+    random_seed: int = 0,
+    min_samples_per_leaf: Optional[float] = None,
+    plain_min_samples_per_leaf: Optional[float] = None,
+    cases: Optional[Sequence[CausalQueryCase]] = None,
+    min_region_support: int = 10,
+    truth_sample_count: int = 200_000,
+) -> GroundTruthReport:
+    """
+    Fit every pipeline on scenes sampled from the synthetic model, under each of its
+    settings, ask the questions, and score every answer against the interventional
+    probability the model gives by construction; then reorder the parts and score the
+    pipelines whose fit can see the order again.
+
+    :param configurations: The model's settings to run.
+    :param scene_count: How many scenes to fit on per setting.
+    :param ordering_count: How many random reorderings to try per setting.
+    :param random_seed: Seed of the sampled scenes, the reorderings, the Monte-Carlo
+        grounding and the forced samples.
+    :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
+        model may hold; the pipelines' own default if not given.
+    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
+        may hold; the pipelines' own default if not given.
+    :param cases: The questions to ask; defaults to :func:`ground_truth_cases`.
+    :param min_region_support: The fewest training rows a cause region may hold for its
+        effect to be scored.
+    :param truth_sample_count: How many forced scenes each true probability is read off.
+    :return: The study.
+    """
+    cases = list(cases or ground_truth_cases())
+    asker = QuestionAsker(
+        random_seed=random_seed, min_region_support=min_region_support
+    )
+    report = GroundTruthReport(scene_count=scene_count, ordering_count=ordering_count)
+    for configuration in configurations:
+        model = SceneStructuralCausalModel(
+            object_count_centre=configuration.object_count_centre,
+            confounding_strength=configuration.confounding_strength,
+        )
+        oracle = TruthOracle(
+            model, random_seed=random_seed, sample_count=truth_sample_count
+        )
+        dataset = GraspClutterDataset(
+            model.scenes(scene_count, np.random.default_rng(random_seed))
+        )
+        orderings = [dataset] + [
+            dataset.with_shuffled_parts(np.random.default_rng([random_seed, ordering]))
+            for ordering in range(ordering_count)
+        ]
+        for ordering, ordered in enumerate(orderings):
+            for pipeline in configured_pipelines(
+                ordered.scenes, min_samples_per_leaf, plain_min_samples_per_leaf
+            ):
+                if ordering > 0 and pipeline.order_invariant:
+                    continue
+                pipeline.fit(ordered.scenes)
+                for case in cases:
+                    report.outcomes.append(
+                        (
+                            configuration,
+                            oracle.score(
+                                asker.ask(pipeline, case), pipeline.name, ordering
+                            ),
+                        )
+                    )
     return report
