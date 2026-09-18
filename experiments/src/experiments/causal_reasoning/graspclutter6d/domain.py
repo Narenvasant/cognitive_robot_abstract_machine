@@ -284,6 +284,22 @@ class GraspClutterSceneAggregations(AggregationStatistic[GraspClutterScene]):
     """
 
     @aggregation_statistic("objects")
+    def object_count(self) -> int:
+        """
+        Count of object instances, of any size.
+
+        A scene with more objects holds more small ones and has more chances of one
+        losing every grasp, so it confounds every question about a count.
+        """
+        size_variable = variable(GraspClutterObject, self.instance.objects).size
+        [result] = (
+            entity(count_range(size_variable))
+            .where(or_(*(size_variable == size for size in ObjectSize)))
+            .tolist()
+        )
+        return result
+
+    @aggregation_statistic("objects")
     def small_object_count(self) -> int:
         """
         Count of small objects.

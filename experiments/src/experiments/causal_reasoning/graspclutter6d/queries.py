@@ -15,7 +15,7 @@ from dataclasses import dataclass, fields
 
 from krrood.entity_query_language.factories import a, cause, confounder
 from krrood.entity_query_language.query.match import Match
-from typing_extensions import Any, List
+from typing_extensions import Any, Dict, List, Tuple
 
 from experiments.causal_reasoning.graspclutter6d.domain import (
     GraspClutterObject,
@@ -156,11 +156,40 @@ class CausalQueryCase(ABC):
         return [viewpoint_query() for _ in range(self.viewpoint_count)]
 
 
+@dataclass(frozen=True)
+class Confounder:
+    """
+    One scene attribute or aggregation count a question adjusts for, as a variable and
+    in words.
+    """
+
+    name: str
+    """
+    The scene attribute or aggregation count.
+    """
+
+    noun: str
+    """
+    The confounder in words, such as ``the number of objects``.
+    """
+
+
+EXTENT = Confounder(name="extent", noun="how far the clutter is spread out")
+"""
+Adjusting for the spread of the clutter.
+"""
+
+OBJECT_COUNT = Confounder(name="object_count", noun="the number of objects")
+"""
+Adjusting for the size of the scene.
+"""
+
+
 @dataclass(frozen=True, kw_only=True)
 class CountCausesGraspability(CausalQueryCase):
     """
     Does one of the scene's aggregation counts cause every object in it to stay
-    graspable, once the spread of the clutter is adjusted for?
+    graspable, once the given confounders are adjusted for?
     """
 
     statistic_name: str
@@ -175,32 +204,31 @@ class CountCausesGraspability(CausalQueryCase):
     What the count counts, in words, such as ``small objects``.
     """
 
-    confounder_name: str = "extent"
+    confounders: Tuple[Confounder, ...] = (EXTENT,)
     """
-    The scene attribute to adjust for.
-    """
-
-    confounder_noun: str = "how far the clutter is spread out"
-    """
-    The confounder in words.
+    What to adjust for; a flat table without a column for one of them refuses the
+    question.
     """
 
     @property
     def name(self) -> str:
-        return f"{self.statistic_name}_causes_graspability"
+        adjusting = "_and_".join(confounder.name for confounder in self.confounders)
+        return f"{self.statistic_name}_causes_graspability_adjusting_{adjusting}"
 
     @property
     def question(self) -> str:
+        adjusting = " and ".join(confounder.noun for confounder in self.confounders)
         return (
             f"How many {self.count_noun} cause every object of a scene to stay "
-            f"graspable, adjusting for {self.confounder_noun}?"
+            f"graspable, adjusting for {adjusting}?"
         )
 
     def build(self) -> Match:
         query = scene_query(
             self._open_objects(),
             self._open_viewpoints(),
-            **{self.statistic_name: cause, self.confounder_name: confounder},
+            **{self.statistic_name: cause},
+            **{adjusted.name: confounder for adjusted in self.confounders},
         )
         query.causes_effect(query.variable.all_objects_graspable == True)
         return query
@@ -392,16 +420,19 @@ def scene_level_cases() -> List[CausalQueryCase]:
     :return: The questions whose cause and effect are both scene attributes or counts, in
         the order they are asked.
     """
+    counts = (
+        ("small_object_count", "small objects"),
+        ("occluded_object_count", "occluded objects"),
+        ("clear_viewpoint_count", "clear viewpoints"),
+    )
+    adjustments = ((EXTENT,), (OBJECT_COUNT,), (EXTENT, OBJECT_COUNT))
     return [
         CountCausesGraspability(
-            statistic_name="small_object_count", count_noun="small objects"
-        ),
-        CountCausesGraspability(
-            statistic_name="occluded_object_count", count_noun="occluded objects"
-        ),
-        CountCausesGraspability(
-            statistic_name="clear_viewpoint_count", count_noun="clear viewpoints"
-        ),
+            statistic_name=statistic_name, count_noun=count_noun, confounders=confounders
+        )
+        for statistic_name, count_noun in counts
+        for confounders in adjustments
+    ] + [
         CatalogueCausesGraspability(
             confounder_name="extent", confounder_noun="spread (extent)"
         ),
@@ -409,6 +440,18 @@ def scene_level_cases() -> List[CausalQueryCase]:
             confounder_name="small_object_count", confounder_noun="small-object count"
         ),
     ]
+
+
+def count_cases_by_statistic() -> Dict[str, List[CountCausesGraspability]]:
+    """
+    :return: The count questions grouped by the count that is their cause, each group in
+        the order of its adjustments.
+    """
+    grouped: Dict[str, List[CountCausesGraspability]] = {}
+    for case in scene_level_cases():
+        if isinstance(case, CountCausesGraspability):
+            grouped.setdefault(case.statistic_name, []).append(case)
+    return grouped
 
 
 def object_level_cases() -> List[CausalQueryCase]:
