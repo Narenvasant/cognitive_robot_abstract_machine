@@ -50,6 +50,7 @@ from experiments.causal_reasoning.graspclutter6d.pipelines import (
     CausalQueryPipeline,
     FitReport,
     LikelihoodReport,
+    RelationalPipeline,
     pipelines,
 )
 from experiments.causal_reasoning.graspclutter6d.domain import (
@@ -59,6 +60,7 @@ from experiments.causal_reasoning.graspclutter6d.domain import (
 from experiments.causal_reasoning.graspclutter6d.queries import (
     CausalQueryCase,
     ground_truth_cases,
+    monte_carlo_cases,
     object_level_cases,
     query_catalogue,
 )
@@ -1873,4 +1875,144 @@ def ground_truth_study(
                             ),
                         )
                     )
+    return report
+
+
+# %% how many samples grounding needs
+
+
+@dataclass(frozen=True)
+class SampleCountOutcome:
+    """
+    What the relational circuit answered one question with at one number of grounding
+    samples.
+    """
+
+    sample_count: int
+    """
+    How many samples grounding drew for each count the query left open.
+    """
+
+    outcome: QueryOutcome
+    """
+    The answer, with its duration.
+    """
+
+
+@dataclass
+class MonteCarloReport:
+    """
+    How the relational circuit's answers settle as grounding draws more samples.
+    """
+
+    reference_sample_count: int
+    """
+    The largest number of samples tried, whose answer every other is measured against.
+    """
+
+    stability_tolerance: float = 0.01
+    """
+    How close to the reference an answer must be, on every region, to count as
+    settled.
+    """
+
+    outcomes: Dict[str, List[SampleCountOutcome]] = field(default_factory=dict)
+    """
+    Per question name, the answer at each number of samples, ascending.
+    """
+
+    def deviation(self, case_name: str, sample_count: int) -> float:
+        """
+        :param case_name: A question.
+        :param sample_count: A number of samples tried for it.
+        :return: The largest difference, over the cause regions both answers
+            distinguish, between the adjusted probability at that number of samples
+            and at the reference; ``nan`` if either was refused or they share no
+            region.
+        """
+        by_count = {
+            scored.sample_count: scored.outcome for scored in self.outcomes[case_name]
+        }
+        answered = by_count[sample_count]
+        reference = by_count[self.reference_sample_count]
+        if not answered.answered or not reference.answered:
+            return float("nan")
+        adjusted = {
+            effect.cause_region: effect.adjusted_probability
+            for effect in answered.effects
+        }
+        expected = {
+            effect.cause_region: effect.adjusted_probability
+            for effect in reference.effects
+        }
+        shared = set(adjusted) & set(expected)
+        if not shared:
+            return float("nan")
+        return max(abs(adjusted[region] - expected[region]) for region in shared)
+
+    def settled_from(self, case_name: str) -> Optional[int]:
+        """
+        :param case_name: A question.
+        :return: The smallest number of samples from which every larger number tried
+            stays within the tolerance of the reference, or ``None`` if only the
+            reference does.
+        """
+        counts = [scored.sample_count for scored in self.outcomes[case_name]]
+        settled = None
+        for count in reversed(counts[:-1]):
+            deviation = self.deviation(case_name, count)
+            if math.isnan(deviation) or deviation > self.stability_tolerance:
+                break
+            settled = count
+        return settled
+
+
+def monte_carlo_study(
+    dataset: GraspClutterDataset,
+    sample_counts: Sequence[int] = (50, 200, 1000, 2000, 8000, 32000),
+    train_fraction: float = 0.8,
+    random_seed: int = 0,
+    min_samples_per_leaf: Optional[float] = None,
+    plain_min_samples_per_leaf: Optional[float] = None,
+    cases: Optional[Sequence[CausalQueryCase]] = None,
+    min_region_support: int = 10,
+) -> MonteCarloReport:
+    """
+    Fit the relational circuit once and ask it the same questions with grounding
+    drawing more and more samples for the counts a query leaves open, to find how many
+    it takes for the answers to settle.
+
+    :param dataset: The scenes.
+    :param sample_counts: The numbers of samples to try; the largest is the reference.
+    :param train_fraction: Share of scenes to fit on.
+    :param random_seed: Seed of the split and of the Monte-Carlo grounding.
+    :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
+        model may hold; the pipeline's own default if not given.
+    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
+        may hold; the pipeline's own default if not given.
+    :param cases: The questions to ask; defaults to :func:`monte_carlo_cases`.
+    :param min_region_support: The fewest training rows a cause region may hold for its
+        effect to be read as an answer.
+    :return: The study.
+    """
+    training, _ = dataset.split(train_fraction, np.random.default_rng(random_seed))
+    cases = list(cases or monte_carlo_cases())
+    asker = QuestionAsker(
+        random_seed=random_seed, min_region_support=min_region_support
+    )
+    [pipeline] = [
+        candidate
+        for candidate in configured_pipelines(
+            training.scenes, min_samples_per_leaf, plain_min_samples_per_leaf
+        )
+        if isinstance(candidate, RelationalPipeline)
+    ]
+    pipeline.fit(training.scenes)
+    report = MonteCarloReport(reference_sample_count=max(sample_counts))
+    for sample_count in sorted(sample_counts):
+        pipeline.set_monte_carlo_sample_count(sample_count)
+        for case in cases:
+            report.outcomes.setdefault(case.name, []).append(
+                SampleCountOutcome(sample_count, asker.ask(pipeline, case))
+            )
     return report

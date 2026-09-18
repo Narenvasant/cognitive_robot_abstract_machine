@@ -37,6 +37,7 @@ from experiments.causal_reasoning.graspclutter6d.evaluation import (
     evaluate,
     ground_truth_study,
     learning_curve,
+    monte_carlo_study,
     permutation_study,
     split_study,
 )
@@ -124,6 +125,8 @@ def main(
         random_seeds=range(seed, seed + min(split_count, 3)),
         plain_min_samples_per_leaf=plain_min_samples_per_leaf,
     )
+    logger.info("Following the answers as grounding draws more samples")
+    monte_carlo = monte_carlo_study(dataset, random_seed=seed, **settings)
     logger.info("Scoring against the synthetic model's truth")
     truth = ground_truth_study(
         random_seed=seed,
@@ -133,7 +136,12 @@ def main(
     )
     output.write_text(
         MarkdownReport(
-            report, permutations=permutations, splits=splits, curve=curve, truth=truth
+            report,
+            permutations=permutations,
+            splits=splits,
+            curve=curve,
+            truth=truth,
+            monte_carlo=monte_carlo,
         ).render()
     )
     logger.info("Wrote %s", output)

@@ -645,6 +645,18 @@ class RelationalPipeline(CausalQueryPipeline):
         )
         return RelationalCircuitRegistry(relational_probabilistic_circuit=model)
 
+    def set_monte_carlo_sample_count(self, sample_count: int) -> None:
+        """
+        Change how many samples grounding draws, on every model fitted so far and on
+        every one fitted from now on.
+
+        :param sample_count: The number of samples.
+        """
+        self.monte_carlo_sample_count = sample_count
+        for model in [self.plain_model, *self.cause_models.values()]:
+            if model is not None:
+                model.monte_carlo_sample_count = sample_count
+
     @property
     def table(self) -> FlatTable:
         return FlatTable(TableLayout.PROPOSITIONAL, schema=self.schema)

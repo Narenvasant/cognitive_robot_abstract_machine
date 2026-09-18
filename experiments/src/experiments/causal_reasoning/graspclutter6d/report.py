@@ -17,6 +17,7 @@ from experiments.causal_reasoning.graspclutter6d.evaluation import (
     EvaluationReport,
     GroundTruthReport,
     InterventionalEffect,
+    MonteCarloReport,
     LearningCurveReport,
     PermutationReport,
     PipelineReport,
@@ -68,6 +69,12 @@ class MarkdownReport:
     The error against the synthetic model's known interventional probabilities, if run.
     """
 
+    monte_carlo: Optional[MonteCarloReport] = None
+    """
+    How the relational circuit's answers settle with the number of grounding samples,
+    if run.
+    """
+
     def render(self) -> str:
         """
         :return: The whole document.
@@ -89,6 +96,8 @@ class MarkdownReport:
             sections.append(self._learning_curve())
         if self.truth is not None:
             sections.append(self._ground_truth())
+        if self.monte_carlo is not None:
+            sections.append(self._monte_carlo())
         sections.append(self._findings())
         for case_index in range(len(self._first_pipeline.outcomes)):
             sections.append(self._effects(case_index))
@@ -829,6 +838,51 @@ class MarkdownReport:
                 for case_name in case_names
             ],
         )
+        return lines
+
+    def _monte_carlo(self) -> List[str]:
+        monte_carlo = self.monte_carlo
+        lines = [
+            "## How many grounding samples it takes",
+            "",
+            "Inference on a grounded circuit is exact; grounding itself draws "
+            "Monte-Carlo samples for every count the query leaves open and mixes one "
+            "copy of the part templates per sampled value, so marginalising the open "
+            "counts is a consistent estimate, not an exact sum. The relational "
+            "circuit was fitted once and asked the same two questions with grounding "
+            "drawing more and more samples; *deviation* is the largest difference, "
+            "over the cause regions, from the answer at "
+            f"{monte_carlo.reference_sample_count:,} samples, and *settled from* is "
+            "the smallest number of samples from which every larger one stays within "
+            f"{monte_carlo.stability_tolerance} of it.",
+            "",
+        ]
+        for case_name, scored in monte_carlo.outcomes.items():
+            settled = monte_carlo.settled_from(case_name)
+            lines += [
+                f"### {case_name}",
+                "",
+                "Settled from "
+                + (
+                    f"{settled:,} samples."
+                    if settled is not None
+                    else "the reference alone."
+                ),
+                "",
+            ]
+            lines += self._table(
+                ["samples", "answered", "deviation from reference", "seconds"],
+                [
+                    [
+                        f"{one.sample_count:,}",
+                        Verdict.ANSWERED if one.outcome.answered else Verdict.REFUSED,
+                        self._number(monte_carlo.deviation(case_name, one.sample_count)),
+                        self._number(one.outcome.duration, 1),
+                    ]
+                    for one in scored
+                ],
+            )
+            lines.append("")
         return lines
 
     def _findings(self) -> List[str]:

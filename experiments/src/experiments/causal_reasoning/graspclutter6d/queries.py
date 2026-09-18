@@ -499,6 +499,24 @@ def ground_truth_cases() -> List[CausalQueryCase]:
     )
 
 
+def monte_carlo_cases() -> List[CausalQueryCase]:
+    """
+    The questions whose answers are followed as grounding draws more samples: one
+    scene-level count question and one whose effect lives on an object, both of which
+    leave every count open.
+
+    :return: The two questions.
+    """
+    return [
+        CountCausesGraspability(
+            statistic_name="small_object_count",
+            count_noun="small objects",
+            confounders=(OBJECT_COUNT,),
+        ),
+        OccludedObjectsCauseBlockedObject(),
+    ]
+
+
 def query_catalogue() -> List[CausalQueryCase]:
     """
     Every question of the experiment: the scene-level causes of graspability first, then
