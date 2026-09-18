@@ -19,6 +19,7 @@ from experiments.causal_reasoning.graspclutter6d import (
     queries as graspclutter6d_queries,
     report as graspclutter6d_report,
     run_pipeline as graspclutter6d_run_pipeline,
+    scene_store as graspclutter6d_scene_store,
 )
 
 # benchmarking measures a running system instead of describing it
@@ -42,6 +43,7 @@ for comparison_module in (
     graspclutter6d_queries,
     graspclutter6d_report,
     graspclutter6d_run_pipeline,
+    graspclutter6d_scene_store,
 ):
     ignored_classes |= set(classes_of_module(comparison_module))
 

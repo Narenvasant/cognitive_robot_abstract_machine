@@ -59,6 +59,7 @@ from experiments.causal_reasoning.graspclutter6d.grasp_labels import (
     GraspCountIndex,
     GraspLabels,
 )
+from experiments.causal_reasoning.graspclutter6d.scene_store import SceneStore
 
 T = TypeVar("T")
 
@@ -334,7 +335,7 @@ class SceneBuilder:
         )
 
 
-def fetch_graspclutter_scenes(
+def build_graspclutter_scenes(
     scene_limit: Optional[int] = None,
     annotations: Optional[SceneAnnotationSource] = None,
     labels: Optional[GraspLabels] = None,
@@ -342,9 +343,9 @@ def fetch_graspclutter_scenes(
     index_path: Optional[Path] = None,
 ) -> List[GraspClutterScene]:
     """
-    Read the dataset's scenes.
+    Build the dataset's scenes from its annotations, object models and grasp labels.
 
-    :param scene_limit: Read only the first scenes of the dataset, in ascending id; all
+    :param scene_limit: Build only the first scenes of the dataset, in ascending id; all
         of them if not given.
     :param annotations: Where to read the scenes' annotation files from; whatever the
         environment offers if not given.
@@ -373,6 +374,36 @@ def fetch_graspclutter_scenes(
     ]
     index.write(index_path)
     return scenes
+
+
+def fetch_graspclutter_scenes(
+    scene_limit: Optional[int] = None,
+    store: Optional[SceneStore] = None,
+    rebuild: bool = False,
+    loader: Optional[GraspClutter6DDatasetLoader] = None,
+) -> List[GraspClutterScene]:
+    """
+    Read the dataset's scenes, from the store if it holds them and by building them
+    otherwise.
+
+    The store holds every scene of the dataset; a limit is applied to what it returns.
+    Building the scenes needs the annotations and the grasp labels and takes a while,
+    so it happens once, and again only when asked.
+
+    :param scene_limit: Return only the first scenes of the dataset, in ascending id;
+        all of them if not given.
+    :param store: Where the built scenes are kept; the store the environment names, or
+        a database file beside the dataset, if not given.
+    :param rebuild: Build the scenes afresh and replace what the store holds, which is
+        what a change to the domain classes calls for.
+    :param loader: The loader holding the dataset's split files and object models.
+    :return: One scene per scene id listed under either object catalogue.
+    """
+    loader = loader or GraspClutter6DDatasetLoader()
+    store = store or SceneStore.from_environment(loader.directory)
+    if rebuild or store.scene_count == 0:
+        store.write(build_graspclutter_scenes(loader=loader))
+    return store.read()[:scene_limit]
 
 
 # %% a synthetic stand-in

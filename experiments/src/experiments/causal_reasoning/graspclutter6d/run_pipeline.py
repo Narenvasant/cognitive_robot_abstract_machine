@@ -7,14 +7,15 @@ Markdown.
 Run with::
 
     python -m experiments.causal_reasoning.graspclutter6d.run_pipeline
-        [--output RESULTS.md] [--scenes N] [--train-fraction F] [--seed N]
+        [--output RESULTS.md] [--scenes N] [--rebuild] [--train-fraction F] [--seed N]
         [--min-samples-per-leaf F] [--plain-min-samples-per-leaf F]
         [--orderings N] [--splits N]
 
-The scenes' annotations are read from an extracted copy of the dataset or from the
-dataset server named by ``SEMANTIC_DIGITAL_TWIN_DATASET_SERVER``; their grasp counts are
-read from the extracted ``grasp_label`` and ``collision_label`` folders and kept in an
-index beside the dataset, so the first run is the slow one. The data access objects the
+The built scenes are read from the database ``GRASPCLUTTER6D_DATABASE_URI`` names, or
+from a database file beside the dataset. The first run, and a run with ``--rebuild``,
+builds them from the annotations read from the dataset server named by
+``SEMANTIC_DIGITAL_TWIN_DATASET_SERVER`` and from the extracted ``grasp_label`` and
+``collision_label`` folders, which is the slow part. The data access objects the
 relational pipeline fits on come from the ``experiments`` package's generated ORM
 interface; build it with ``scripts/regenerate_all_orm.py`` first.
 """
@@ -66,6 +67,7 @@ logger = logging.getLogger(__name__)
 def main(
     output: Path,
     scene_limit: Optional[int],
+    rebuild: bool,
     train_fraction: float,
     seed: int,
     min_samples_per_leaf: Optional[float],
@@ -79,6 +81,7 @@ def main(
     :param output: The Markdown file to write.
     :param scene_limit: Read only the first scenes of the dataset; all of them if not
         given.
+    :param rebuild: Build the scenes afresh instead of reading the stored ones.
     :param train_fraction: Share of scenes to fit on.
     :param seed: Seed of the split and of the questions' Monte-Carlo grounding; the
         repeated splits use the seeds counting up from it.
@@ -91,7 +94,9 @@ def main(
     """
     import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO classes
 
-    dataset = GraspClutterDataset(fetch_graspclutter_scenes(scene_limit=scene_limit))
+    dataset = GraspClutterDataset(
+        fetch_graspclutter_scenes(scene_limit=scene_limit, rebuild=rebuild)
+    )
     logger.info("Read %d scenes", len(dataset.scenes))
     settings = dict(
         train_fraction=train_fraction,
@@ -127,6 +132,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ExperimentFiles().results)
     parser.add_argument("--scenes", type=int, default=None)
+    parser.add_argument("--rebuild", action="store_true")
     parser.add_argument("--train-fraction", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--min-samples-per-leaf", type=float, default=None)
@@ -137,6 +143,7 @@ if __name__ == "__main__":
     main(
         arguments.output,
         arguments.scenes,
+        arguments.rebuild,
         arguments.train_fraction,
         arguments.seed,
         arguments.min_samples_per_leaf,
