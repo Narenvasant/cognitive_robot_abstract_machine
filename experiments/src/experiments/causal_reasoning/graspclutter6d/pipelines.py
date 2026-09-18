@@ -55,6 +55,7 @@ from experiments.causal_reasoning.graspclutter6d.exceptions import (
 )
 from experiments.causal_reasoning.graspclutter6d.flat_table import (
     FlatTable,
+    PartAttribute,
     SceneSchema,
     SceneView,
     TableLayout,
@@ -405,6 +406,32 @@ class CausalQueryPipeline(ABC):
             self.fit_report.record(time.perf_counter() - started, size)
         return self._registry_for(cause_name)
 
+    def training_values_of(self, variable_name: str) -> List[Any]:
+        """
+        The values the training scenes hold for a variable, one per row the variable
+        is fitted on: one per scene for a scene attribute or count, one per part for a
+        part's own attribute.
+
+        :param variable_name: The variable's name, as EQL names it.
+        :return: The values.
+        :raises FlatTableSchemaMismatchError: If the pipeline's table has no column for
+            the variable.
+        """
+        part = self.schema.part_attribute(variable_name)
+        if part is not None and self.models_parts:
+            return self._part_training_values(part)
+        if variable_name not in self.table.columns:
+            raise FlatTableSchemaMismatchError([variable_name])
+        return [self.table.row(scene)[variable_name] for scene in self.training_scenes]
+
+    @abstractmethod
+    def _part_training_values(self, part: PartAttribute) -> List[Any]:
+        """
+        :param part: One part's attribute, as a query names it.
+        :return: The values the training scenes hold for it, one per row the part
+            template or column is fitted on.
+        """
+
     @abstractmethod
     def plain_circuit_of(self, view: SceneView) -> Optional[ProbabilisticCircuit]:
         """
@@ -587,6 +614,13 @@ class RelationalPipeline(CausalQueryPipeline):
     def models_parts(self) -> bool:
         return True
 
+    def _part_training_values(self, part: PartAttribute) -> List[Any]:
+        return [
+            vars(one)[part.attribute]
+            for scene in self.training_scenes
+            for one in vars(scene)[part.part_field]
+        ]
+
     def plain_circuit_of(self, view: SceneView) -> Optional[ProbabilisticCircuit]:
         if self.plain_model is None:
             raise PipelineNotFittedError(self.name)
@@ -743,6 +777,10 @@ class FlatTablePipeline(CausalQueryPipeline):
     @property
     def models_parts(self) -> bool:
         return self.flat_table.layout.has_parts
+
+    def _part_training_values(self, part: PartAttribute) -> List[Any]:
+        column = self.schema.part_column(part)
+        return [self.table.row(scene)[column] for scene in self.training_scenes]
 
     def _training_dataframe(self) -> pd.DataFrame:
         return self.table.dataframe(self.training_scenes)

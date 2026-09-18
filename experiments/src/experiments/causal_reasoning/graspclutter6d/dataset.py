@@ -387,13 +387,13 @@ def fetch_graspclutter_scenes(
     otherwise.
 
     The store holds every scene of the dataset; a limit is applied to what it returns.
-    Building the scenes needs the annotations and the grasp labels and takes a while,
-    so it happens once, and again only when asked.
+    Building the scenes needs the annotations and the grasp labels and takes a while, so
+    it happens once, and again only when asked.
 
     :param scene_limit: Return only the first scenes of the dataset, in ascending id;
         all of them if not given.
-    :param store: Where the built scenes are kept; the store the environment names, or
-        a database file beside the dataset, if not given.
+    :param store: Where the built scenes are kept; the store the environment names, or a
+        database file beside the dataset, if not given.
     :param rebuild: Build the scenes afresh and replace what the store holds, which is
         what a change to the domain classes calls for.
     :param loader: The loader holding the dataset's split files and object models.

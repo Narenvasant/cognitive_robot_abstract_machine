@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 import numpy as np
-from typing_extensions import Iterable, List, Optional, Sequence, Tuple
+from typing_extensions import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from experiments.causal_reasoning.graspclutter6d.evaluation import (
     EvaluationReport,
+    InterventionalEffect,
     LearningCurveReport,
     PermutationReport,
     PipelineReport,
@@ -23,6 +24,7 @@ from experiments.causal_reasoning.graspclutter6d.evaluation import (
 )
 from experiments.causal_reasoning.graspclutter6d.flat_table import SceneView
 from experiments.causal_reasoning.graspclutter6d.pipelines import LikelihoodReport
+from experiments.causal_reasoning.graspclutter6d.queries import count_cases_by_statistic
 
 
 class Verdict(StrEnum):
@@ -68,6 +70,8 @@ class MarkdownReport:
             self._setup(),
             self._graspability(),
             self._answerability(),
+            self._trends(),
+            self._adjustments(),
             self._quantities(),
             self._latencies(),
         ]
@@ -209,6 +213,9 @@ class MarkdownReport:
             f"{report.plain_min_samples_per_leaf} in the plain model that scores "
             "held-out scenes",
             f"- split seed: {report.random_seed}",
+            f"- fewest training scenes a cause region may hold for its effect to be "
+            f"read as an answer: {report.min_region_support}; a region below that is "
+            "marked † in the tables and takes no part in any summary",
         ]
 
     def _graspability(self) -> List[str]:
@@ -218,14 +225,16 @@ class MarkdownReport:
             "The scenes themselves, before any model: the share that leave every object "
             "instance with at least one antipodal grasp the rest of the scene does not "
             "block, grouped by the object catalogue the scene is built from, by how "
-            "many of its objects are small, and by how many of them the cameras do not "
-            "see whole. This is the signal the models are asked to explain.",
+            "many of its objects are small, by how many of them the cameras do not "
+            "see whole, and by how many objects it holds at all. This is the signal "
+            "the models are asked to explain.",
             "",
         ]
         for title, rates in (
             ("object catalogue", self.report.graspable_by_catalogue),
             ("small objects", self.report.graspable_by_small_object_count),
             ("occluded objects", self.report.graspable_by_occluded_object_count),
+            ("objects", self.report.graspable_by_object_count),
         ):
             lines += self._table(
                 [title, "scenes", "every object graspable"],
@@ -243,8 +252,9 @@ class MarkdownReport:
             "",
             "One row per question, one column per pipeline. An answered cell says, in "
             "words, which setting of the cause makes the effect most likely after "
-            "adjustment and how likely, against the least favourable setting; a refused "
-            "cell says why the pipeline could not answer at all.",
+            "adjustment and how likely, against the least favourable setting, over "
+            "the regions that hold enough training scenes to be read; a refused cell "
+            "says why the pipeline could not answer at all.",
             "",
         ]
         names = [pipeline.name for pipeline in self.report.pipelines]
@@ -276,6 +286,11 @@ class MarkdownReport:
         case = outcome.case
         best = outcome.most_effective
         worst = outcome.least_effective
+        if best is None:
+            return (
+                f"{Verdict.ANSWERED}, but no region of the cause holds "
+                f"{outcome.min_region_support} training scenes."
+            )
         return (
             f"{Verdict.ANSWERED}: with {case.describe_cause(best.cause_region)}, "
             f"{case.effect} with probability "
@@ -283,6 +298,120 @@ class MarkdownReport:
             f"with {case.describe_cause(worst.cause_region)} it is only "
             f"{self._number(worst.adjusted_probability, 2)}."
         )
+
+    def _trends(self) -> List[str]:
+        lines = [
+            "## Trend and contrast",
+            "",
+            "The most effective setting is an argmax over up to twenty sparse regions "
+            "and moves with the split. Two summaries that do not: *trend* is "
+            "Spearman's rank correlation between the cause's value and the adjusted "
+            "probability over the supported regions, for a numeric cause; *contrast* "
+            "is the adjusted probability at the highest supported region minus at "
+            "the lowest (for a symbolic cause, at the most effective minus at the "
+            "least), with Newcombe's interval from the Wilson intervals of the two "
+            "regions' support.",
+            "",
+        ]
+        header = ["question"]
+        for pipeline in self.report.pipelines:
+            header += [f"{pipeline.name}, trend", f"{pipeline.name}, contrast"]
+        rows = []
+        for case_index, outcome in enumerate(self._first_pipeline.outcomes):
+            row = [outcome.case.name]
+            for pipeline in self.report.pipelines:
+                asked = pipeline.outcomes[case_index]
+                row += [self._trend_cell(asked), self._contrast_cell(asked)]
+            rows.append(row)
+        lines += self._table(header, rows)
+        return lines
+
+    def _trend_cell(self, outcome: QueryOutcome) -> str:
+        """
+        :param outcome: One outcome.
+        :return: Its trend, or a dash.
+        """
+        if not outcome.answered or outcome.trend is None:
+            return "-"
+        return self._number(outcome.trend, 2)
+
+    def _contrast_cell(self, outcome: QueryOutcome) -> str:
+        """
+        :param outcome: One outcome.
+        :return: Its contrast with its interval and the regions it is between, or a
+            dash.
+        """
+        if not outcome.answered or outcome.contrast is None:
+            return "-"
+        contrast = outcome.contrast
+        return (
+            f"{self._number(contrast.difference, 2)} "
+            f"[{self._number(contrast.interval.lower, 2)}, "
+            f"{self._number(contrast.interval.upper, 2)}] "
+            f"({contrast.low_region} → {contrast.high_region})"
+        )
+
+    def _adjustments(self) -> List[str]:
+        lines = [
+            "## What adjusting for changes",
+            "",
+            "The same count question adjusted for the spread of the clutter, for the "
+            "number of objects, and for both, read off the relational circuit (the "
+            "propositional tree gives the same numbers on these columns). *n* is how "
+            "many training scenes hold that value of the cause; † marks a region "
+            "below the support threshold.",
+            "",
+        ]
+        outcomes = {
+            outcome.case.name: outcome for outcome in self._first_pipeline.outcomes
+        }
+        for statistic_name, cases in count_cases_by_statistic().items():
+            asked = [outcomes[case.name] for case in cases if case.name in outcomes]
+            if not asked or not all(outcome.answered for outcome in asked):
+                continue
+            lines += [f"### {statistic_name}", ""]
+            by_region: Dict[str, Dict[str, InterventionalEffect]] = {}
+            for outcome in asked:
+                for effect in outcome.effects:
+                    by_region.setdefault(effect.cause_region, {})[
+                        outcome.case.name
+                    ] = effect
+            header = ["cause region", "n", "naive"] + [
+                "adjusted for "
+                + " and ".join(confounder.noun for confounder in case.confounders)
+                for case in cases
+            ]
+            rows = []
+            for region in sorted(by_region, key=self._region_order):
+                effects = by_region[region]
+                first = next(iter(effects.values()))
+                row = [
+                    self._region_label(first, asked[0].min_region_support),
+                    str(first.support_count),
+                    self._number(first.naive_probability),
+                ]
+                for case in cases:
+                    effect = effects.get(case.name)
+                    row.append(
+                        "-"
+                        if effect is None
+                        else self._number(effect.adjusted_probability)
+                    )
+                rows.append(row)
+            lines += self._table(header, rows)
+            lines.append("")
+        return lines
+
+    @staticmethod
+    def _region_label(effect: InterventionalEffect, min_region_support: int) -> str:
+        """
+        :param effect: One region's effect.
+        :param min_region_support: The support threshold.
+        :return: The region, marked if it is below the threshold.
+        """
+        if effect.is_supported(min_region_support):
+            return effect.cause_region
+        return f"{effect.cause_region} †"
 
     def _quantities(self) -> List[str]:
         lines = [
@@ -512,22 +641,38 @@ class MarkdownReport:
             )
             lines.append("")
         lines += [
-            "Per question, how many splits each pipeline answered and which most "
-            "effective cause regions it found across them:",
+            "Per question, how many splits each pipeline answered, and the mean ± "
+            "standard deviation over the splits of its trend and of its contrast:",
             "",
         ]
-        header = ["question"] + splits.pipeline_names
+        header = ["question"]
+        for name in splits.pipeline_names:
+            header += [f"{name}, answered", f"{name}, trend", f"{name}, contrast"]
         rows = []
         for case_index, outcome in enumerate(splits.reports[0].pipelines[0].outcomes):
             row = [outcome.case.name]
             for name in splits.pipeline_names:
                 outcomes = splits.outcomes(name, case_index)
                 answered = [one for one in outcomes if one.answered]
-                regions = sorted({one.most_effective.cause_region for one in answered})
-                row.append(
-                    f"{len(answered)} of {len(outcomes)}"
-                    + (f": {', '.join(regions)}" if regions else "")
-                )
+                row += [
+                    f"{len(answered)} of {len(outcomes)}",
+                    self._mean_and_spread(
+                        [
+                            float("nan") if one.trend is None else one.trend
+                            for one in answered
+                        ]
+                    ),
+                    self._mean_and_spread(
+                        [
+                            (
+                                float("nan")
+                                if one.contrast is None
+                                else one.contrast.difference
+                            )
+                            for one in answered
+                        ]
+                    ),
+                ]
             rows.append(row)
         lines += self._table(header, rows)
         return lines
@@ -613,7 +758,7 @@ class MarkdownReport:
             answers = [
                 pipeline.outcomes[case_index]
                 for pipeline in self.report.pipelines
-                if pipeline.outcomes[case_index].answered
+                if pipeline.outcomes[case_index].most_effective is not None
             ]
             if len(answers) < 2:
                 continue
@@ -742,12 +887,15 @@ class MarkdownReport:
         lines = [
             f"## {case.question}",
             "",
-            "One row per region of the cause the model distinguishes. *P(region)* is "
-            "how much of the training population that region holds; *naive P(effect)* "
-            "is the effect's probability simply conditioned on the region; *adjusted* is "
-            "the interventional probability after summing out the question's "
-            "confounders, which is what the question asks for. Where the two columns "
-            "agree, the confounder carried no extra information within that region.",
+            "One row per region of the cause the model distinguishes. *n* is how many "
+            "training rows the region holds, and † marks a region below the support "
+            "threshold; *P(region)* is how much of the fitted population it holds; "
+            "*naive P(effect)* is the effect's probability simply conditioned on the "
+            "region; *adjusted* is the interventional probability after summing out "
+            "the question's confounders, which is what the question asks for, and the "
+            "*interval* is its Wilson interval over the region's n. Where naive and "
+            "adjusted agree, the confounders carried no further information within "
+            "that region.",
             "",
         ]
         for pipeline in self.report.pipelines:
@@ -761,16 +909,21 @@ class MarkdownReport:
             lines += self._table(
                 [
                     "cause region",
+                    "n",
                     "P(region)",
                     "naive P(effect)",
                     "adjusted P(effect | do(cause))",
+                    "95% interval",
                 ],
                 [
                     [
-                        effect.cause_region,
+                        self._region_label(effect, outcome.min_region_support),
+                        str(effect.support_count),
                         self._number(effect.region_probability),
                         self._number(effect.naive_probability),
                         self._number(effect.adjusted_probability),
+                        f"[{self._number(effect.adjusted_interval.lower, 2)}, "
+                        f"{self._number(effect.adjusted_interval.upper, 2)}]",
                     ]
                     for effect in sorted(
                         outcome.effects,

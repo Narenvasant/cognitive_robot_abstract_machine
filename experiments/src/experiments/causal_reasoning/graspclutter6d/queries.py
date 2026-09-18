@@ -428,7 +428,9 @@ def scene_level_cases() -> List[CausalQueryCase]:
     adjustments = ((EXTENT,), (OBJECT_COUNT,), (EXTENT, OBJECT_COUNT))
     return [
         CountCausesGraspability(
-            statistic_name=statistic_name, count_noun=count_noun, confounders=confounders
+            statistic_name=statistic_name,
+            count_noun=count_noun,
+            confounders=confounders,
         )
         for statistic_name, count_noun in counts
         for confounders in adjustments

@@ -5,6 +5,7 @@ answered, how fast, and how much model it took.
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -30,7 +31,8 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
 from random_events.interval import Interval
 from random_events.product_algebra import Event
 from random_events.variable import Variable
-from typing_extensions import Dict, List, Optional, Sequence, Tuple, Type
+from scipy.stats import spearmanr
+from typing_extensions import Any, Dict, List, Optional, Sequence, Tuple, Type
 
 from experiments.causal_reasoning.graspclutter6d.dataset import (
     GraspClutterDataset,
@@ -128,6 +130,70 @@ class Refusal(StrEnum):
 
 
 @dataclass(frozen=True)
+class ProportionInterval:
+    """
+    A confidence interval for a probability read off a region of the training data.
+    """
+
+    lower: float
+    """
+    The lower bound.
+    """
+
+    upper: float
+    """
+    The upper bound.
+    """
+
+    @classmethod
+    def wilson(
+        cls, probability: float, count: int, z: float = 1.96
+    ) -> ProportionInterval:
+        """
+        The Wilson score interval of a proportion over ``count`` observations.
+
+        :param probability: The proportion.
+        :param count: How many observations it is read off; zero gives the whole unit
+            interval.
+        :param z: The standard-normal quantile of the confidence level; 1.96 for 95%.
+        :return: The interval.
+        """
+        if count == 0:
+            return cls(0.0, 1.0)
+        centre = (probability + z**2 / (2 * count)) / (1 + z**2 / count)
+        half_width = (
+            z
+            * math.sqrt(probability * (1 - probability) / count + z**2 / (4 * count**2))
+            / (1 + z**2 / count)
+        )
+        return cls(max(0.0, centre - half_width), min(1.0, centre + half_width))
+
+    def difference_from(
+        self, other: ProportionInterval, probability: float, other_probability: float
+    ) -> ProportionInterval:
+        """
+        Newcombe's interval for the difference between two proportions, this one minus
+        the other.
+
+        :param other: The other proportion's interval.
+        :param probability: This proportion.
+        :param other_probability: The other proportion.
+        :return: The interval of the difference.
+        """
+        difference = probability - other_probability
+        return ProportionInterval(
+            difference
+            - math.sqrt(
+                (probability - self.lower) ** 2 + (other.upper - other_probability) ** 2
+            ),
+            difference
+            + math.sqrt(
+                (self.upper - probability) ** 2 + (other_probability - other.lower) ** 2
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class InterventionalEffect:
     """
     The effect's probability under an intervention setting the cause to one region.
@@ -154,6 +220,67 @@ class InterventionalEffect:
     confounders; equal to the naive one when the question names none.
     """
 
+    support_count: int
+    """
+    How many training rows of the cause fall in the region: scenes for a scene-level
+    cause, parts for a part's own attribute.
+    """
+
+    ordinal: Optional[float] = None
+    """
+    Where the region sits on the cause's scale, for a numeric cause; ``None`` for a
+    symbolic one, whose regions have no order.
+    """
+
+    @property
+    def adjusted_interval(self) -> ProportionInterval:
+        """
+        The Wilson interval of the adjusted probability over the region's support.
+        """
+        return ProportionInterval.wilson(self.adjusted_probability, self.support_count)
+
+    @property
+    def naive_interval(self) -> ProportionInterval:
+        """
+        The Wilson interval of the naive probability over the region's support.
+        """
+        return ProportionInterval.wilson(self.naive_probability, self.support_count)
+
+    def is_supported(self, min_region_support: int) -> bool:
+        """
+        :param min_region_support: The fewest training rows a region may hold to be
+            read.
+        :return: Whether the region holds at least that many.
+        """
+        return self.support_count >= min_region_support
+
+
+@dataclass(frozen=True)
+class Contrast:
+    """
+    The adjusted probability at the high end of the cause against the low end.
+    """
+
+    high_region: str
+    """
+    The region at the high end, written out.
+    """
+
+    low_region: str
+    """
+    The region at the low end, written out.
+    """
+
+    difference: float
+    """
+    The adjusted probability at the high end minus at the low end.
+    """
+
+    interval: ProportionInterval
+    """
+    Newcombe's interval of the difference.
+    """
+
 
 @dataclass
 class QueryOutcome:
@@ -176,6 +303,12 @@ class QueryOutcome:
     Wall-clock seconds from asking to the answer or the refusal, the first time the
     question was asked, including the fit of the cause-specific model if that cause had
     not been asked about before.
+    """
+
+    min_region_support: int = 10
+    """
+    The fewest training rows a cause region may hold for its effect to be read as an
+    answer; a region below it is reported but takes no part in the summary.
     """
 
     repeat_duration: float = float("nan")
@@ -214,24 +347,84 @@ class QueryOutcome:
         return self.refusal is None
 
     @property
+    def supported_effects(self) -> List[InterventionalEffect]:
+        """
+        The effects read off regions holding at least :attr:`min_region_support`
+        training rows.
+        """
+        return [
+            effect
+            for effect in self.effects
+            if effect.is_supported(self.min_region_support)
+        ]
+
+    @property
     def most_effective(self) -> Optional[InterventionalEffect]:
         """
-        The cause region whose intervention gives the effect the highest adjusted
-        probability, or ``None`` if the question was refused.
+        The supported cause region whose intervention gives the effect the highest
+        adjusted probability, or ``None`` if the question was refused or no region is
+        supported.
         """
-        if not self.effects:
+        supported = self.supported_effects
+        if not supported:
             return None
-        return max(self.effects, key=lambda effect: effect.adjusted_probability)
+        return max(supported, key=lambda effect: effect.adjusted_probability)
 
     @property
     def least_effective(self) -> Optional[InterventionalEffect]:
         """
-        The cause region whose intervention gives the effect the lowest adjusted
-        probability, or ``None`` if the question was refused.
+        The supported cause region whose intervention gives the effect the lowest
+        adjusted probability, or ``None`` if the question was refused or no region is
+        supported.
         """
-        if not self.effects:
+        supported = self.supported_effects
+        if not supported:
             return None
-        return min(self.effects, key=lambda effect: effect.adjusted_probability)
+        return min(supported, key=lambda effect: effect.adjusted_probability)
+
+    @property
+    def trend(self) -> Optional[float]:
+        """
+        Spearman's rank correlation between the cause's value and the adjusted
+        probability over the supported regions; ``None`` for a symbolic cause, whose
+        regions have no order, or with fewer than three supported regions.
+        """
+        ordered = [
+            effect for effect in self.supported_effects if effect.ordinal is not None
+        ]
+        if len(ordered) < 3:
+            return None
+        correlation = spearmanr(
+            [effect.ordinal for effect in ordered],
+            [effect.adjusted_probability for effect in ordered],
+        ).statistic
+        return None if math.isnan(correlation) else float(correlation)
+
+    @property
+    def contrast(self) -> Optional[Contrast]:
+        """
+        The adjusted probability at the highest supported region of a numeric cause
+        against the lowest, or at the most effective supported region of a symbolic
+        cause against the least; ``None`` with fewer than two supported regions.
+        """
+        supported = self.supported_effects
+        if len(supported) < 2:
+            return None
+        if all(effect.ordinal is not None for effect in supported):
+            low = min(supported, key=lambda effect: effect.ordinal)
+            high = max(supported, key=lambda effect: effect.ordinal)
+        else:
+            low, high = self.least_effective, self.most_effective
+        return Contrast(
+            high_region=high.cause_region,
+            low_region=low.cause_region,
+            difference=high.adjusted_probability - low.adjusted_probability,
+            interval=high.adjusted_interval.difference_from(
+                low.adjusted_interval,
+                high.adjusted_probability,
+                low.adjusted_probability,
+            ),
+        )
 
 
 # %% asking
@@ -288,6 +481,12 @@ class QuestionAsker:
     regions count as overlapping.
     """
 
+    min_region_support: int = 10
+    """
+    The fewest training rows a cause region may hold for its effect to be read as an
+    answer.
+    """
+
     def ask(self, pipeline: CausalQueryPipeline, case: CausalQueryCase) -> QueryOutcome:
         """
         Ask one pipeline one question.
@@ -305,6 +504,7 @@ class QuestionAsker:
             return QueryOutcome(
                 case=case,
                 pipeline_name=pipeline.name,
+                min_region_support=self.min_region_support,
                 duration=time.perf_counter() - started,
                 refusal=Refusal.by_exception()[type(refusal)],
             )
@@ -313,6 +513,7 @@ class QuestionAsker:
             return QueryOutcome(
                 case=case,
                 pipeline_name=pipeline.name,
+                min_region_support=self.min_region_support,
                 duration=duration,
                 refusal=Refusal.EFFECT_NEVER_OCCURS,
             )
@@ -321,6 +522,7 @@ class QuestionAsker:
         outcome = QueryOutcome(
             case=case,
             pipeline_name=pipeline.name,
+            min_region_support=self.min_region_support,
             duration=duration,
             best_region=describe_region(
                 primary.narrowed_circuit.marginal([cause]).support, cause
@@ -335,6 +537,7 @@ class QuestionAsker:
             return QueryOutcome(
                 case=case,
                 pipeline_name=pipeline.name,
+                min_region_support=self.min_region_support,
                 duration=duration,
                 refusal=Refusal.OVERLAPPING_REGIONS,
             )
@@ -365,7 +568,8 @@ class QuestionAsker:
         pipeline: CausalQueryPipeline, case: CausalQueryCase
     ) -> List[InterventionalEffect]:
         """
-        Read the effect's naive and adjusted probability off every cause region.
+        Read the effect's naive and adjusted probability off every cause region, with
+        how many training rows the region holds.
 
         :param pipeline: The pipeline whose model to read.
         :param case: The question.
@@ -380,6 +584,7 @@ class QuestionAsker:
         adjusted = causal_circuit.backdoor_adjustment(
             cause, effect, adjustment_variables=parameters.search_confounder_variables
         )
+        training_values = pipeline.training_values_of(cause.name)
         return [
             InterventionalEffect(
                 cause_region=describe_region(region.event, cause),
@@ -390,9 +595,40 @@ class QuestionAsker:
                 adjusted_probability=_effect_probability_in(
                     adjusted, region.event, effect_event
                 ),
+                support_count=_support_count(region.event, cause, training_values),
+                ordinal=_ordinal(region.event, cause),
             )
             for region in causal_circuit._extract_disjoint_regions_for_variable(cause)
         ]
+
+
+def _support_count(region: Event, variable: Variable, values: Sequence[Any]) -> int:
+    """
+    :param region: An event restricting ``variable``.
+    :param variable: The variable the region restricts.
+    :param values: The training values of that variable.
+    :return: How many of the values fall in the region.
+    """
+    [simple_region] = region.simple_sets
+    restriction = simple_region[variable]
+    return sum(
+        not variable.make_value(value).intersection_with(restriction).is_empty()
+        for value in values
+    )
+
+
+def _ordinal(region: Event, variable: Variable) -> Optional[float]:
+    """
+    :param region: An event restricting ``variable``.
+    :param variable: The variable the region restricts.
+    :return: The region's lower bound for a numeric variable, ``None`` for a symbolic
+        one.
+    """
+    [simple_region] = region.simple_sets
+    restriction = simple_region[variable]
+    if not isinstance(restriction, Interval):
+        return None
+    return float(min(interval.lower for interval in restriction.simple_sets))
 
 
 def _effect_probability_in(
@@ -494,6 +730,11 @@ class EvaluationReport:
     The share per occluded-object count.
     """
 
+    graspable_by_object_count: Dict[int, GraspableRate] = field(default_factory=dict)
+    """
+    The share per number of objects.
+    """
+
     min_samples_per_leaf: float = 0.0
     """
     The fewest training rows a leaf of a cause-specific model was allowed to hold.
@@ -502,6 +743,12 @@ class EvaluationReport:
     plain_min_samples_per_leaf: float = 0.0
     """
     The fewest training rows a leaf of the plain model was allowed to hold.
+    """
+
+    min_region_support: int = 10
+    """
+    The fewest training rows a cause region was allowed to hold for its effect to be
+    read as an answer.
     """
 
     pipelines: List[PipelineReport] = field(default_factory=list)
@@ -588,6 +835,7 @@ def evaluate(
     plain_min_samples_per_leaf: Optional[float] = None,
     cases: Optional[Sequence[CausalQueryCase]] = None,
     time_repeats: bool = True,
+    min_region_support: int = 10,
 ) -> EvaluationReport:
     """
     Fit every pipeline on part of the dataset, score them on the rest, and ask them every
@@ -602,6 +850,8 @@ def evaluate(
         may hold; the pipelines' own default if not given.
     :param cases: The questions to ask; defaults to :func:`query_catalogue`.
     :param time_repeats: Whether to ask every question a second time to time it alone.
+    :param min_region_support: The fewest training rows a cause region may hold for its
+        effect to be read as an answer.
     :return: The comparison.
     """
     training, test = dataset.split(train_fraction, np.random.default_rng(random_seed))
@@ -610,6 +860,7 @@ def evaluate(
         random_seed=random_seed,
         training_scene_count=len(training.scenes),
         test_scene_count=len(test.scenes),
+        min_region_support=min_region_support,
         graspable_rate=dataset.graspable_rate,
         graspable_by_catalogue=dataset.graspable_rate_by(
             lambda scene: scene.object_catalogue
@@ -624,8 +875,13 @@ def evaluate(
                 instance=scene
             ).occluded_object_count()
         ),
+        graspable_by_object_count=dataset.graspable_rate_by(
+            lambda scene: len(scene.objects)
+        ),
     )
-    asker = QuestionAsker(random_seed=random_seed)
+    asker = QuestionAsker(
+        random_seed=random_seed, min_region_support=min_region_support
+    )
     log_likelihoods: Dict[SceneView, Dict[str, np.ndarray]] = {
         view: {} for view in SceneView
     }
@@ -694,7 +950,11 @@ class PermutedOutcomes:
         The distinct most effective cause regions found over the orderings.
         """
         return sorted(
-            {outcome.most_effective.cause_region for outcome in self.answered}
+            {
+                outcome.most_effective.cause_region
+                for outcome in self.answered
+                if outcome.most_effective is not None
+            }
         )
 
     @property
@@ -775,6 +1035,7 @@ def permutation_study(
     min_samples_per_leaf: Optional[float] = None,
     plain_min_samples_per_leaf: Optional[float] = None,
     cases: Optional[Sequence[CausalQueryCase]] = None,
+    min_region_support: int = 10,
 ) -> PermutationReport:
     """
     Put every scene's objects and viewpoints in a random order, several times over, and
@@ -790,11 +1051,15 @@ def permutation_study(
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
         may hold; the pipelines' own default if not given.
     :param cases: The questions to ask; defaults to :func:`object_level_cases`.
+    :param min_region_support: The fewest training rows a cause region may hold for its
+        effect to be read as an answer.
     :return: The study.
     """
     training, test = dataset.split(train_fraction, np.random.default_rng(random_seed))
     cases = list(cases or object_level_cases())
-    asker = QuestionAsker(random_seed=random_seed)
+    asker = QuestionAsker(
+        random_seed=random_seed, min_region_support=min_region_support
+    )
     report = PermutationReport(ordering_count=ordering_count)
     questions: Dict[Tuple[str, str], PermutedOutcomes] = {}
     for ordering in range(ordering_count):
@@ -885,6 +1150,7 @@ def split_study(
     min_samples_per_leaf: Optional[float] = None,
     plain_min_samples_per_leaf: Optional[float] = None,
     cases: Optional[Sequence[CausalQueryCase]] = None,
+    min_region_support: int = 10,
 ) -> SplitReport:
     """
     Repeat the comparison over several random splits.
@@ -897,6 +1163,8 @@ def split_study(
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
         may hold; the pipelines' own default if not given.
     :param cases: The questions to ask; defaults to :func:`query_catalogue`.
+    :param min_region_support: The fewest training rows a cause region may hold for its
+        effect to be read as an answer.
     :return: The study.
     """
     return SplitReport(
@@ -909,6 +1177,7 @@ def split_study(
                 plain_min_samples_per_leaf=plain_min_samples_per_leaf,
                 cases=cases,
                 time_repeats=False,
+                min_region_support=min_region_support,
             )
             for random_seed in random_seeds
         ]

@@ -9,7 +9,7 @@ Run with::
     python -m experiments.causal_reasoning.graspclutter6d.run_pipeline
         [--output RESULTS.md] [--scenes N] [--rebuild] [--train-fraction F] [--seed N]
         [--min-samples-per-leaf F] [--plain-min-samples-per-leaf F]
-        [--orderings N] [--splits N]
+        [--orderings N] [--splits N] [--min-region-support N]
 
 The built scenes are read from the database ``GRASPCLUTTER6D_DATABASE_URI`` names, or
 from a database file beside the dataset. The first run, and a run with ``--rebuild``,
@@ -74,6 +74,7 @@ def main(
     plain_min_samples_per_leaf: Optional[float],
     ordering_count: int,
     split_count: int,
+    min_region_support: int,
 ) -> None:
     """
     Run the comparison and every study around it, and write them out.
@@ -91,6 +92,8 @@ def main(
         model may hold; the pipelines' own default if not given.
     :param ordering_count: How many random orderings of the parts to try.
     :param split_count: How many random splits to repeat the comparison over.
+    :param min_region_support: The fewest training scenes a cause region may hold for
+        its effect to be read as an answer.
     """
     import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO classes
 
@@ -102,6 +105,7 @@ def main(
         train_fraction=train_fraction,
         min_samples_per_leaf=min_samples_per_leaf,
         plain_min_samples_per_leaf=plain_min_samples_per_leaf,
+        min_region_support=min_region_support,
     )
     logger.info("Comparing on one split")
     report = evaluate(dataset, random_seed=seed, **settings)
@@ -139,6 +143,7 @@ if __name__ == "__main__":
     parser.add_argument("--plain-min-samples-per-leaf", type=float, default=None)
     parser.add_argument("--orderings", type=int, default=3)
     parser.add_argument("--splits", type=int, default=5)
+    parser.add_argument("--min-region-support", type=int, default=10)
     arguments = parser.parse_args()
     main(
         arguments.output,
@@ -150,4 +155,5 @@ if __name__ == "__main__":
         arguments.plain_min_samples_per_leaf,
         arguments.orderings,
         arguments.splits,
+        arguments.min_region_support,
     )
