@@ -45,7 +45,9 @@ def test_fetching_reads_the_store_when_it_holds_scenes(store, synthetic_scenes):
 
 def test_the_environment_names_the_database(monkeypatch, tmp_path):
     monkeypatch.setenv(SceneStoreVariable.DATABASE_URI, "sqlite:///named.sqlite")
-    assert SceneStore.from_environment(tmp_path).database_uri == "sqlite:///named.sqlite"
+    assert (
+        SceneStore.from_environment(tmp_path).database_uri == "sqlite:///named.sqlite"
+    )
 
 
 def test_without_a_name_the_database_sits_beside_the_dataset(monkeypatch, tmp_path):

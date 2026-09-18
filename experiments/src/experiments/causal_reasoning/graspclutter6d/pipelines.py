@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import Enum
 
 import numpy as np
 import pandas as pd
@@ -585,15 +586,45 @@ class RelationalPipeline(CausalQueryPipeline):
             )
         return size
 
+    def _training_rows(self) -> List[Any]:
+        """
+        The training scenes as data access objects, each with its parts in a canonical
+        order, so that the fit is the same whatever order the scenes list their parts
+        in. The tree learner the templates are fitted with breaks ties by row order, and
+        the parts of every scene are pooled into its rows.
+
+        :return: One data access object per training scene.
+        """
+        return [to_dao(self._canonical(scene)) for scene in self.training_scenes]
+
+    def _canonical(self, scene: GraspClutterScene) -> GraspClutterScene:
+        """
+        :param scene: A scene.
+        :return: The scene with every part list sorted by the parts' attribute values.
+        """
+        return replace(
+            scene,
+            **{
+                part_field: sorted(
+                    vars(scene)[part_field],
+                    key=lambda part: tuple(
+                        str(value) if isinstance(value, Enum) else value
+                        for value in vars(part).values()
+                    ),
+                )
+                for part_field in self.schema.part_fields
+            },
+        )
+
     def _fit_plain_model(self) -> CircuitSize:
         self.plain_model = self._new_model(self.plain_min_samples_per_leaf)
-        self.plain_model.fit([to_dao(scene) for scene in self.training_scenes])
+        self.plain_model.fit(self._training_rows())
         return self._size_of(self.plain_model)
 
     def _fit_cause_model(self, cause_name: str) -> CircuitSize:
         stratification = CauseStratification.for_variable(cause_name, self.schema)
         model = self._new_model(self.min_samples_per_leaf, stratification)
-        model.fit([to_dao(scene) for scene in self.training_scenes])
+        model.fit(self._training_rows())
         self.cause_models[cause_name] = model
         return self._size_of(model)
 
@@ -643,7 +674,8 @@ class RelationalPipeline(CausalQueryPipeline):
         Score held-out scenes under the plain model, on as much of them as the view asks
         for. A whole scene is scored the way the relational circuit factorizes it: the
         class circuit over its scalars and counts, times each part template over one
-        object or viewpoint given those counts.
+        object or viewpoint given those counts, the parts taken in canonical order so
+        that the sum does not depend on the order the scene lists them in.
 
         :param scenes: The scenes to score.
         :param view: How much of a scene to look at.
@@ -662,7 +694,7 @@ class RelationalPipeline(CausalQueryPipeline):
         ) in self.plain_model.exchangeable_distribution_templates.items():
             for index, scene in enumerate(scenes):
                 log_likelihoods[index] += self._part_log_likelihood(
-                    template, scene, vars(scene)[part_field]
+                    template, scene, vars(self._canonical(scene))[part_field]
                 )
         return LikelihoodReport.from_log_likelihoods(log_likelihoods)
 

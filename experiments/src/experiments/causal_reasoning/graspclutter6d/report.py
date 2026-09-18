@@ -522,30 +522,37 @@ class MarkdownReport:
             f"Every scene's objects and viewpoints were put in a random order, "
             f"{permutations.ordering_count} times over, and each time the pipelines "
             "that model the parts were refitted on the same split and asked the "
-            "questions about objects again. A relational circuit treats the objects as "
-            "exchangeable, so nothing about it can depend on the order; an unrolled "
-            "table's column `objects[0]` holds a different object of every scene after "
-            "each reordering. *Best regions* lists every most effective cause region "
-            "found over the orderings; *largest difference* is, over the cause regions "
-            "every answered ordering distinguishes, the widest gap between orderings in "
-            "the effect's adjusted probability.",
+            "questions about objects again; the parts in the order the dataset lists "
+            "them is the baseline every reordering is measured against. A relational "
+            "circuit treats the objects as exchangeable, so nothing about it can "
+            "depend on the order; an unrolled table's column `objects[0]` holds a "
+            "different object of every scene after each reordering. Per question and "
+            "pipeline: how many reorderings were answered; over the cause regions "
+            "every answered ordering distinguishes, the mean standard deviation and "
+            "the widest range of the adjusted probability; the share of reorderings "
+            "whose most effective region is not the dataset-order one; and the share "
+            "whose trend changed sign.",
             "",
         ]
         lines += self._table(
             [
                 "question",
                 "pipeline",
-                "orderings answered",
-                "best regions",
-                "largest difference in adjusted P(effect)",
+                "reorderings answered",
+                "mean sd of adjusted P(effect)",
+                "widest range",
+                "argmax moved",
+                "trend sign flipped",
             ],
             [
                 [
                     question.case.name,
                     question.pipeline_name,
-                    f"{len(question.answered)} of {len(question.outcomes)}",
-                    ", ".join(question.best_regions) or "-",
+                    f"{len(question.answered)} of {len(question.reordered)}",
+                    self._number(question.mean_adjusted_standard_deviation, 3),
                     self._number(question.largest_adjusted_difference, 2),
+                    self._share(question.argmax_flip_share),
+                    self._share(question.trend_sign_flip_share),
                 ]
                 for question in permutations.questions
             ],
@@ -553,7 +560,7 @@ class MarkdownReport:
         lines += [
             "",
             "The whole-scene likelihood of the same held-out scenes with the parts in "
-            "the order the dataset lists them, and under each reordering. The "
+            "the order the dataset lists them, and over the reorderings. The "
             "dataset's order is not arbitrary throughout: a scene's frames are "
             "numbered by the recording rig, four cameras per pose in a fixed sequence, "
             "so which camera took frame *i* is the same in every scene, and a column "
@@ -563,38 +570,34 @@ class MarkdownReport:
             "",
         ]
         lines += self._table(
-            ["pipeline", "dataset order, coverage / mean log-likelihood"]
-            + [
-                f"reordering {ordering}, coverage / mean log-likelihood"
-                for ordering in range(permutations.ordering_count)
-            ]
-            + ["largest drop"],
             [
-                [name, self._likelihood_cell(self._whole_scene_in_dataset_order(name))]
-                + [self._likelihood_cell(report) for report in reports]
-                + [
-                    self._number(
-                        permutations.largest_likelihood_drop(
-                            name,
-                            self._whole_scene_in_dataset_order(
-                                name
-                            ).mean_log_likelihood,
-                        ),
-                        2,
-                    )
+                "pipeline",
+                "dataset order, coverage / mean log-likelihood",
+                "reorderings, coverage / mean log-likelihood (mean ± sd)",
+                "largest drop",
+            ],
+            [
+                [
+                    name,
+                    self._likelihood_cell(permutations.in_dataset_order(name)),
+                    f"{self._mean_and_spread([report.coverage for report in reordered], 3)}"
+                    f" / {self._mean_and_spread([report.mean_log_likelihood for report in reordered])}",
+                    self._number(permutations.largest_likelihood_drop(name), 2),
                 ]
-                for name, reports in permutations.whole_scene_likelihoods.items()
+                for name in permutations.whole_scene_likelihoods
+                for reordered in [permutations.reordered(name)]
             ],
         )
         return lines
 
-    def _whole_scene_in_dataset_order(self, pipeline_name: str) -> LikelihoodReport:
+    def _share(self, share: float) -> str:
         """
-        :param pipeline_name: A pipeline modelling whole scenes.
-        :return: Its held-out whole-scene likelihood with the parts in the order the
-            dataset lists them.
+        :param share: A share between 0 and 1, or ``nan``.
+        :return: The share as a percentage, or a dash.
         """
-        return self.report.pipeline(pipeline_name).likelihoods[SceneView.WHOLE_SCENE]
+        if math.isnan(share):
+            return "-"
+        return self._percent(share)
 
     def _likelihood_cell(self, likelihood: LikelihoodReport) -> str:
         """
@@ -837,30 +840,26 @@ class MarkdownReport:
         for question in self.permutations.questions:
             by_pipeline.setdefault(question.pipeline_name, []).append(question)
         for name, questions in by_pipeline.items():
-            differences = [
+            ranges = [
                 question.largest_adjusted_difference
                 for question in questions
                 if not math.isnan(question.largest_adjusted_difference)
             ]
-            unstable = [
-                question.case.name
+            flips = [
+                question.argmax_flip_share
                 for question in questions
-                if len(question.best_regions) > 1
+                if not math.isnan(question.argmax_flip_share)
             ]
-            likelihood_drop = self.permutations.largest_likelihood_drop(
-                name, self._whole_scene_in_dataset_order(name).mean_log_likelihood
-            )
             sentence = (
-                f"- Reordering the parts moved the {name}'s adjusted effect "
-                "probabilities by up to "
-                f"{self._number(max(differences), 2) if differences else '-'}"
-                " and took its whole-scene mean log-likelihood down by up to "
-                f"{self._number(likelihood_drop, 2)} from the dataset's own order"
+                f"- Over {self.permutations.ordering_count} reorderings, the {name}'s "
+                "adjusted effect probabilities ranged by up to "
+                f"{self._number(max(ranges), 2) if ranges else '-'} and its most "
+                "effective region moved in "
+                f"{self._share(float(np.mean(flips))) if flips else '-'} of the "
+                "reorderings; its whole-scene mean log-likelihood fell by up to "
+                f"{self._number(self.permutations.largest_likelihood_drop(name), 2)}"
+                " from the dataset's own order"
             )
-            if unstable:
-                sentence += "; it changed the most effective setting of " + ", ".join(
-                    f"`{case_name}`" for case_name in unstable
-                )
             lines.append(sentence + ".")
         return lines
 

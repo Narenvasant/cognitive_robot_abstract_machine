@@ -7,8 +7,10 @@ from __future__ import annotations
 from dataclasses import replace
 
 import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO classes
+import numpy as np
 import pytest
 
+from experiments.causal_reasoning.graspclutter6d.evaluation import QuestionAsker
 from experiments.causal_reasoning.graspclutter6d.exceptions import (
     FlatTableSchemaMismatchError,
     PipelineNotFittedError,
@@ -28,6 +30,7 @@ from experiments.causal_reasoning.graspclutter6d.queries import (
     CatalogueCausesGraspability,
     CountCausesGraspability,
     SizeCausesBlockedObject,
+    object_level_cases,
 )
 
 LEAF_SHARE = 0.1
@@ -158,7 +161,7 @@ def test_the_questions_name_the_variables_the_pipelines_are_asked_about():
         CountCausesGraspability(
             statistic_name="small_object_count", count_noun="small objects"
         ).name
-        == "small_object_count_causes_graspability"
+        == "small_object_count_causes_graspability_adjusting_extent"
     )
     assert (
         CatalogueCausesGraspability(
@@ -167,3 +170,47 @@ def test_the_questions_name_the_variables_the_pipelines_are_asked_about():
         == "catalogue_causes_graspability_adjusting_extent"
     )
     assert SizeCausesBlockedObject().name == "size_causes_blocked_object_0"
+
+
+def test_the_relational_circuit_gives_the_same_answers_whatever_order_the_parts_come_in(
+    synthetic_dataset,
+):
+    """
+    Refitting on the same scenes with their parts reordered must give the same
+    refusals, regions and probabilities, to floating-point precision: the circuit is
+    the same, and only the order its sums are taken in can differ.
+    """
+    asker = QuestionAsker(random_seed=0, min_region_support=1)
+    answers = []
+    for ordering in range(3):
+        reordered = synthetic_dataset.with_shuffled_parts(
+            np.random.default_rng(ordering)
+        )
+        pipeline = RelationalPipeline(
+            min_samples_per_leaf=0.2, plain_min_samples_per_leaf=0.2
+        )
+        pipeline.fit(reordered.scenes)
+        outcomes = [asker.ask(pipeline, case) for case in object_level_cases()]
+        answers.append(
+            (
+                [outcome.refusal for outcome in outcomes],
+                [
+                    [effect.cause_region for effect in outcome.effects]
+                    for outcome in outcomes
+                ],
+                [
+                    [effect.adjusted_probability for effect in outcome.effects]
+                    for outcome in outcomes
+                ],
+                pipeline.log_likelihood(
+                    reordered.scenes, SceneView.WHOLE_SCENE
+                ).mean_log_likelihood,
+            )
+        )
+    first = answers[0]
+    for refusals, regions, probabilities, likelihood in answers[1:]:
+        assert refusals == first[0]
+        assert regions == first[1]
+        for asked, first_asked in zip(probabilities, first[2]):
+            assert asked == pytest.approx(first_asked, abs=1e-9)
+        assert likelihood == pytest.approx(first[3], abs=1e-9)

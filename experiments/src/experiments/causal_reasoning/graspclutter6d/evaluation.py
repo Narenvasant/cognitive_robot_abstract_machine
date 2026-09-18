@@ -915,11 +915,58 @@ def evaluate(
 # %% the order of the parts
 
 
+@dataclass(frozen=True)
+class Spread:
+    """
+    How a number varies over the reorderings.
+    """
+
+    mean: float
+    """
+    Its mean.
+    """
+
+    standard_deviation: float
+    """
+    Its standard deviation.
+    """
+
+    lowest: float
+    """
+    Its lowest value.
+    """
+
+    highest: float
+    """
+    Its highest value.
+    """
+
+    @classmethod
+    def of(cls, values: Sequence[float]) -> Spread:
+        """
+        :param values: The values, at least one.
+        :return: Their spread.
+        """
+        return cls(
+            mean=float(np.mean(values)),
+            standard_deviation=float(np.std(values)),
+            lowest=float(np.min(values)),
+            highest=float(np.max(values)),
+        )
+
+    @property
+    def range(self) -> float:
+        """
+        The highest value minus the lowest.
+        """
+        return self.highest - self.lowest
+
+
 @dataclass
 class PermutedOutcomes:
     """
-    What one pipeline made of one question over several orderings of the objects and
-    viewpoints.
+    What one pipeline made of one question with the parts in the dataset's own order
+    and under several random reorderings.
     """
 
     pipeline_name: str
@@ -932,41 +979,52 @@ class PermutedOutcomes:
     The question.
     """
 
-    outcomes: List[QueryOutcome] = field(default_factory=list)
+    in_dataset_order: QueryOutcome
     """
-    One outcome per ordering.
+    The outcome with the parts in the order the dataset lists them.
     """
+
+    reordered: List[QueryOutcome] = field(default_factory=list)
+    """
+    One outcome per random reordering.
+    """
+
+    @property
+    def outcomes(self) -> List[QueryOutcome]:
+        """
+        Every outcome, the dataset's order first.
+        """
+        return [self.in_dataset_order] + self.reordered
 
     @property
     def answered(self) -> List[QueryOutcome]:
         """
-        The outcomes that were answered.
+        The reordered outcomes that were answered.
         """
-        return [outcome for outcome in self.outcomes if outcome.answered]
+        return [outcome for outcome in self.reordered if outcome.answered]
 
     @property
     def best_regions(self) -> List[str]:
         """
-        The distinct most effective cause regions found over the orderings.
+        The distinct most effective cause regions found over every ordering.
         """
         return sorted(
             {
                 outcome.most_effective.cause_region
-                for outcome in self.answered
+                for outcome in self.outcomes
                 if outcome.most_effective is not None
             }
         )
 
     @property
-    def largest_adjusted_difference(self) -> float:
+    def adjusted_spread_by_region(self) -> Dict[str, Spread]:
         """
-        Over the cause regions every answered ordering distinguishes, the largest
-        difference between orderings in the effect's adjusted probability; ``nan`` if
-        fewer than two orderings were answered.
+        Per cause region every answered ordering distinguishes, how the effect's
+        adjusted probability varies over the orderings, the dataset's order included.
         """
-        answered = self.answered
-        if len(answered) < 2:
-            return float("nan")
+        answered = [outcome for outcome in self.outcomes if outcome.answered]
+        if not answered:
+            return {}
         adjusted_by_region = [
             {
                 effect.cause_region: effect.adjusted_probability
@@ -977,13 +1035,69 @@ class PermutedOutcomes:
         shared_regions = set.intersection(
             *(set(by_region) for by_region in adjusted_by_region)
         )
-        if not shared_regions:
+        return {
+            region: Spread.of([by_region[region] for by_region in adjusted_by_region])
+            for region in sorted(shared_regions)
+        }
+
+    @property
+    def largest_adjusted_difference(self) -> float:
+        """
+        Over the cause regions every answered ordering distinguishes, the widest range
+        of the effect's adjusted probability; ``nan`` if no region is shared.
+        """
+        spreads = self.adjusted_spread_by_region
+        if not spreads:
             return float("nan")
-        return max(
-            max(by_region[region] for by_region in adjusted_by_region)
-            - min(by_region[region] for by_region in adjusted_by_region)
-            for region in shared_regions
+        return max(spread.range for spread in spreads.values())
+
+    @property
+    def mean_adjusted_standard_deviation(self) -> float:
+        """
+        Over the cause regions every answered ordering distinguishes, the mean standard
+        deviation of the effect's adjusted probability; ``nan`` if no region is shared.
+        """
+        spreads = self.adjusted_spread_by_region
+        if not spreads:
+            return float("nan")
+        return float(
+            np.mean([spread.standard_deviation for spread in spreads.values()])
         )
+
+    @property
+    def argmax_flip_share(self) -> float:
+        """
+        The share of answered reorderings whose most effective region is not the one
+        found in the dataset's order; ``nan`` if the dataset's order gave none.
+        """
+        baseline = self.in_dataset_order.most_effective
+        answered = [
+            outcome for outcome in self.answered if outcome.most_effective is not None
+        ]
+        if baseline is None or not answered:
+            return float("nan")
+        return float(
+            np.mean(
+                [
+                    outcome.most_effective.cause_region != baseline.cause_region
+                    for outcome in answered
+                ]
+            )
+        )
+
+    @property
+    def trend_sign_flip_share(self) -> float:
+        """
+        The share of answered reorderings whose trend has the other sign than in the
+        dataset's order; ``nan`` where the question has no trend.
+        """
+        baseline = self.in_dataset_order.trend
+        trends = [
+            outcome.trend for outcome in self.answered if outcome.trend is not None
+        ]
+        if baseline is None or not trends:
+            return float("nan")
+        return float(np.mean([np.sign(trend) != np.sign(baseline) for trend in trends]))
 
 
 @dataclass
@@ -995,7 +1109,7 @@ class PermutationReport:
 
     ordering_count: int
     """
-    How many random orderings were tried.
+    How many random reorderings were tried.
     """
 
     questions: List[PermutedOutcomes] = field(default_factory=list)
@@ -1007,29 +1121,40 @@ class PermutationReport:
         default_factory=dict
     )
     """
-    Per pipeline that models whole scenes, its held-out likelihood report under each
-    ordering.
+    Per pipeline that models whole scenes, its held-out likelihood report with the
+    parts in the dataset's order first, then under each reordering.
     """
 
-    def largest_likelihood_drop(
-        self, pipeline_name: str, in_dataset_order: float
-    ) -> float:
+    def in_dataset_order(self, pipeline_name: str) -> LikelihoodReport:
         """
         :param pipeline_name: A pipeline modelling whole scenes.
-        :param in_dataset_order: Its mean whole-scene log-likelihood with the parts in
-            the order the dataset lists them.
-        :return: How far below that the worst ordering took it.
+        :return: Its held-out whole-scene likelihood with the parts in the dataset's
+            order.
         """
-        means = [
-            report.mean_log_likelihood
-            for report in self.whole_scene_likelihoods[pipeline_name]
-        ]
-        return float(in_dataset_order - np.nanmin(means))
+        return self.whole_scene_likelihoods[pipeline_name][0]
+
+    def reordered(self, pipeline_name: str) -> List[LikelihoodReport]:
+        """
+        :param pipeline_name: A pipeline modelling whole scenes.
+        :return: Its held-out whole-scene likelihood under each reordering.
+        """
+        return self.whole_scene_likelihoods[pipeline_name][1:]
+
+    def largest_likelihood_drop(self, pipeline_name: str) -> float:
+        """
+        :param pipeline_name: A pipeline modelling whole scenes.
+        :return: How far below the dataset-order likelihood the worst reordering took
+            its mean whole-scene log-likelihood.
+        """
+        means = [report.mean_log_likelihood for report in self.reordered(pipeline_name)]
+        return float(
+            self.in_dataset_order(pipeline_name).mean_log_likelihood - np.nanmin(means)
+        )
 
 
 def permutation_study(
     dataset: GraspClutterDataset,
-    ordering_count: int = 3,
+    ordering_count: int = 20,
     train_fraction: float = 0.8,
     random_seed: int = 0,
     min_samples_per_leaf: Optional[float] = None,
@@ -1038,12 +1163,13 @@ def permutation_study(
     min_region_support: int = 10,
 ) -> PermutationReport:
     """
-    Put every scene's objects and viewpoints in a random order, several times over, and
-    each time refit the pipelines that model the parts and ask them the questions about
-    objects. The split is the same every time; only the order within a scene changes.
+    Fit the pipelines that model the parts with the parts in the dataset's own order,
+    then put every scene's objects and viewpoints in a random order, several times over,
+    and each time refit them and ask them the questions about objects again. The split
+    is the same every time; only the order within a scene changes.
 
     :param dataset: The scenes.
-    :param ordering_count: How many random orderings to try.
+    :param ordering_count: How many random reorderings to try.
     :param train_fraction: Share of scenes to fit on.
     :param random_seed: Seed of the split, the orderings and the Monte-Carlo grounding.
     :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
@@ -1062,27 +1188,39 @@ def permutation_study(
     )
     report = PermutationReport(ordering_count=ordering_count)
     questions: Dict[Tuple[str, str], PermutedOutcomes] = {}
+    orderings = [(training, test)]
     for ordering in range(ordering_count):
         random_state = np.random.default_rng([random_seed, ordering])
-        shuffled_training = training.with_shuffled_parts(random_state)
-        shuffled_test = test.with_shuffled_parts(random_state)
+        orderings.append(
+            (
+                training.with_shuffled_parts(random_state),
+                test.with_shuffled_parts(random_state),
+            )
+        )
+    for ordering_index, (ordered_training, ordered_test) in enumerate(orderings):
         for pipeline in configured_pipelines(
-            shuffled_training.scenes, min_samples_per_leaf, plain_min_samples_per_leaf
+            ordered_training.scenes, min_samples_per_leaf, plain_min_samples_per_leaf
         ):
             if not pipeline.models_parts:
                 continue
-            pipeline.fit(shuffled_training.scenes)
+            pipeline.fit(ordered_training.scenes)
             likelihood = pipeline.log_likelihood(
-                shuffled_test.scenes, SceneView.WHOLE_SCENE
+                ordered_test.scenes, SceneView.WHOLE_SCENE
             )
             report.whole_scene_likelihoods.setdefault(pipeline.name, []).append(
                 likelihood
             )
             for case in cases:
-                questions.setdefault(
-                    (pipeline.name, case.name),
-                    PermutedOutcomes(pipeline_name=pipeline.name, case=case),
-                ).outcomes.append(asker.ask(pipeline, case))
+                outcome = asker.ask(pipeline, case)
+                key = (pipeline.name, case.name)
+                if ordering_index == 0:
+                    questions[key] = PermutedOutcomes(
+                        pipeline_name=pipeline.name,
+                        case=case,
+                        in_dataset_order=outcome,
+                    )
+                else:
+                    questions[key].reordered.append(outcome)
     report.questions = list(questions.values())
     return report
 

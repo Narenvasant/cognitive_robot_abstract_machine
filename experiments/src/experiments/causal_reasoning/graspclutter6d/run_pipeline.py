@@ -141,7 +141,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--min-samples-per-leaf", type=float, default=None)
     parser.add_argument("--plain-min-samples-per-leaf", type=float, default=None)
-    parser.add_argument("--orderings", type=int, default=3)
+    parser.add_argument("--orderings", type=int, default=20)
     parser.add_argument("--splits", type=int, default=5)
     parser.add_argument("--min-region-support", type=int, default=10)
     arguments = parser.parse_args()

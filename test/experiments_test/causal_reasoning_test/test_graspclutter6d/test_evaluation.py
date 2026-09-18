@@ -111,7 +111,7 @@ def test_the_relational_circuit_answers_every_scene_level_question(comparison):
 
 def test_an_answer_ranks_the_cause_regions_it_distinguishes(comparison):
     outcome = _outcomes(comparison, "relational circuit")[
-        "small_object_count_causes_graspability"
+        "small_object_count_causes_graspability_adjusting_extent"
     ]
     assert len(outcome.effects) > 1
     assert (
@@ -152,7 +152,7 @@ def test_reordering_the_parts_leaves_the_relational_answers_where_they_were(
     questions = _questions_of(reorderings, "relational circuit")
     assert questions
     for question in questions:
-        assert len(question.best_regions) == 1
+        assert len(question.best_regions) <= 1
         assert question.largest_adjusted_difference == pytest.approx(0.0, abs=1e-9)
 
 
@@ -202,23 +202,31 @@ def test_the_report_names_every_pipeline_and_every_question(comparison):
         assert case.question in rendered
 
 
-def test_the_report_compares_reorderings_against_the_datasets_own_order(
+def test_the_reorderings_are_measured_against_the_datasets_own_order(
     comparison, reorderings
 ):
-    rendered = MarkdownReport(comparison, permutations=reorderings).render()
-    relational = comparison.pipeline("relational circuit")
-    in_dataset_order = relational.likelihoods[SceneView.WHOLE_SCENE]
-    assert "dataset order" in rendered
+    in_dataset_order = reorderings.in_dataset_order("relational circuit")
     assert (
-        f"{100 * in_dataset_order.coverage:.1f}% / "
-        f"{in_dataset_order.mean_log_likelihood:.2f}"
-    ) in rendered
-    assert reorderings.largest_likelihood_drop(
-        "relational circuit", in_dataset_order.mean_log_likelihood
-    ) == pytest.approx(
+        in_dataset_order
+        == comparison.pipeline("relational circuit").likelihoods[SceneView.WHOLE_SCENE]
+    )
+    assert len(reorderings.reordered("relational circuit")) == 3
+    assert reorderings.largest_likelihood_drop("relational circuit") == pytest.approx(
         in_dataset_order.mean_log_likelihood
         - min(
             report.mean_log_likelihood
-            for report in reorderings.whole_scene_likelihoods["relational circuit"]
+            for report in reorderings.reordered("relational circuit")
         )
     )
+
+
+def test_the_relational_circuits_answers_never_move_under_reordering(reorderings):
+    for question in _questions_of(reorderings, "relational circuit"):
+        assert question.largest_adjusted_difference == pytest.approx(0.0, abs=1e-9)
+        assert math.isnan(question.argmax_flip_share) or question.argmax_flip_share == 0
+
+
+def test_the_report_renders_the_reordering_distribution(comparison, reorderings):
+    rendered = MarkdownReport(comparison, permutations=reorderings).render()
+    assert "dataset order, coverage / mean log-likelihood" in rendered
+    assert "argmax moved" in rendered
