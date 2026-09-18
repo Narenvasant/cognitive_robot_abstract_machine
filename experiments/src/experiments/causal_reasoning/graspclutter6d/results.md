@@ -1,6 +1,6 @@
 # GraspClutter6D: relational circuit against flat-table trees
 
-The GraspClutter6D dataset records a thousand real, densely cluttered bin, shelf and table scenes, each photographed from thirteen poses by four cameras, with the ground-truth pose and the visible share of every object instance in every frame, and with analytic antipodal grasps annotated on every object model and checked for collision against every scene it stands in. A scene here is its own attributes (which object catalogue it is built from, how far its clutter is spread, how far it is stacked, and whether every object in it keeps a grasp) with one exchangeable part per object instance (size, diameter, visibility, occlusion, graspability) and one per camera frame (camera, distance, proximity, clarity). A scene holds between two and twenty object instances, and they have no canonical order; the annotation file lists them in the order they were labelled, and nothing ties a position to an identity.
+The GraspClutter6D dataset records a thousand real, densely cluttered bin, shelf and table scenes, each photographed from thirteen poses by four cameras, with the ground-truth pose and the visible share of every object instance in every frame, and with analytic antipodal grasps annotated on every object model and checked for collision against every scene it stands in. A scene here is its own attributes (which object catalogue it is built from, how far its clutter is spread, how far it is stacked, and whether every object in it keeps a grasp) with one exchangeable part per object instance (size, diameter, visibility, occlusion, graspability) and one per camera frame (camera, distance, proximity, clarity). A scene holds between five and twenty object instances, and they have no canonical order; the annotation file lists them in the order they were labelled, and nothing ties a position to an identity.
 
 Four pipelines were fitted on the same scenes and asked the same `cause`/`causes_effect` EQL queries:
 
@@ -82,9 +82,9 @@ One row per question, one column per pipeline. An answered cell says, in words, 
 
 | question | relational circuit | propositional tree | unrolled tree | scalars-only tree |
 |---|---|---|---|---|
-| How many small objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 15 small objects, every object of the scene stays graspable with probability 0.50, the highest of any setting; with 20 small objects it is only 0.00. | answered: with 15 small objects, every object of the scene stays graspable with probability 0.50, the highest of any setting; with 17 small objects it is only 0.00. | answered: with 15 small objects, every object of the scene stays graspable with probability 0.50, the highest of any setting; with 17 small objects it is only 0.00. | refused: the fitted table has no column for the queried variables. |
-| How many occluded objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 19 occluded objects, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 19 occluded objects, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 20 occluded objects, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 4 occluded objects it is only 0.16. | refused: the fitted table has no column for the queried variables. |
-| How many clear viewpoints cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 12 clear viewpoints, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 16 clear viewpoints it is only 0.00. | answered: with 14 clear viewpoints, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 16 clear viewpoints it is only 0.00. | answered: with 14 clear viewpoints, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 16 clear viewpoints it is only 0.00. | refused: the fitted table has no column for the queried variables. |
+| How many small objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 15 small objects, every object of the scene stays graspable with probability 0.50, the highest of any setting; with 17 small objects it is only 0.00. | answered: with 15 small objects, every object of the scene stays graspable with probability 0.50, the highest of any setting; with 20 small objects it is only 0.00. | answered: with 15 small objects, every object of the scene stays graspable with probability 0.50, the highest of any setting; with 17 small objects it is only 0.00. | refused: the fitted table has no column for the queried variables. |
+| How many occluded objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 20 occluded objects, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 19 occluded objects, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 19 occluded objects, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 4 occluded objects it is only 0.16. | refused: the fitted table has no column for the queried variables. |
+| How many clear viewpoints cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 12 clear viewpoints, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 16 clear viewpoints it is only 0.00. | answered: with 12 clear viewpoints, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 16 clear viewpoints it is only 0.00. | answered: with 12 clear viewpoints, every object of the scene stays graspable with probability 1.00, the highest of any setting; with 16 clear viewpoints it is only 0.00. | refused: the fitted table has no column for the queried variables. |
 | Does the object catalogue a scene is built from cause every object of it to stay graspable, adjusting for its spread (extent)? | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. |
 | Does the object catalogue a scene is built from cause every object of it to stay graspable, adjusting for its small-object count? | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.39, the highest of any setting; with the ycb-video catalogue it is only 0.32. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.39, the highest of any setting; with the ycb-video catalogue it is only 0.32. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.40, the highest of any setting; with the mixed catalogue it is only 0.30. | refused: the fitted table has no column for the queried variables. |
 | Does the object catalogue a scene is built from cause object 0 of it to be heavily occluded? | answered: with the grasp catalogue, object 0 is heavily occluded with probability 0.31, the highest of any setting; with the ycb-video catalogue it is only 0.28. | refused: the fitted table has no column for the queried variables. | answered: with the ycb-video catalogue, object 0 is heavily occluded with probability 0.29, the highest of any setting; with the mixed catalogue it is only 0.23. | refused: the fitted table has no column for the queried variables. |
@@ -99,9 +99,9 @@ What each pipeline cost. *Models fitted* counts the plain model plus one support
 
 | pipeline | models fitted | training seconds | nodes | edges |
 |---|---|---|---|---|
-| relational circuit | 6 | 145.58 | 35832 | 35814 |
-| propositional tree | 5 | 34.99 | 9585 | 9580 |
-| unrolled tree | 6 | 485.96 | 363289 | 363283 |
+| relational circuit | 6 | 143.20 | 35832 | 35814 |
+| propositional tree | 5 | 32.80 | 9585 | 9580 |
+| unrolled tree | 6 | 487.42 | 363289 | 363283 |
 | scalars-only tree | 2 | 0.04 | 526 | 524 |
 
 How well each explains scenes it never saw, on three views of a scene: its own scalars, which every pipeline models; its scalars and counts; and the whole scene, objects and viewpoints included, which only the pipelines that model the parts can score. The relational circuit scores a whole scene as its class circuit over the scalars and counts times each part template over one object or viewpoint given the counts; the unrolled tree scores it as one row. *Held-out coverage* is the share of held-out scenes that lie inside the plain model's support at all, since a tree's leaves span only the value ranges they were fitted on, and a whole scene is covered only if every one of its objects and viewpoints is. The *mean log-likelihood* is over the covered scenes only; the last column restricts it to the scenes every pipeline in the table covers, so the numbers are over the same rows.
@@ -136,14 +136,14 @@ Wall-clock time from asking to the answer or the refusal. The *first ask* of a c
 
 | question | relational circuit, first ask | relational circuit, asked again | propositional tree, first ask | propositional tree, asked again | unrolled tree, first ask | unrolled tree, asked again | scalars-only tree, first ask | scalars-only tree, asked again |
 |---|---|---|---|---|---|---|---|---|
-| small_object_count_causes_graspability | 113.88 | 90.84 | 8.54 | 2.69 | 99.58 | 7.64 | 0.00 | 0.00 |
-| occluded_object_count_causes_graspability | 118.66 | 97.37 | 11.34 | 4.58 | 112.12 | 12.57 | 0.00 | 0.00 |
-| clear_viewpoint_count_causes_graspability | 220.85 | 217.01 | 126.84 | 116.46 | 368.81 | 136.62 | 0.00 | 0.00 |
-| catalogue_causes_graspability_adjusting_extent | 149.77 | 129.81 | 7.03 | 0.21 | 24.20 | 1.07 | 0.25 | 0.22 |
-| catalogue_causes_graspability_adjusting_small_object_count | 132.80 | 134.93 | 1.34 | 1.17 | 2.20 | 2.02 | 0.00 | 0.00 |
-| catalogue_causes_occluded_object_0 | 143.97 | 143.17 | 0.00 | 0.00 | 1.16 | 2.93 | 0.00 | 0.00 |
-| occluded_object_count_causes_blocked_object_0 | 109.91 | 110.76 | 0.00 | 0.00 | 7.66 | 7.42 | 0.00 | 0.00 |
-| size_causes_blocked_object_0 | 100.93 | 74.46 | 0.00 | 0.00 | 24.17 | 1.03 | 0.00 | 0.00 |
+| small_object_count_causes_graspability | 113.39 | 95.13 | 8.56 | 2.03 | 98.70 | 8.17 | 0.00 | 0.00 |
+| occluded_object_count_causes_graspability | 114.58 | 96.95 | 10.90 | 6.04 | 111.46 | 10.18 | 0.00 | 0.00 |
+| clear_viewpoint_count_causes_graspability | 225.10 | 204.52 | 121.74 | 118.51 | 370.90 | 138.58 | 0.00 | 0.00 |
+| catalogue_causes_graspability_adjusting_extent | 150.55 | 125.83 | 6.83 | 0.35 | 24.08 | 1.10 | 0.25 | 0.22 |
+| catalogue_causes_graspability_adjusting_small_object_count | 130.94 | 132.05 | 1.35 | 1.19 | 3.71 | 2.04 | 0.00 | 0.00 |
+| catalogue_causes_occluded_object_0 | 137.07 | 137.15 | 0.00 | 0.00 | 1.03 | 1.17 | 0.00 | 0.00 |
+| occluded_object_count_causes_blocked_object_0 | 106.81 | 111.85 | 0.00 | 0.00 | 7.71 | 7.45 | 0.00 | 0.00 |
+| size_causes_blocked_object_0 | 98.86 | 79.04 | 0.00 | 0.00 | 23.50 | 1.06 | 0.00 | 0.00 |
 
 ## Does the order of the objects matter?
 
@@ -158,12 +158,12 @@ Every scene's objects and viewpoints were put in a random order, 3 times over, a
 | occluded_object_count_causes_blocked_object_0 | unrolled tree | 3 of 3 | 0, 1 | 0.33 |
 | size_causes_blocked_object_0 | unrolled tree | 3 of 3 | small | 0.03 |
 
-The whole-scene likelihood of the same held-out scenes under each ordering:
+The whole-scene likelihood of the same held-out scenes with the parts in the order the dataset lists them, and under each reordering. The dataset's order is not arbitrary throughout: a scene's frames are numbered by the recording rig, four cameras per pose in a fixed sequence, so which camera took frame *i* is the same in every scene, and a column that addresses a viewpoint by position addresses a real thing. Its objects carry no such order. *Largest drop* is how far below the dataset-order likelihood the worst reordering took each pipeline.
 
-| pipeline | ordering 0, coverage / mean log-likelihood | ordering 1, coverage / mean log-likelihood | ordering 2, coverage / mean log-likelihood | largest difference |
-|---|---|---|---|---|
-| relational circuit | 83.8% / -16.57 | 84.3% / -15.99 | 84.3% / -15.99 | 0.58 |
-| unrolled tree | 44.0% / -88.16 | 40.8% / -88.07 | 45.5% / -89.76 | 1.68 |
+| pipeline | dataset order, coverage / mean log-likelihood | reordering 0, coverage / mean log-likelihood | reordering 1, coverage / mean log-likelihood | reordering 2, coverage / mean log-likelihood | largest drop |
+|---|---|---|---|---|---|
+| relational circuit | 84.3% / -15.99 | 83.8% / -16.57 | 84.3% / -15.99 | 84.3% / -15.99 | 0.58 |
+| unrolled tree | 67.0% / 27.15 | 44.0% / -88.16 | 40.8% / -88.07 | 45.5% / -89.76 | 116.90 |
 
 ## Over several splits
 
@@ -197,9 +197,9 @@ Per question, how many splits each pipeline answered and which most effective ca
 
 | question | relational circuit | propositional tree | unrolled tree | scalars-only tree |
 |---|---|---|---|---|
-| small_object_count_causes_graspability | 5 of 5: 1, 15, 3 | 5 of 5: 1, 15, 3 | 5 of 5: 15, 3 | 0 of 5 |
-| occluded_object_count_causes_graspability | 5 of 5: 17, 19 | 5 of 5: 17, 19, 20 | 5 of 5: 17, 19, 20 | 0 of 5 |
-| clear_viewpoint_count_causes_graspability | 5 of 5: 12, 14, 29, 30, 35 | 5 of 5: 14, 30 | 5 of 5: 14, 17, 35 | 0 of 5 |
+| small_object_count_causes_graspability | 5 of 5: 15, 3 | 5 of 5: 1, 15, 3 | 5 of 5: 15, 3 | 0 of 5 |
+| occluded_object_count_causes_graspability | 5 of 5: 17, 19, 20 | 5 of 5: 17, 19, 20 | 5 of 5: 17, 19, 20 | 0 of 5 |
+| clear_viewpoint_count_causes_graspability | 5 of 5: 12, 14, 17, 29, 35 | 5 of 5: 12, 14, 30 | 5 of 5: 12, 14, 17, 29, 35 | 0 of 5 |
 | catalogue_causes_graspability_adjusting_extent | 5 of 5: grasp | 5 of 5: grasp | 5 of 5: grasp | 5 of 5: grasp |
 | catalogue_causes_graspability_adjusting_small_object_count | 5 of 5: grasp | 5 of 5: grasp | 5 of 5: grasp | 0 of 5 |
 | catalogue_causes_occluded_object_0 | 5 of 5: grasp, mixed | 0 of 5 | 5 of 5: grasp, ycb-video | 0 of 5 |
@@ -235,8 +235,8 @@ Every pipeline's plain model fitted on a growing share of the scenes and scored 
 - The unrolled tree answered 8 of 8 questions.
 - The scalars-only tree answered 1 of 8 questions, refusing `small_object_count_causes_graspability` because the fitted table has no column for the queried variables; `occluded_object_count_causes_graspability` because the fitted table has no column for the queried variables; `clear_viewpoint_count_causes_graspability` because the fitted table has no column for the queried variables; `catalogue_causes_graspability_adjusting_small_object_count` because the fitted table has no column for the queried variables; `catalogue_causes_occluded_object_0` because the fitted table has no column for the queried variables; `occluded_object_count_causes_blocked_object_0` because the fitted table has no column for the queried variables; `size_causes_blocked_object_0` because the fitted table has no column for the queried variables.
 - On `small_object_count_causes_graspability`, every pipeline that answered finds 15 small objects the most effective setting (adjusted probabilities: relational circuit 0.50, propositional tree 0.50, unrolled tree 0.50).
-- On `occluded_object_count_causes_graspability`, the pipelines disagree on the most effective setting: the relational circuit says 19 occluded objects (1.00); the propositional tree says 19 occluded objects (1.00); the unrolled tree says 20 occluded objects (1.00).
-- On `clear_viewpoint_count_causes_graspability`, the pipelines disagree on the most effective setting: the relational circuit says 12 clear viewpoints (1.00); the propositional tree says 14 clear viewpoints (1.00); the unrolled tree says 14 clear viewpoints (1.00).
+- On `occluded_object_count_causes_graspability`, the pipelines disagree on the most effective setting: the relational circuit says 20 occluded objects (1.00); the propositional tree says 19 occluded objects (1.00); the unrolled tree says 19 occluded objects (1.00).
+- On `clear_viewpoint_count_causes_graspability`, every pipeline that answered finds 12 clear viewpoints the most effective setting (adjusted probabilities: relational circuit 1.00, propositional tree 1.00, unrolled tree 1.00).
 - On `catalogue_causes_graspability_adjusting_extent`, every pipeline that answered finds the grasp catalogue the most effective setting (adjusted probabilities: relational circuit 0.41, propositional tree 0.41, unrolled tree 0.41, scalars-only tree 0.41).
 - On `catalogue_causes_graspability_adjusting_small_object_count`, every pipeline that answered finds the grasp catalogue the most effective setting (adjusted probabilities: relational circuit 0.39, propositional tree 0.39, unrolled tree 0.40).
 - On `catalogue_causes_occluded_object_0`, the pipelines disagree on the most effective setting: the relational circuit says the grasp catalogue (0.31); the unrolled tree says the ycb-video catalogue (0.29).
@@ -245,11 +245,11 @@ Every pipeline's plain model fitted on a growing share of the scenes and scored 
 - On the scalars, the relational circuit assigns the highest mean log-likelihood (0.21, against propositional tree 0.21, unrolled tree -0.02, scalars-only tree 0.20) to the held-out scenes every pipeline covers; coverage: relational circuit 100.0%, propositional tree 100.0%, unrolled tree 100.0%, scalars-only tree 95.8%.
 - On the scalars and counts, the relational circuit assigns the highest mean log-likelihood (-10.44, against propositional tree -10.44, unrolled tree -10.71) to the held-out scenes every pipeline covers; coverage: relational circuit 88.0%, propositional tree 88.0%, unrolled tree 96.3%.
 - On the whole scene, the unrolled tree assigns the highest mean log-likelihood (30.83, against relational circuit -13.73) to the held-out scenes every pipeline covers; coverage: relational circuit 84.3%, unrolled tree 67.0%.
-- Reordering the objects moved the relational circuit's adjusted effect probabilities by up to 0.00 and its whole-scene mean log-likelihood by 0.58.
-- Reordering the objects moved the unrolled tree's adjusted effect probabilities by up to 0.33 and its whole-scene mean log-likelihood by 1.68; it changed the most effective setting of `catalogue_causes_occluded_object_0`, `occluded_object_count_causes_blocked_object_0`.
-- The relational circuit takes 124.79 seconds per answered question on average once its models are fitted.
-- The propositional tree takes 25.02 seconds per answered question on average once its models are fitted.
-- The unrolled tree takes 21.41 seconds per answered question on average once its models are fitted.
+- Reordering the parts moved the relational circuit's adjusted effect probabilities by up to 0.00 and took its whole-scene mean log-likelihood down by up to 0.58 from the dataset's own order.
+- Reordering the parts moved the unrolled tree's adjusted effect probabilities by up to 0.33 and took its whole-scene mean log-likelihood down by up to 116.90 from the dataset's own order; it changed the most effective setting of `catalogue_causes_occluded_object_0`, `occluded_object_count_causes_blocked_object_0`.
+- The relational circuit takes 122.82 seconds per answered question on average once its models are fitted.
+- The propositional tree takes 25.62 seconds per answered question on average once its models are fitted.
+- The unrolled tree takes 21.22 seconds per answered question on average once its models are fitted.
 - The scalars-only tree takes 0.22 seconds per answered question on average once its models are fitted.
 
 ## How many small objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out?
