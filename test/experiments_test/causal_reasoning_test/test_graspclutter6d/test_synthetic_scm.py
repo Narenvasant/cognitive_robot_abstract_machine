@@ -151,7 +151,7 @@ def test_the_study_scores_every_pipeline_under_every_setting():
         truth_sample_count=20_000,
     )
     assert report.configurations == [GroundTruthConfiguration(5, 0.3)]
-    assert len(report.pipeline_names) == 4
+    assert len(report.pipeline_names) == 5
     relational = report.of("relational circuit", ordering=0)
     assert [outcome.case.name for outcome in relational] == [
         case.name for case in ground_truth_cases()[3:5]
@@ -165,3 +165,25 @@ def test_the_study_scores_every_pipeline_under_every_setting():
     assert len(report.of("unrolled tree", ordering=1)) == 2
     weighted = GroundTruthReport.weighted_absolute_error(relational)
     assert 0.0 <= weighted <= 1.0
+
+
+def test_the_scaling_study_measures_each_part_modelling_pipeline_at_each_size():
+    from experiments.causal_reasoning.graspclutter6d.evaluation import scaling_study
+
+    report = scaling_study(
+        object_count_centres=(3, 5),
+        scene_count=40,
+        min_samples_per_leaf=0.2,
+        plain_min_samples_per_leaf=0.2,
+    )
+    assert report.object_count_centres == [3, 5]
+    assert report.pipeline_names == [
+        "relational circuit",
+        "hybrid circuit",
+        "unrolled tree",
+    ]
+    for name in report.pipeline_names:
+        for centre in report.object_count_centres:
+            point = report.point(name, centre)
+            assert point.fit.size.node_count > 0
+            assert point.query_duration > 0

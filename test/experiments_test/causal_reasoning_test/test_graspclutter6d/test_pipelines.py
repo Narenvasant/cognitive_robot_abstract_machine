@@ -23,6 +23,7 @@ from experiments.causal_reasoning.graspclutter6d.flat_table import (
 from experiments.causal_reasoning.graspclutter6d.pipelines import (
     CauseStratification,
     FlatTablePipeline,
+    HybridPipeline,
     RelationalPipeline,
     pipelines,
 )
@@ -56,6 +57,7 @@ def fitted_pipelines(synthetic_scenes):
 def test_every_layout_and_the_relational_circuit_are_compared(synthetic_scenes):
     assert [pipeline.name for pipeline in pipelines(synthetic_scenes)] == [
         "relational circuit",
+        "hybrid circuit",
         f"{TableLayout.PROPOSITIONAL} tree",
         f"{TableLayout.UNROLLED} tree",
         f"{TableLayout.SCALARS} tree",
@@ -86,6 +88,7 @@ def test_only_the_pipelines_that_model_parts_say_so(fitted_pipelines):
         name: pipeline.models_parts for name, pipeline in fitted_pipelines.items()
     } == {
         "relational circuit": True,
+        "hybrid circuit": True,
         f"{TableLayout.PROPOSITIONAL} tree": False,
         f"{TableLayout.UNROLLED} tree": True,
         f"{TableLayout.SCALARS} tree": False,
@@ -214,3 +217,45 @@ def test_the_relational_circuit_gives_the_same_answers_whatever_order_the_parts_
         for asked, first_asked in zip(probabilities, first[2]):
             assert asked == pytest.approx(first_asked, abs=1e-9)
         assert likelihood == pytest.approx(first[3], abs=1e-9)
+
+
+def test_the_hybrid_answers_object_questions_exactly_as_the_relational_circuit(
+    synthetic_scenes,
+):
+    asker = QuestionAsker(random_seed=0, min_region_support=1)
+    relational = RelationalPipeline(
+        min_samples_per_leaf=0.2, plain_min_samples_per_leaf=0.2
+    )
+    hybrid = HybridPipeline(min_samples_per_leaf=0.2, plain_min_samples_per_leaf=0.2)
+    relational.fit(synthetic_scenes)
+    hybrid.fit(synthetic_scenes)
+    for case in object_level_cases():
+        expected = asker.ask(relational, case)
+        answered = asker.ask(hybrid, case)
+        assert answered.refusal == expected.refusal
+        assert [effect.cause_region for effect in answered.effects] == [
+            effect.cause_region for effect in expected.effects
+        ]
+        for one, other in zip(answered.effects, expected.effects):
+            assert one.adjusted_probability == pytest.approx(
+                other.adjusted_probability, abs=1e-9
+            )
+
+
+def test_the_hybrid_holds_the_viewpoints_by_position_and_not_the_objects(
+    synthetic_scenes,
+):
+    hybrid = HybridPipeline(min_samples_per_leaf=0.2, plain_min_samples_per_leaf=0.2)
+    hybrid.fit(synthetic_scenes)
+    assert hybrid.table.unrolled_fields == ["viewpoints"]
+    assert not any("objects[" in column for column in hybrid.table.columns)
+    assert hybrid.log_likelihood(synthetic_scenes, SceneView.WHOLE_SCENE) is not None
+    assert not hybrid.order_invariant
+
+
+def test_a_table_unrolls_only_the_part_fields_it_is_told_to(synthetic_scenes):
+    table = FlatTable.unrolled_for(synthetic_scenes, part_fields=["viewpoints"])
+    assert table.unrolled_fields == ["viewpoints"]
+    row = table.row(synthetic_scenes[0])
+    assert all("objects[" not in column for column in row)
+    assert any("viewpoints[" in column for column in row)

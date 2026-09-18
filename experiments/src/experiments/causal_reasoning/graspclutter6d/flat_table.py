@@ -297,8 +297,12 @@ class FlatTable:
 
     part_widths: Dict[str, int] = field(default_factory=dict)
     """
-    Per part field, how many positions an unrolled row has; a scene with more parts than
-    that cannot be a row, one with fewer is padded.
+    Per unrolled part field, how many positions a row has; a scene with more parts of
+    that kind cannot be a row, one with fewer is padded.
+
+    A part field left out is not unrolled at all, which is how a table holds a scene's
+    viewpoints by position and leaves its objects to a model that treats them as
+    exchangeable.
     """
 
     padding: PartPadding = PartPadding()
@@ -316,20 +320,35 @@ class FlatTable:
         cls,
         scenes: Sequence[GraspClutterScene],
         schema: SceneSchema = SceneSchema(),
+        part_fields: Optional[Sequence[str]] = None,
     ) -> FlatTable:
         """
         :param scenes: The scenes the table has to hold.
         :param schema: How the columns are named.
+        :param part_fields: The part fields to unroll; every one if not given.
         :return: An unrolled table wide enough for the largest of them.
         """
         return cls(
             layout=TableLayout.UNROLLED,
             part_widths={
                 part_field: max(len(vars(scene)[part_field]) for scene in scenes)
-                for part_field in schema.part_fields
+                for part_field in (part_fields or schema.part_fields)
             },
             schema=schema,
         )
+
+    @property
+    def unrolled_fields(self) -> List[str]:
+        """
+        The part fields the table holds by position, in the schema's order.
+        """
+        if not self.layout.has_parts:
+            return []
+        return [
+            part_field
+            for part_field in self.schema.part_fields
+            if part_field in self.part_widths
+        ]
 
     @property
     def part_columns(self) -> List[str]:
@@ -338,8 +357,8 @@ class FlatTable:
         """
         return [
             self.schema.part_column(PartAttribute(part_field, index, attribute))
-            for part_field in self.schema.part_fields
-            for index in range(self.part_widths.get(part_field, 0))
+            for part_field in self.unrolled_fields
+            for index in range(self.part_widths[part_field])
             for attribute in self.schema.part_attribute_types(part_field)
         ]
 
@@ -382,11 +401,9 @@ class FlatTable:
         :param scene: A scene.
         :return: The columns its parts past the table's width would need.
         """
-        if not self.layout.has_parts:
-            return []
         return [
             self.schema.part_column(PartAttribute(part_field, index, attribute))
-            for part_field in self.schema.part_fields
+            for part_field in self.unrolled_fields
             for index in range(
                 self.part_widths[part_field], len(vars(scene)[part_field])
             )
@@ -418,9 +435,8 @@ class FlatTable:
                     for statistic in self.schema.aggregation_statistics
                 }
             )
-        if self.layout.has_parts:
-            for part_field in self.schema.part_fields:
-                row.update(self._part_values(part_field, scene_values[part_field]))
+        for part_field in self.unrolled_fields:
+            row.update(self._part_values(part_field, scene_values[part_field]))
         return row
 
     def _part_values(self, part_field: str, parts: Sequence[Any]) -> Dict[str, Any]:

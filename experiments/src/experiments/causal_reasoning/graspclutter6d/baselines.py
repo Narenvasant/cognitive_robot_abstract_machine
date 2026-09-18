@@ -1,6 +1,6 @@
 """
-A causal estimator that is not built on circuits, as a reference point for the
-questions it can express.
+A causal estimator that is not built on circuits, as a reference point for the questions
+it can express.
 
 Regression adjustment is the textbook backdoor estimator: fit a model of the effect on
 the cause and the confounders, then average its prediction at each value of the cause
@@ -57,7 +57,9 @@ class RegressionAdjustmentBaseline:
     as an answer.
     """
 
-    table: FlatTable = field(default_factory=lambda: FlatTable(TableLayout.PROPOSITIONAL))
+    table: FlatTable = field(
+        default_factory=lambda: FlatTable(TableLayout.PROPOSITIONAL)
+    )
     """
     The table the scenes are flattened into.
     """
@@ -103,12 +105,14 @@ class RegressionAdjustmentBaseline:
         Answer one question by regression adjustment.
 
         :param case: The question.
-        :return: What came of it: an effect per value of the cause, or a refusal
-            where the question names a variable the table has no column for.
+        :return: What came of it: an effect per value of the cause, or a refusal where
+            the question names a variable the table has no column for.
         """
         started = time.perf_counter()
         parameters = UnderspecifiedParameters(case.build())
-        missing = sorted(constrained_variable_names(parameters) - set(self.table.columns))
+        missing = sorted(
+            constrained_variable_names(parameters) - set(self.table.columns)
+        )
         if missing:
             return QueryOutcome(
                 case=case,
@@ -118,7 +122,9 @@ class RegressionAdjustmentBaseline:
                 refusal=Refusal.SCHEMA_MISMATCH,
             )
         cause = cause_variable_name(parameters)
-        confounders = [variable.name for variable in parameters.search_confounder_variables]
+        confounders = [
+            variable.name for variable in parameters.search_confounder_variables
+        ]
         [effect_variable] = parameters.effect_variables_from_causes_effect
         effect_event = parameters.truncation_assignments_from_where_conditions
         [simple_event] = effect_event.simple_sets
@@ -190,7 +196,9 @@ class RegressionAdjustmentBaseline:
                     adjusted_probability=float(predict(forced).mean()),
                     support_count=int(in_region.sum()),
                     ordinal=(
-                        float(value) if isinstance(value, (int, float, np.integer)) else None
+                        float(value)
+                        if isinstance(value, (int, float, np.integer))
+                        else None
                     ),
                 )
             )

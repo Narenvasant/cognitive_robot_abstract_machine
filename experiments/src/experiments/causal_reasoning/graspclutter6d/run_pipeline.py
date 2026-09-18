@@ -39,6 +39,7 @@ from experiments.causal_reasoning.graspclutter6d.evaluation import (
     learning_curve,
     monte_carlo_study,
     permutation_study,
+    scaling_study,
     split_study,
 )
 from experiments.causal_reasoning.graspclutter6d.report import MarkdownReport
@@ -134,6 +135,12 @@ def main(
         plain_min_samples_per_leaf=plain_min_samples_per_leaf,
         min_region_support=min_region_support,
     )
+    logger.info("Measuring cost against the number of objects")
+    scaling = scaling_study(
+        random_seed=seed,
+        min_samples_per_leaf=min_samples_per_leaf,
+        plain_min_samples_per_leaf=plain_min_samples_per_leaf,
+    )
     output.write_text(
         MarkdownReport(
             report,
@@ -142,6 +149,7 @@ def main(
             curve=curve,
             truth=truth,
             monte_carlo=monte_carlo,
+            scaling=scaling,
         ).render()
     )
     logger.info("Wrote %s", output)

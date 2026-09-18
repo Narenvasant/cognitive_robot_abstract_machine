@@ -712,15 +712,34 @@ class RelationalPipeline(CausalQueryPipeline):
             .log_likelihood(scenes, SceneView.SCALARS_AND_COUNTS)
             .log_likelihoods.copy()
         )
-        for (
-            part_field,
-            template,
-        ) in self.plain_model.exchangeable_distribution_templates.items():
-            for index, scene in enumerate(scenes):
-                log_likelihoods[index] += self._part_log_likelihood(
+        for part_field in self.plain_model.exchangeable_distribution_templates:
+            log_likelihoods += self.part_log_likelihoods(scenes, part_field)
+        return LikelihoodReport.from_log_likelihoods(log_likelihoods)
+
+    def part_log_likelihoods(
+        self, scenes: Sequence[GraspClutterScene], part_field: str
+    ) -> np.ndarray:
+        """
+        Score one kind of part of held-out scenes under its plain template, given each
+        scene's counts.
+
+        :param scenes: The scenes to score.
+        :param part_field: The exchangeable-part field.
+        :return: One summed log-likelihood per scene over its parts of that kind,
+            ``-inf`` outside the support.
+        :raises PipelineNotFittedError: If :meth:`fit` never ran.
+        """
+        if self.plain_model is None:
+            raise PipelineNotFittedError(self.name)
+        template = self.plain_model.exchangeable_distribution_templates[part_field]
+        return np.array(
+            [
+                self._part_log_likelihood(
                     template, scene, vars(self._canonical(scene))[part_field]
                 )
-        return LikelihoodReport.from_log_likelihoods(log_likelihoods)
+                for scene in scenes
+            ]
+        )
 
     def _part_log_likelihood(
         self,
@@ -889,15 +908,159 @@ class FlatTablePipeline(CausalQueryPipeline):
         )
 
 
+# %% hybrid pipeline
+
+
+OBJECTS_FIELD = "objects"
+"""
+The scene's exchangeable-part field the hybrid pipeline treats as exchangeable.
+"""
+
+VIEWPOINTS_FIELD = "viewpoints"
+"""
+The scene's exchangeable-part field the hybrid pipeline holds by position.
+"""
+
+
+@dataclass
+class HybridRegistry(ModelRegistry):
+    """
+    Routes a query to the model of the part it constrains: the relational circuit for a
+    query about an object, the positional tree for everything else.
+    """
+
+    pipeline: HybridPipeline
+    """
+    The pipeline whose models are served.
+    """
+
+    def get_model(self, parameters: ModelQueryParameters) -> ProbabilisticModel:
+        cause_name = cause_variable_name(parameters)
+        constrained = constrained_variable_names(parameters)
+        about_an_object = any(
+            (part := self.pipeline.schema.part_attribute(name)) is not None
+            and part.part_field == OBJECTS_FIELD
+            for name in constrained
+        )
+        member = self.pipeline.objects if about_an_object else self.pipeline.scene
+        return member.registry_for(cause_name).get_model(parameters)
+
+
+@dataclass
+class HybridPipeline(CausalQueryPipeline):
+    """
+    Objects exchangeable, viewpoints positional: a relational circuit over the scene's
+    objects and a tree over its scalars, its counts and its viewpoints by position,
+    which is where the recording rig gives a position a meaning.
+
+    A whole scene is scored as the tree over scalars, counts and viewpoints times the
+    object template over each object given the counts. A question about an object goes
+    to the relational circuit, whose answers cannot depend on the order the objects are
+    listed in; every other question goes to the tree.
+    """
+
+    objects: RelationalPipeline = field(default_factory=RelationalPipeline)
+    """
+    The relational circuit, whose object template is used.
+    """
+
+    scene: Optional[FlatTablePipeline] = None
+    """
+    The tree over the scalars, the counts and the viewpoints by position, sized to the
+    training scenes at :meth:`fit`.
+    """
+
+    @property
+    def name(self) -> str:
+        return "hybrid circuit"
+
+    @property
+    def registry(self) -> ModelRegistry:
+        return HybridRegistry(pipeline=self)
+
+    @property
+    def table(self) -> FlatTable:
+        if self.scene is None:
+            raise PipelineNotFittedError(self.name)
+        return self.scene.table
+
+    @property
+    def models_parts(self) -> bool:
+        return True
+
+    @property
+    def order_invariant(self) -> bool:
+        return False
+
+    def fit(self, scenes: Sequence[GraspClutterScene]) -> FitReport:
+        self.training_scenes = list(scenes)
+        self.scene = FlatTablePipeline(
+            flat_table=FlatTable.unrolled_for(scenes, part_fields=[VIEWPOINTS_FIELD]),
+            min_samples_per_leaf=self.min_samples_per_leaf,
+            plain_min_samples_per_leaf=self.plain_min_samples_per_leaf,
+        )
+        self.objects.min_samples_per_leaf = self.min_samples_per_leaf
+        self.objects.plain_min_samples_per_leaf = self.plain_min_samples_per_leaf
+        started = time.perf_counter()
+        size = self._fit_plain_model()
+        self.fit_report = FitReport(training_scene_count=len(scenes))
+        self.fit_report.record(time.perf_counter() - started, size)
+        return self.fit_report
+
+    def _fit_plain_model(self) -> CircuitSize:
+        self.scene.fit(self.training_scenes)
+        self.objects.fit(self.training_scenes)
+        return self.scene.fit_report.size + self.objects.fit_report.size
+
+    def _fit_cause_model(self, cause_name: str) -> CircuitSize:
+        raise NotImplementedError("The members fit their own cause models.")
+
+    def _has_cause_model(self, cause_name: str) -> bool:
+        raise NotImplementedError("The members keep their own cause models.")
+
+    def _registry_for(self, cause_name: Optional[str]) -> ModelRegistry:
+        raise NotImplementedError("The registry routes by what the query constrains.")
+
+    def registry_for(self, cause_name: Optional[str]) -> ModelRegistry:
+        return self.registry
+
+    def _part_training_values(self, part: PartAttribute) -> List[Any]:
+        if part.part_field == OBJECTS_FIELD:
+            return self.objects.training_values_of(self.schema.part_column(part))
+        return self.scene.training_values_of(self.schema.part_column(part))
+
+    def plain_circuit_of(self, view: SceneView) -> Optional[ProbabilisticCircuit]:
+        return self.scene.plain_circuit_of(view)
+
+    def log_likelihood(
+        self, scenes: Sequence[GraspClutterScene], view: SceneView
+    ) -> Optional[LikelihoodReport]:
+        """
+        Score held-out scenes, on as much of them as the view asks for: a whole scene as
+        the tree over its scalars, counts and viewpoints times the object template over
+        each of its objects given the counts.
+
+        :param scenes: The scenes to score.
+        :param view: How much of a scene to look at.
+        :return: The report.
+        """
+        if view is not SceneView.WHOLE_SCENE:
+            return self.scene.log_likelihood(scenes, view)
+        log_likelihoods = self.scene.log_likelihood(scenes, view).log_likelihoods.copy()
+        log_likelihoods += self.objects.part_log_likelihoods(scenes, OBJECTS_FIELD)
+        return LikelihoodReport.from_log_likelihoods(log_likelihoods)
+
+
 def pipelines(scenes: Sequence[GraspClutterScene]) -> List[CausalQueryPipeline]:
     """
     :param scenes: The scenes the pipelines will be fitted on, which size the unrolled
         table.
-    :return: Every pipeline, unfitted: the relational circuit and one flat-table tree per
-        layout.
+    :return: Every pipeline, unfitted: the relational circuit, the hybrid circuit and
+        one flat-table tree per layout.
     """
     return [
         RelationalPipeline(),
+        HybridPipeline(),
         FlatTablePipeline(flat_table=FlatTable(TableLayout.PROPOSITIONAL)),
         FlatTablePipeline(flat_table=FlatTable.unrolled_for(scenes)),
         FlatTablePipeline(flat_table=FlatTable(TableLayout.SCALARS)),

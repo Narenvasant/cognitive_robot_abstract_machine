@@ -18,6 +18,7 @@ from experiments.causal_reasoning.graspclutter6d.evaluation import (
     GroundTruthReport,
     InterventionalEffect,
     MonteCarloReport,
+    ScalingReport,
     LearningCurveReport,
     PermutationReport,
     PipelineReport,
@@ -71,8 +72,14 @@ class MarkdownReport:
 
     monte_carlo: Optional[MonteCarloReport] = None
     """
-    How the relational circuit's answers settle with the number of grounding samples,
-    if run.
+    How the relational circuit's answers settle with the number of grounding samples, if
+    run.
+    """
+
+    scaling: Optional[ScalingReport] = None
+    """
+    How fit time, query time and circuit size grow with the number of objects in a
+    scene, if run.
     """
 
     def render(self) -> str:
@@ -98,6 +105,8 @@ class MarkdownReport:
             sections.append(self._ground_truth())
         if self.monte_carlo is not None:
             sections.append(self._monte_carlo())
+        if self.scaling is not None:
+            sections.append(self._scaling())
         sections.append(self._findings())
         for case_index in range(len(self._first_pipeline.outcomes)):
             sections.append(self._effects(case_index))
@@ -876,13 +885,53 @@ class MarkdownReport:
                     [
                         f"{one.sample_count:,}",
                         Verdict.ANSWERED if one.outcome.answered else Verdict.REFUSED,
-                        self._number(monte_carlo.deviation(case_name, one.sample_count)),
+                        self._number(
+                            monte_carlo.deviation(case_name, one.sample_count)
+                        ),
                         self._number(one.outcome.duration, 1),
                     ]
                     for one in scored
                 ],
             )
             lines.append("")
+        return lines
+
+    def _scaling(self) -> List[str]:
+        scaling = self.scaling
+        lines = [
+            "## Cost against the number of objects",
+            "",
+            "The pipelines that model the parts, fitted on synthetic scenes of growing "
+            f"size ({scaling.scene_count} scenes each) and asked one question about "
+            "an object. The relational circuit's part templates pool every object of "
+            "every scene into one circuit, so their size follows the number of "
+            "distinct part attributes, not the number of parts; the unrolled table "
+            "carries one block of columns per position, so its tree grows with the "
+            "widest scene. *First ask* includes fitting the cause-specific model, "
+            "*asked again* is grounding and adjustment alone.",
+            "",
+        ]
+        header = ["objects per scene"]
+        for name in scaling.pipeline_names:
+            header += [
+                f"{name}, fit seconds",
+                f"{name}, nodes",
+                f"{name}, first ask",
+                f"{name}, asked again",
+            ]
+        rows = []
+        for centre in scaling.object_count_centres:
+            row = [str(centre)]
+            for name in scaling.pipeline_names:
+                point = scaling.point(name, centre)
+                row += [
+                    self._number(point.fit.training_duration, 1),
+                    str(point.fit.size.node_count),
+                    self._number(point.query_duration, 1),
+                    self._number(point.repeat_duration, 1),
+                ]
+            rows.append(row)
+        lines += self._table(header, rows)
         return lines
 
     def _findings(self) -> List[str]:

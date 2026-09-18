@@ -142,8 +142,13 @@ def test_the_pipelines_that_share_the_columns_give_the_same_answer(comparison):
 
 
 def test_every_pipeline_is_scored_on_the_views_it_models(comparison):
+    """
+    Every circuit models at least the scene's scalars; regression adjustment models no
+    distribution and is scored on nothing.
+    """
     for pipeline in comparison.pipelines:
-        assert pipeline.likelihoods[SceneView.SCALARS] is not None
+        scored = pipeline.likelihoods[SceneView.SCALARS] is not None
+        assert scored == (pipeline.name != "regression adjustment")
 
 
 def test_reordering_the_parts_leaves_the_relational_answers_where_they_were(

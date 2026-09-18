@@ -20,12 +20,14 @@ grasps that were then checked for collision against every scene the object stand
 it is ground truth the dataset computed, and it depends on the clutter around the object
 rather than on the object alone.
 
-The comparison is between one relational model and three flat ones, and the interesting
-part is not which of them is most accurate. On the columns they share, several of them
-are the same tree and give the same answer to the third decimal. The interesting part is
-which questions each of them can be asked at all, and what its answers about individual
-objects are worth once you notice that the order the objects were written down in was
-arbitrary.
+The comparison is between two models that treat objects as exchangeable and three flat
+ones, and the interesting part is not which of them is most accurate. On the columns
+they share, several of them are the same tree and give the same answer to the third
+decimal. The interesting part is which questions each of them can be asked at all, what
+its answers about individual objects are worth once you notice that the order the
+objects were written down in was arbitrary, and — on a synthetic model of the same
+domain whose interventional probabilities are known by construction — how far those
+answers are from the truth.
 
 ## The data
 
@@ -61,7 +63,11 @@ the server for one of a scene's annotation files brings the other two with it an
 the scene's images where they are, so reading all 954 scenes costs well under a gigabyte.
 The grasp and collision labels have to be on the machine, and reading them is slow enough
 (about 20 minutes for the whole dataset) that the counts read off them are kept in an
-index beside the dataset and computed once.
+index beside the dataset and computed once. The built scenes themselves are kept in a
+database through the package's ORM (`scene_store.py`), one row per scene, object and
+viewpoint, so that every run after the first reads 954 scenes back in three seconds
+instead of touching the server or the labels at all; `GRASPCLUTTER6D_DATABASE_URI` names
+the database, and a file beside the dataset is used when it does not.
 
 ## The domain
 
@@ -73,7 +79,7 @@ example: its own attributes, plus two lists of exchangeable parts.
 | `GraspClutterScene` | one scene: which object catalogue it draws from, how far its clutter is spread (`extent`) and stacked (`height_span`), whether every object in it keeps a grasp, and its `objects` and `viewpoints` |
 | `GraspClutterObject` | one object instance as an exchangeable part: its size, diameter, visibility, occlusion level and whether it is still graspable |
 | `GraspClutterViewpoint` | one annotated camera frame as an exchangeable part: which camera took it, how far it stood, and whether it saw the scene clearly |
-| `GraspClutterSceneAggregations` | the counts the relational model derives over the parts: small and occluded objects over the objects, near and clear viewpoints over the viewpoints |
+| `GraspClutterSceneAggregations` | the counts the relational model derives over the parts: all, small and occluded objects over the objects, near and clear viewpoints over the viewpoints |
 
 Two things about this shape are worth saying out loud, because both are choices.
 
@@ -95,7 +101,7 @@ objects lie relative to each other, which is all `extent` and `height_span` are 
 both are measured per frame and averaged over the frames rather than read off whichever
 frame happens to be first.
 
-## Why three flat tables
+## Why three flat tables, and a fourth model in between
 
 A scene has between 5 and 20 object instances and no canonical order over them. The
 annotation file lists them in the order they were labelled, and nothing ties a position
@@ -108,11 +114,27 @@ has three choices, and each is a pipeline here:
 - unroll the parts by position and pad, which makes a column mean whatever part a scene
   happens to list there.
 
+The viewpoints are different. The recording rig numbers a scene's 52 frames in a fixed
+sequence, four cameras per pose, so frame *i* is the same physical camera in every scene
+and a column that addresses a viewpoint by position addresses a real thing. Whether a
+part is exchangeable is a fact about the data, one relation at a time, and the fourth
+model declares it that way: the **hybrid circuit** treats the objects as an exchangeable
+part, with the relational circuit's template and counts, and the viewpoints as
+positional columns of its scene-level tree. It answers a question about an object with
+the relational circuit and every other question with the tree.
+
 Every query lists one object and one viewpoint with all their attributes open. For the
 relational circuit that is what makes grounding retain the scene's counts as variables (a
 query with an empty object list is a scene with no objects, whose counts are zero). A flat
 table ignores a part a query merely lists, and refuses a query that constrains a column it
 does not have: sets one of its attributes, or marks it as cause, confounder or effect.
+
+A sixth estimator is not a circuit at all: **regression adjustment**, the textbook
+backdoor estimator, a logistic regression of the effect on the cause and the confounders
+over the propositional table, averaged at each value of the cause over the confounders'
+distribution in the data. It can be asked exactly the questions the propositional tree
+can, and it is there so that the comparison is not only between configurations of one
+learner.
 
 ## The pipelines
 
@@ -121,10 +143,13 @@ does not have: sets one of its attributes, or marks it as cause, confounder or e
 | `annotations.py` | reading a scene's three BOP files, from disk or from the dataset server, and the geometry derived from them |
 | `grasp_labels.py` | counting the grasps a scene leaves each of its objects, and the index that keeps those counts |
 | `dataset.py` | building the scenes, the levels their measurements are read as, and a synthetic generator of the same shape for tests |
+| `scene_store.py` | keeping the built scenes in a database and reading them back |
+| `synthetic_scm.py` | a structural causal model over the same domain, whose interventional probabilities are computed by forcing a cause in the mechanism |
+| `baselines.py` | regression adjustment on the propositional table |
 | `flat_table.py` | `SceneSchema`, how EQL names every attribute; `FlatTable`, the scenes as one row each in one of the three `TableLayout`s; `SceneView`, how much of a scene a likelihood is taken over |
-| `pipelines.py` | `CausalQueryPipeline` and its two implementations, `RelationalPipeline` and `FlatTablePipeline`, the latter once per layout |
+| `pipelines.py` | `CausalQueryPipeline` and its three implementations: `RelationalPipeline`, `HybridPipeline`, and `FlatTablePipeline` once per layout |
 | `queries.py` | the question catalogue, each question one EQL query that reads the same for every pipeline |
-| `evaluation.py` | asking every question to every pipeline and recording what came of it (`evaluate`), then the three studies: `permutation_study` reorders every scene's objects and viewpoints and asks the object questions again, `split_study` repeats the comparison over several random splits, `learning_curve` fits on growing shares of the scenes |
+| `evaluation.py` | asking every question to every pipeline and recording what came of it (`evaluate`), then the studies: `permutation_study` reorders every scene's parts and asks the object questions again, `split_study` repeats the comparison over several random splits, `learning_curve` fits on growing shares of the scenes, `ground_truth_study` scores every pipeline against the synthetic model's truth, `monte_carlo_study` follows the relational circuit's answers as grounding draws more samples, `scaling_study` measures cost against the number of objects |
 | `report.py` | rendering the comparison and the studies as Markdown |
 | `run_pipeline.py` | the whole comparison end to end |
 
@@ -142,12 +167,21 @@ The fewest rows a leaf may hold is given as a share of the rows the model is fit
 rather than as a count, so the same setting holds for a class circuit over a few hundred
 scenes and for an object template over their tens of thousands of parts.
 
-**The questions.**
+**The relational circuit's fit does not depend on the listing order, exactly.** The tree
+learner breaks ties by row order, and every scene's parts are pooled into the template's
+rows, so a naive refit on reordered scenes could differ in the last digit. The relational
+pipeline therefore sorts every scene's parts canonically before fitting and before
+scoring; a test refits it on three reorderings of the same scenes and asserts that the
+refusals, the regions and the probabilities are the same to floating-point precision.
+
+**The questions.** Fourteen, in four kinds.
 
 1. *Small objects, occluded objects and clear viewpoints cause a scene to leave every
-   object graspable*, each adjusting for `extent`, how far the clutter is spread out — a
-   scene spread thin over a table is both easier to reach into and differently composed
-   than one heaped in a bin. The cause is a count over exchangeable parts.
+   object graspable* — each asked three times: adjusting for `extent`, how far the
+   clutter is spread out; adjusting for the number of objects, which drives both how
+   many of them are small and how many chances there are for one to lose every grasp,
+   a textbook backdoor; and adjusting for both. The cause is a count over exchangeable
+   parts.
 2. *The object catalogue causes a scene to leave every object graspable*, once adjusting
    for `extent`, which every pipeline has, and once for the small-object count, which the
    scalars-only tree does not. The cause is an attribute of the scene itself.
@@ -157,14 +191,44 @@ scenes and for an object template over their tens of thousands of parts.
 4. *An object's size causes it to lose every grasp.* Cause and effect both live on one
    object.
 
-**The studies.** A single split cannot tell the pipelines apart, so three things are
-measured around it. Reordering every scene's objects and viewpoints at random and asking
-the object questions again shows what an answer about "object 0" is worth: nothing about a
-relational circuit can depend on the order, while an unrolled table's column holds a
-different object of every scene afterwards. Repeating the comparison over several random
-splits gives the spread of every number. Fitting on a growing share of the scenes shows
-how much data each pipeline needs to explain a whole scene, objects and viewpoints
-included, which only the relational circuit and the unrolled tree can score at all.
+**What an answer is.** Backdoor adjustment gives the effect's probability under every
+region of the cause the model distinguishes, and a count has up to twenty of them, the
+outermost held by one or two scenes. Every region is therefore reported with *n*, the
+number of training scenes it holds, and a Wilson interval over that n; a region below the
+support threshold (ten scenes) is marked † and takes no part in any summary. The
+headline statistics are not the argmax over regions, which moves with the split, but a
+*trend* — Spearman's rank correlation between the cause's value and the adjusted
+probability over the supported regions — and a *contrast*, the adjusted probability at
+the highest supported region minus at the lowest, with Newcombe's interval.
+
+**The studies.** A single split cannot tell the pipelines apart, so six things are
+measured around it.
+
+- *Reordering.* Every scene's objects and viewpoints are put in a random order, twenty
+  times over, the pipelines that model the parts are refitted each time and asked the
+  object questions again, and the parts in the dataset's own order is the baseline every
+  reordering is measured against. Reported as a distribution: the spread of the adjusted
+  probability per region, the share of reorderings in which the most effective region
+  moved, and the share in which the trend changed sign.
+- *Splits.* The comparison repeated over five random splits gives the spread of every
+  trend and contrast.
+- *Learning curve.* Fitting on a growing share of the scenes shows how much data each
+  pipeline needs to explain a whole scene.
+- *Ground truth.* Scenes are sampled from a structural causal model over the same
+  domain (`synthetic_scm.py`). Its one confounder is the number of objects, which drives
+  both the share of small objects and each object's chance of keeping a grasp; the
+  strength of that confounding and the typical number of objects are swept; and the
+  scenes list their small objects first, so a positional column is systematically
+  misleading. The true interventional probability of any question is the effect's rate
+  over 200,000 scenes sampled with the cause forced in the mechanism — the `do`
+  operator by construction, needing no inference. Every pipeline's answer is scored
+  against it, in the model's own order and under reorderings.
+- *Grounding samples.* The relational circuit is asked two questions with grounding
+  drawing from 50 to 32,000 samples for the counts the query leaves open, to find where
+  the answers settle: inference on the grounded circuit is exact, marginalising the open
+  counts is a consistent estimate, and the paper should say which is which.
+- *Scaling.* Fit time, query time and circuit size against the number of objects per
+  scene, on the synthetic model, for the pipelines that model the parts.
 
 ## What the results show
 
@@ -248,15 +312,17 @@ exchangeable model cannot see.
 ## Running it
 
 The scenes' annotations come from an extracted copy of the dataset or from the dataset
-server:
+server, and the built scenes are kept in a database:
 
 ```bash
 export SEMANTIC_DIGITAL_TWIN_DATASET_SERVER="http://<host>:<port>/datasets"
 export SEMANTIC_DIGITAL_TWIN_DATASET_ROOT="/raid/users/tom_sch/datasets"
+# optional; a SQLite file beside the dataset is used otherwise
+export GRASPCLUTTER6D_DATABASE_URI="postgresql+psycopg://<user>:<password>@localhost:5432/graspclutter6d"
 ```
 
-The grasp and collision labels have to be on the machine. They are two of the dataset's
-own archives, about 5 GB to download and rather more to extract:
+The grasp and collision labels have to be on the machine for the first build. They are
+two of the dataset's own archives, about 5 GB to download and rather more to extract:
 
 ```bash
 python - <<'EOF'
@@ -275,20 +341,24 @@ EOF
 Then:
 
 ```bash
-# fit, score and question every pipeline, reorder the parts three times, repeat over
-# five splits and measure the learning curve
+# fit, score and question every pipeline, reorder the parts twenty times, repeat over
+# five splits, measure the learning curve, score against the synthetic model's truth,
+# follow the grounding samples and measure the scaling
 python scripts/regenerate_all_orm.py
 python -m experiments.causal_reasoning.graspclutter6d.run_pipeline
 
-# a quicker look: a fifth of the scenes, one ordering, two splits
+# a quicker look: a fifth of the scenes, three orderings, two splits
 python -m experiments.causal_reasoning.graspclutter6d.run_pipeline \
-    --scenes 200 --orderings 1 --splits 2
+    --scenes 200 --orderings 3 --splits 2
+
+# after a change to the domain classes, build the scenes afresh
+python -m experiments.causal_reasoning.graspclutter6d.run_pipeline --rebuild
 ```
 
-The first run reads the grasp labels for every scene, which takes about twenty minutes;
-every run after that reads the index it leaves behind.
+The first build reads the grasp labels for every scene, which takes about twenty minutes
+and writes the scenes to the database; every run after that reads them back in seconds.
 
 The tests under `test/experiments_test/causal_reasoning_test/test_graspclutter6d` run the
-pipelines and the studies on synthetic scenes of the same shape, and read one real scene's
-annotations from a trimmed copy checked in beside them, so they need neither the dataset
-nor network access.
+pipelines and every study on synthetic scenes, and read one real scene's annotations from
+a trimmed copy checked in beside them, so they need neither the dataset nor network
+access.

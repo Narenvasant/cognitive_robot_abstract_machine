@@ -59,6 +59,7 @@ from experiments.causal_reasoning.graspclutter6d.domain import (
 )
 from experiments.causal_reasoning.graspclutter6d.queries import (
     CausalQueryCase,
+    OccludedObjectsCauseBlockedObject,
     ground_truth_cases,
     monte_carlo_cases,
     object_level_cases,
@@ -2046,5 +2047,140 @@ def monte_carlo_study(
         for case in cases:
             report.outcomes.setdefault(case.name, []).append(
                 SampleCountOutcome(sample_count, asker.ask(pipeline, case))
+            )
+    return report
+
+
+# %% cost against relational size
+
+
+@dataclass(frozen=True)
+class ScalingPoint:
+    """
+    What one pipeline cost on scenes of one size.
+    """
+
+    pipeline_name: str
+    """
+    The pipeline.
+    """
+
+    object_count_centre: int
+    """
+    The typical number of objects in a scene.
+    """
+
+    fit: FitReport
+    """
+    What fitting the plain model cost.
+    """
+
+    query_duration: float
+    """
+    Wall-clock seconds one object-level question took, its cause-specific model
+    fitted first.
+    """
+
+    repeat_duration: float
+    """
+    Wall-clock seconds the same question took asked again, every model fitted.
+    """
+
+
+@dataclass
+class ScalingReport:
+    """
+    How the pipelines' fit time, query time and circuit size grow with the number of
+    objects in a scene.
+    """
+
+    scene_count: int
+    """
+    How many scenes each pipeline was fitted on per size.
+    """
+
+    points: List[ScalingPoint] = field(default_factory=list)
+    """
+    Every measurement.
+    """
+
+    @property
+    def object_count_centres(self) -> List[int]:
+        """
+        The sizes measured, ascending.
+        """
+        return sorted({point.object_count_centre for point in self.points})
+
+    @property
+    def pipeline_names(self) -> List[str]:
+        """
+        The pipelines measured, in the order they were run.
+        """
+        return list(dict.fromkeys(point.pipeline_name for point in self.points))
+
+    def point(self, pipeline_name: str, object_count_centre: int) -> ScalingPoint:
+        """
+        :param pipeline_name: A pipeline's name.
+        :param object_count_centre: A size.
+        :return: The pipeline's measurement at that size.
+        """
+        [point] = [
+            point
+            for point in self.points
+            if point.pipeline_name == pipeline_name
+            and point.object_count_centre == object_count_centre
+        ]
+        return point
+
+
+def scaling_study(
+    object_count_centres: Sequence[int] = (5, 10, 20, 50),
+    scene_count: int = 400,
+    random_seed: int = 0,
+    min_samples_per_leaf: Optional[float] = None,
+    plain_min_samples_per_leaf: Optional[float] = None,
+    case: Optional[CausalQueryCase] = None,
+) -> ScalingReport:
+    """
+    Fit the pipelines that model the parts on synthetic scenes of growing size and time
+    one object-level question on each.
+
+    :param object_count_centres: The typical numbers of objects per scene to measure.
+    :param scene_count: How many scenes to fit on per size.
+    :param random_seed: Seed of the sampled scenes and the Monte-Carlo grounding.
+    :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
+        model may hold; the pipelines' own default if not given.
+    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
+        may hold; the pipelines' own default if not given.
+    :param case: The question to time; the occluded-count question about one object
+        if not given.
+    :return: The study.
+    """
+    case = case or OccludedObjectsCauseBlockedObject()
+    asker = QuestionAsker(random_seed=random_seed, min_region_support=1)
+    report = ScalingReport(scene_count=scene_count)
+    for centre in object_count_centres:
+        model = SceneStructuralCausalModel(object_count_centre=centre)
+        scenes = model.scenes(scene_count, np.random.default_rng(random_seed))
+        for pipeline in configured_pipelines(
+            scenes, min_samples_per_leaf, plain_min_samples_per_leaf
+        ):
+            if not pipeline.models_parts:
+                continue
+            fit = pipeline.fit(scenes)
+            outcome = asker.ask(pipeline, case)
+            report.points.append(
+                ScalingPoint(
+                    pipeline_name=pipeline.name,
+                    object_count_centre=centre,
+                    fit=FitReport(
+                        training_scene_count=fit.training_scene_count,
+                        model_count=fit.model_count,
+                        training_duration=fit.training_duration,
+                        size=fit.size,
+                    ),
+                    query_duration=outcome.duration,
+                    repeat_duration=asker.time_repeat(pipeline, case),
+                )
             )
     return report
