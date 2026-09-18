@@ -11,6 +11,7 @@ from krrood.ormatic.utils import classes_of_module
 import experiments.control_loop_experiments.control_loop_profiler
 from experiments.causal_reasoning.graspclutter6d import (
     annotations as graspclutter6d_annotations,
+    baselines as graspclutter6d_baselines,
     evaluation as graspclutter6d_evaluation,
     exceptions as graspclutter6d_exceptions,
     flat_table as graspclutter6d_flat_table,
@@ -20,6 +21,7 @@ from experiments.causal_reasoning.graspclutter6d import (
     report as graspclutter6d_report,
     run_pipeline as graspclutter6d_run_pipeline,
     scene_store as graspclutter6d_scene_store,
+    synthetic_scm as graspclutter6d_synthetic_scm,
 )
 
 # benchmarking measures a running system instead of describing it
@@ -35,6 +37,7 @@ ignored_classes |= set(
 # describing the domain, and reads the dataset's own files instead of the domain's
 for comparison_module in (
     graspclutter6d_annotations,
+    graspclutter6d_baselines,
     graspclutter6d_evaluation,
     graspclutter6d_exceptions,
     graspclutter6d_flat_table,
@@ -44,6 +47,7 @@ for comparison_module in (
     graspclutter6d_report,
     graspclutter6d_run_pipeline,
     graspclutter6d_scene_store,
+    graspclutter6d_synthetic_scm,
 ):
     ignored_classes |= set(classes_of_module(comparison_module))
 

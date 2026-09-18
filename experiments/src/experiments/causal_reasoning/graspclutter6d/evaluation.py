@@ -919,11 +919,43 @@ def evaluate(
             for outcome in pipeline_report.outcomes:
                 outcome.repeat_duration = asker.time_repeat(pipeline, outcome.case)
         report.pipelines.append(pipeline_report)
+    report.pipelines.append(
+        regression_adjustment_report(training.scenes, cases, min_region_support)
+    )
     report.shared_coverage_log_likelihoods = {
         view: shared_coverage_log_likelihoods(values)
         for view, values in log_likelihoods.items()
     }
     return report
+
+
+def regression_adjustment_report(
+    scenes: Sequence[GraspClutterScene],
+    cases: Sequence[CausalQueryCase],
+    min_region_support: int,
+) -> PipelineReport:
+    """
+    Ask the regression-adjustment baseline every question, as a report shaped like a
+    pipeline's, with no likelihoods since it models no distribution.
+
+    :param scenes: The scenes to fit on.
+    :param cases: The questions.
+    :param min_region_support: The fewest training scenes a cause region may hold for
+        its effect to be read as an answer.
+    :return: The report.
+    """
+    from experiments.causal_reasoning.graspclutter6d.baselines import (
+        RegressionAdjustmentBaseline,
+    )
+
+    baseline = RegressionAdjustmentBaseline(min_region_support=min_region_support)
+    fit = baseline.fit(scenes)
+    return PipelineReport(
+        name=baseline.name,
+        fit=fit,
+        likelihoods={view: None for view in SceneView},
+        outcomes=[baseline.ask(case) for case in cases],
+    )
 
 
 # %% the order of the parts
