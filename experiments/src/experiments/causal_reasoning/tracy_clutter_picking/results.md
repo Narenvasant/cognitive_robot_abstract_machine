@@ -1,53 +1,34 @@
-# Tracy clutter picking: relational circuit against flat-table tree
+# Tracy clutter picking: relational circuit against flat-table trees
 
-Tracy's left arm picks one milk carton out of a clutter of ten in MuJoCo. The carton is
-held by contact friction alone, so a weak grasp visibly fails. Every attempt is recorded
-as a relational scene. The scene carries the attempt's own attributes (the environment,
-the grasp friction, the grasp yaw, whether the target came up and how far it rose) and
-one exchangeable part per neighbouring carton (where it stands relative to the target,
-its distance band, which side of the fingers' closing axis it is on, and how far the
-pick shoved it).
+Tracy's left arm picks one milk carton out of a ten-carton clutter in MuJoCo, holding it by contact friction alone. Every attempt is recorded as a relational scene: the attempt's own attributes (environment, grasp friction, grasp yaw, whether the target came up) and one exchangeable part per neighbouring carton (its position relative to the target, its distance band, which side of the fingers' closing axis it stands on, and how far the pick shoved it). Every recorded attempt has 9 neighbours, and they have no canonical order; the recording lists them in the order the layout was drawn, and nothing ties a position to an identity.
 
-Two pipelines were fitted on the same recorded attempts and asked the same
-`cause`/`causes_effect` EQL queries.
+Four pipelines were fitted on the same recorded attempts and asked the same `cause`/`causes_effect` EQL queries:
 
-- The **relational circuit** is a relational probabilistic circuit fitted on the
-  scenes' relational structure: one circuit over the attempt's own attributes and its
-  aggregation statistics, and one template over a neighbour's attributes. For every
-  query it grounds itself into a circuit over exactly the objects the query names and
-  registers that circuit as a causal circuit.
-- The **flat-table tree** is a joint probability tree fitted on the same attempts
-  flattened into one fixed-width table, with one block of columns per neighbour
-  position. It is registered as a causal circuit in the same way.
+- **relational circuit**: a relational probabilistic circuit fitted on the attempts' relational structure, one circuit over the attempt's own attributes and its aggregation count (neighbours adjacent to the target), one template over a neighbour's attributes, grounded per query into a circuit over exactly the queried attempt and neighbours and registered as a causal circuit;
+- **propositional tree**: a joint probability tree fitted on the attempts flattened into one table of the attempt's own attributes and the same count, the classic propositional summary of a relational example, registered as a causal circuit the same way;
+- **unrolled tree**: the same tree on a table that also carries every neighbour's attributes under the neighbour's position, so that a column means whatever neighbour an attempt happens to list at that position;
+- **scalars-only tree**: the same tree on the attempt's own attributes alone, what a flat learner sees without the relational feature extraction.
 
-Both answer a query by backdoor adjustment. The model is stratified so that it is
-support-deterministic over the cause, the probability of the effect is read off every
-region of the cause, and any variable the query marks as a confounder is summed out of
-that reading.
+Every flat tree answers a query by backdoor adjustment on a table column; the relational circuit does the same on the variable of a grounded circuit. In both, the model is stratified so it is support-deterministic over the cause, the effect's probability is read off every region of the cause, and any variable the query marks as a confounder is summed out of that reading. A query lists as many neighbours as the clutter it asks about has, with all their attributes open, which is what the relational circuit grounds itself for; a flat table ignores parts a query says nothing about, so it answers a question about a clutter of another size with the numbers it has for the recorded one, and refuses a query that constrains a column it does not have.
 
 ## Setup
 
-- Recorded attempts: 300, of which 240 were used to fit and 60 were held out.
-- Neighbours per attempt: 9.
-- Attempts whose target was lifted: 65.3%.
-- Fewest training rows per leaf: 15 in a cause-specific model and 50 in the plain
-  model that scores the held-out attempts.
+- attempts: 300 (240 to fit on, 60 held out)
+- attempts where the target is lifted: 65.3%
+- fewest training rows per leaf, as a share of the rows fitted on: 0.05 in a cause-specific model, 0.15 in the plain model that scores held-out attempts
+- split seed: 0
+- fewest training attempts a cause region may hold for its effect to be read as an answer: 10; a region below that is marked † in the tables and takes no part in any summary
 
-## How often the pick came up
+## How often the target is lifted
 
-These are the recorded attempts themselves, before any model is involved. Each table
-gives the share of attempts whose target was still held at the end, grouped by the
-environment the clutter stood in, by the friction coefficient of the grasp, and by how
-many neighbours stood adjacent to the target, that is, closer than the sweep of the
-fingers. This is the picking efficiency in clutter that the models are asked to
-explain.
+The attempts themselves, before any model: the share where the target is lifted, grouped by the environment the clutter stood in, by the grasp's friction coefficient, and by how many neighbours stood adjacent to the target (closer than the fingers' sweep). This is the signal the models are asked to explain.
 
-| environment | attempts | lifted |
+| environment | attempts | effect |
 |---|---|---|
 | bin | 158 | 45.6% |
 | table | 142 | 87.3% |
 
-| friction coefficient | attempts | lifted |
+| friction coefficient | attempts | effect |
 |---|---|---|
 | 0.125 | 76 | 0.0% |
 | 0.1875 | 78 | 87.2% |
@@ -56,7 +37,7 @@ explain.
 | 0.5 | 17 | 100.0% |
 | 0.75 | 26 | 100.0% |
 
-| adjacent neighbours | attempts | lifted |
+| adjacent neighbours | attempts | effect |
 |---|---|---|
 | 0 | 130 | 86.9% |
 | 1 | 28 | 85.7% |
@@ -65,295 +46,511 @@ explain.
 | 4 | 16 | 25.0% |
 | 5 | 5 | 40.0% |
 
-Three things stand out. Picks in a bin succeed half as often as picks on a table. The
-lowest friction level never holds the carton, while everything from 0.375 upwards
-always does, so the physics has a sharp threshold between 0.125 and 0.1875. And every
-adjacent neighbour costs success: a free-standing target comes up 87% of the time, a
-target with four adjacent neighbours only 25% of the time. The bin is where both the
-slippery cartons and the tight packing live, which is exactly why the questions below
-adjust for it.
 
 ## Which questions each pipeline can answer
 
-One row per question and one column per pipeline. An answered cell says in words which
-setting of the cause makes the effect most likely after adjustment, how likely the
-effect then is, and how that compares with the least favourable setting. A refused cell
-says why the pipeline could not answer at all. Neighbours are numbered from 1.
+One row per question, one column per pipeline. An answered cell says, in words, which setting of the cause makes the effect most likely after adjustment and how likely, against the least favourable setting, over the regions that hold enough training attempts to be read; a refused cell says why the pipeline could not answer at all.
 
-| question | relational circuit | flat-table tree |
-|---|---|---|
-| In a clutter of 9 neighbours, which grasp friction coefficient causes the target to be lifted, adjusting for the environment? | Answered. With a grasp friction coefficient of 0.375 the target is lifted with probability 1.00, the highest of any setting; with a coefficient of 0.125 it is only 0.00. | Answered. With a grasp friction coefficient of 0.375 the target is lifted with probability 1.00, the highest of any setting; with a coefficient of 0.125 it is only 0.00. |
-| In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for the environment? | Answered. With no adjacent neighbour the target is lifted with probability 0.88, the highest of any setting; with four adjacent neighbours it is only 0.23. | Answered. With no adjacent neighbour the target is lifted with probability 0.88, the highest of any setting; with four adjacent neighbours it is only 0.23. |
-| In a clutter of 9 neighbours, does neighbour 1 standing along the fingers' closing axis cause it to be disturbed by the pick? | Answered. With neighbour 1 standing along the closing axis it is disturbed with probability 0.17, the highest of any setting; standing across the axis it is only 0.01. | Answered. With neighbour 1 standing along the closing axis it is disturbed with probability 0.22, the highest of any setting; standing across the axis it is only 0.03. |
-| In a clutter of 4 neighbours, which grasp friction coefficient causes the target to be lifted, adjusting for the environment? | Answered. With a grasp friction coefficient of 0.375 the target is lifted with probability 1.00, the highest of any setting; with a coefficient of 0.125 it is only 0.00. | Answered. With a grasp friction coefficient of 0.375 the target is lifted with probability 1.00, the highest of any setting; with a coefficient of 0.125 it is only 0.00. |
-| In a clutter of 12 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for the environment? | Answered. With no adjacent neighbour the target is lifted with probability 0.88, the highest of any setting; with four adjacent neighbours it is only 0.23. | Refused: the fitted table has no column for the queried variables. |
-| In a clutter of 12 neighbours, does neighbour 12 standing along the fingers' closing axis cause it to be disturbed by the pick? | Answered. With neighbour 12 standing along the closing axis it is disturbed with probability 0.17, the highest of any setting; standing across the axis it is only 0.01. | Refused: the fitted table has no column for the queried variables. |
+| question | relational circuit | propositional tree | unrolled tree | scalars-only tree | regression adjustment |
+|---|---|---|---|---|---|
+| In a clutter of 9 neighbours, which grasp friction coefficient causes the target to be lifted, adjusting for the environment? | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.75, the target is lifted with probability 0.90, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.59. |
+| In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for the environment? | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | refused: the fitted table has no column for the queried variables. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.80, the highest of any setting; with 4 adjacent neighbours it is only 0.43. |
+| In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for ? | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | refused: the fitted table has no column for the queried variables. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.87, the highest of any setting; with 4 adjacent neighbours it is only 0.23. |
+| In a clutter of 9 neighbours, does neighbour 0 standing along the fingers' closing axis cause it to be disturbed by the pick? | answered: with neighbour 0 standing along the closing axis, neighbour 0 is disturbed with probability 0.18, the highest of any setting; with neighbour 0 standing across the closing axis it is only 0.03. | refused: the fitted table has no column for the queried variables. | answered: with neighbour 0 standing along the closing axis, neighbour 0 is disturbed with probability 0.22, the highest of any setting; with neighbour 0 standing across the closing axis it is only 0.03. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. |
+| In a clutter of 4 neighbours, which grasp friction coefficient causes the target to be lifted, adjusting for the environment? | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.75, the target is lifted with probability 0.90, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.59. |
+| In a clutter of 12 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for the environment? | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | refused: the fitted table has no column for the queried variables. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.80, the highest of any setting; with 4 adjacent neighbours it is only 0.43. |
+| In a clutter of 12 neighbours, does neighbour 11 standing along the fingers' closing axis cause it to be disturbed by the pick? | answered: with neighbour 11 standing along the closing axis, neighbour 11 is disturbed with probability 0.18, the highest of any setting; with neighbour 11 standing across the closing axis it is only 0.03. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. |
 
-The three questions about a clutter of the recorded size can be put to either
-pipeline. The two about a clutter of 12 have no columns in the flat table, so only a
-model that grounds itself for the queried objects can answer them. The question about a
-clutter of 4 asks about a subset of the fitted columns, which the flat table can still
-serve.
+A question about the crowding count needs the count: the scalars-only tree refuses it. A question whose cause and effect live on one neighbour needs the neighbours: the propositional tree refuses it, the unrolled tree answers it about whatever neighbour the attempts list at that position, and the relational circuit answers it about an exchangeable neighbour. The questions about clutters of other sizes are answered by the flat trees with the same numbers as for the recorded size, since nothing in a flat table tells the sizes apart; only a model that grounds itself for the queried objects gives a size its own answer, and only it can be asked about a neighbour beyond the last column of the unrolled table.
+
+## Trend and contrast
+
+The most effective setting is an argmax over up to twenty sparse regions and moves with the split. Two summaries that do not: *trend* is Spearman's rank correlation between the cause's value and the adjusted probability over the supported regions, for a numeric cause; *contrast* is the adjusted probability at the highest supported region minus at the lowest (for a symbolic cause, at the most effective minus at the least), with Newcombe's interval from the Wilson intervals of the two regions' support.
+
+| question | relational circuit, trend | relational circuit, contrast | propositional tree, trend | propositional tree, contrast | unrolled tree, trend | unrolled tree, contrast | scalars-only tree, trend | scalars-only tree, contrast | regression adjustment, trend | regression adjustment, contrast |
+|---|---|---|---|---|---|---|---|---|---|---|
+| friction_causes_lift_9_neighbours | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 1.00 | 0.31 [0.06, 0.46] (0.125 → 0.75) |
+| crowding_causes_lift_9_neighbours_adjusting_environment | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | - | - | -1.00 | -0.37 [-0.60, -0.10] (0 → 4) |
+| crowding_causes_lift_9_neighbours_adjusting_ | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | - | - | -1.00 | -0.64 [-0.80, -0.36] (0 → 4) |
+| closing_axis_side_causes_disturbance_of_neighbour_0_of_9 | - | 0.15 [0.12, 0.17] (across → along) | - | - | - | 0.19 [0.11, 0.28] (across → along) | - | - | - | - |
+| friction_causes_lift_4_neighbours | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 1.00 | 0.31 [0.06, 0.46] (0.125 → 0.75) |
+| crowding_causes_lift_12_neighbours_adjusting_environment | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | - | - | -1.00 | -0.37 [-0.60, -0.10] (0 → 4) |
+| closing_axis_side_causes_disturbance_of_neighbour_11_of_12 | - | 0.15 [0.12, 0.17] (across → along) | - | - | - | - | - | - | - | - |
+
+## What adjusting for changes
+
+The same count question under each set of confounders it was asked with, read off the relational circuit. *n* is how many training attempts hold that value of the cause; † marks a region below the support threshold.
+
+### crowding_count
+
+| cause region | n | naive | adjusted for the environment | unadjusted | adjusted for the environment |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.881 | 0.881 | 0.881 | 0.881 |
+| 1 | 24 | 0.875 | 0.868 | 0.875 | 0.868 |
+| 2 | 56 | 0.446 | 0.446 | 0.446 | 0.446 |
+| 3 | 41 | 0.415 | 0.415 | 0.415 | 0.415 |
+| 4 | 13 | 0.231 | 0.231 | 0.231 | 0.231 |
+| 5 † | 5 | 0.400 | 0.400 | 0.400 | 0.400 |
+
 
 ## Fit and likelihood
 
-This table shows what each pipeline cost and how well it explains attempts it never
-saw.
+What each pipeline cost. *Models fitted* counts the plain model plus one support-deterministic model per distinct cause the questions asked about and the pipeline could fit; *training seconds* and the *nodes*/*edges* of every fitted circuit are summed over them, which for the relational circuit includes the part templates.
 
-- *Models fitted* counts the plain model plus one support-deterministic model per
-  distinct cause the questions asked about.
-- *Training seconds* and the *nodes* and *edges* of every fitted circuit are summed
-  over all of those models.
-- *Held-out coverage* is the share of held-out attempts that lie inside the plain
-  model's support at all. A tree's leaves span only the value ranges they were fitted
-  on, so an attempt with any attribute outside every leaf's range has zero
-  likelihood.
-- The *mean log-likelihood* is taken over the covered attempts only, on an attempt's
-  observed attributes (its own scalars and every neighbour's). The last column restricts
-  it to the attempts both pipelines cover, so the two numbers are over the same rows.
+| pipeline | models fitted | training seconds | nodes | edges |
+|---|---|---|---|---|
+| relational circuit | 5 | 8.66 | 7266 | 7256 |
+| propositional tree | 3 | 0.93 | 2003 | 2000 |
+| unrolled tree | 4 | 5.09 | 24312 | 24308 |
+| scalars-only tree | 2 | 0.08 | 1022 | 1020 |
+| regression adjustment | 6 | 0.23 | 0 | 0 |
 
-| pipeline | models fitted | training seconds | nodes | edges | held-out coverage | mean log-likelihood (covered) | mean log-likelihood (covered by both) |
-|---|---|---|---|---|---|---|---|
-| relational circuit | 5 | 8.01 | 9942 | 9932 | 30.0% | 117.90 | 130.07 |
-| flat-table tree | 4 | 3.48 | 6838 | 6834 | 56.7% | 81.03 | 79.96 |
+How well each explains attempts it never saw, on three views of a attempt: its own scalars, which every pipeline models; its scalars and counts; and the whole attempt, parts included, which only the pipelines that model the parts can score. The relational circuit scores a whole attempt as its class circuit over the scalars and counts times each part template over one part given the counts; the unrolled tree scores it as one row. *Held-out coverage* is the share of held-out attempts that lie inside the plain model's support at all, since a tree's leaves span only the value ranges they were fitted on, and a whole attempt is covered only if every one of its parts is. The *mean log-likelihood* is over the covered attempts only; the last column restricts it to the attempts every pipeline in the table covers, so the numbers are over the same rows.
 
-The relational circuit fits one model more than the flat tree, because a cause on a
-neighbour attribute needs its own stratified template, and it is larger and slower to
-fit. Its template is fitted on every neighbour of every attempt, nine times as many
-rows as the flat table has, so its leaves are narrower and cover fewer held-out
-attempts. Where both models do cover an attempt, the relational circuit explains it
-markedly better: 130 against 80 in mean log-likelihood.
+### scalars
+
+| pipeline | held-out coverage | mean log-likelihood (covered) | mean log-likelihood (covered by all) |
+|---|---|---|---|
+| relational circuit | 88.3% | 15.25 | 15.37 |
+| propositional tree | 88.3% | 15.25 | 15.37 |
+| unrolled tree | 95.0% | 4.89 | 4.84 |
+| scalars-only tree | 90.0% | 9.33 | 9.27 |
+
+### scalars and counts
+
+| pipeline | held-out coverage | mean log-likelihood (covered) | mean log-likelihood (covered by all) |
+|---|---|---|---|
+| relational circuit | 85.0% | 12.67 | 12.86 |
+| propositional tree | 85.0% | 12.67 | 12.86 |
+| unrolled tree | 95.0% | 3.67 | 3.63 |
+
+### whole attempt
+
+| pipeline | held-out coverage | mean log-likelihood (covered) | mean log-likelihood (covered by all) |
+|---|---|---|---|
+| relational circuit | 78.3% | 141.63 | 154.33 |
+| unrolled tree | 43.3% | 91.00 | 88.87 |
 
 ## Seconds per question
 
-Wall-clock time from asking a question to its answer or its refusal. The *first ask*
-of a cause includes fitting that cause's own support-deterministic model. *Asked again*
-repeats the question with every model already fitted, so only grounding (for the
-relational circuit), verification and backdoor adjustment remain. A refusal is fast when
-it is a schema check; a relational answer about a larger clutter grounds a larger
-circuit and takes longer.
+Wall-clock time from asking to the answer or the refusal. The *first ask* of a cause includes fitting that cause's own support-deterministic model; *asked again* repeats the question with every model fitted, so only grounding (for the relational circuit), verification and backdoor adjustment remain. A refusal is fast when it is a schema check; a relational answer draws Monte-Carlo samples for every count the query leaves open and grounds one part template per sampled value, which is where its time goes.
 
-| question | relational circuit, first ask | relational circuit, asked again | flat-table tree, first ask | flat-table tree, asked again |
-|---|---|---|---|---|
-| friction causes lift, 9 neighbours | 5.37 | 4.82 | 1.59 | 0.16 |
-| crowding causes lift, 9 neighbours | 6.18 | 5.43 | 1.22 | 0.19 |
-| closing-axis side of neighbour 1 causes disturbance, 9 neighbours | 7.92 | 6.90 | 0.70 | 0.10 |
-| friction causes lift, 4 neighbours | 2.57 | 2.60 | 0.15 | 1.11 |
-| crowding causes lift, 12 neighbours | 8.21 | 8.11 | 0.04 | 0.05 |
-| closing-axis side of neighbour 12 causes disturbance, 12 neighbours | 11.71 | 8.82 | 0.26 | 0.26 |
+| question | relational circuit, first ask | relational circuit, asked again | propositional tree, first ask | propositional tree, asked again | unrolled tree, first ask | unrolled tree, asked again | scalars-only tree, first ask | scalars-only tree, asked again | regression adjustment, first ask | regression adjustment, asked again |
+|---|---|---|---|---|---|---|---|---|---|---|
+| friction_causes_lift_9_neighbours | 5.05 | 4.04 | 1.00 | 0.59 | 3.22 | 0.97 | 0.69 | 1.09 | 0.05 | - |
+| crowding_causes_lift_9_neighbours_adjusting_environment | 4.90 | 4.23 | 0.95 | 1.10 | 2.97 | 1.30 | 0.03 | 0.03 | 0.07 | - |
+| crowding_causes_lift_9_neighbours_adjusting_ | 3.42 | 3.59 | 0.32 | 0.32 | 0.57 | 0.60 | 0.03 | 0.03 | 0.06 | - |
+| closing_axis_side_causes_disturbance_of_neighbour_0_of_9 | 5.13 | 4.76 | 0.03 | 0.03 | 1.64 | 0.25 | 0.03 | 0.03 | 0.03 | - |
+| friction_causes_lift_4_neighbours | 1.79 | 2.44 | 0.61 | 0.60 | 0.96 | 0.95 | 0.59 | 0.59 | 0.03 | - |
+| crowding_causes_lift_12_neighbours_adjusting_environment | 4.97 | 5.01 | 0.59 | 0.57 | 1.35 | 1.42 | 0.04 | 0.05 | 0.10 | - |
+| closing_axis_side_causes_disturbance_of_neighbour_11_of_12 | 7.45 | 6.58 | 0.05 | 0.06 | 0.05 | 0.05 | 0.04 | 0.04 | 0.07 | - |
 
 ## What the results show
 
-- The relational circuit answered all six questions.
-- The flat-table tree answered four of the six. It refused the two questions about a
-  clutter of 12 neighbours, because the fitted table has no column for the queried
-  variables.
-- On the friction question about 9 neighbours, both pipelines find a grasp friction
-  coefficient of 0.375 the most effective setting, with an adjusted probability of
-  1.00 each.
-- On the crowding question about 9 neighbours, both pipelines find no adjacent
-  neighbour the most effective setting, with an adjusted probability of 0.88 each.
-- On the question about neighbour 1 of 9, both pipelines find standing along the
-  closing axis the most effective setting, with adjusted probabilities of 0.17 and
-  0.22.
-- On the friction question about 4 neighbours, both pipelines again find a coefficient
-  of 0.375 the most effective setting, with an adjusted probability of 1.00 each.
-- The flat-table tree covers the most held-out attempts (56.7%). On the attempts both
-  pipelines cover, the relational circuit assigns the higher mean log-likelihood
-  (130.07).
-- Once its models are fitted, the relational circuit takes 6.11 seconds per answered
-  question on average and the flat-table tree 0.39 seconds.
-
-Read together: wherever both pipelines can answer, they agree on the effective setting
-and, for scene-level causes, on the numbers to the third decimal, because they are
-fitted on the same rows and stratified the same way. The relational circuit's advantage
-is not a different answer but a wider reach. It answers about clutters of a different
-size than it was fitted on, and about any neighbour by position, because it derives the
-crowding count and the neighbour attributes from the relational structure instead of
-reading them off fixed columns. It pays for that with roughly fifteen times the query
-latency of the flat tree.
+- The relational circuit answered 7 of 7 questions.
+- The propositional tree answered 5 of 7 questions, refusing `closing_axis_side_causes_disturbance_of_neighbour_0_of_9` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_11_of_12` because the fitted table has no column for the queried variables.
+- The unrolled tree answered 6 of 7 questions, refusing `closing_axis_side_causes_disturbance_of_neighbour_11_of_12` because the fitted table has no column for the queried variables.
+- The scalars-only tree answered 2 of 7 questions, refusing `crowding_causes_lift_9_neighbours_adjusting_environment` because the fitted table has no column for the queried variables; `crowding_causes_lift_9_neighbours_adjusting_` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_0_of_9` because the fitted table has no column for the queried variables; `crowding_causes_lift_12_neighbours_adjusting_environment` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_11_of_12` because the fitted table has no column for the queried variables.
+- The regression adjustment answered 5 of 7 questions, refusing `closing_axis_side_causes_disturbance_of_neighbour_0_of_9` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_11_of_12` because the fitted table has no column for the queried variables.
+- On `friction_causes_lift_9_neighbours`, the pipelines disagree on the most effective setting: the relational circuit says a grasp friction coefficient of 0.375 (1.00); the propositional tree says a grasp friction coefficient of 0.375 (1.00); the unrolled tree says a grasp friction coefficient of 0.375 (1.00); the scalars-only tree says a grasp friction coefficient of 0.375 (1.00); the regression adjustment says a grasp friction coefficient of 0.75 (0.90).
+- On `crowding_causes_lift_9_neighbours_adjusting_environment`, every pipeline that answered finds 0 adjacent neighbours the most effective setting (adjusted probabilities: relational circuit 0.88, propositional tree 0.88, unrolled tree 0.88, regression adjustment 0.80).
+- On `crowding_causes_lift_9_neighbours_adjusting_`, every pipeline that answered finds 0 adjacent neighbours the most effective setting (adjusted probabilities: relational circuit 0.88, propositional tree 0.88, unrolled tree 0.88, regression adjustment 0.87).
+- On `closing_axis_side_causes_disturbance_of_neighbour_0_of_9`, every pipeline that answered finds neighbour 0 standing along the closing axis the most effective setting (adjusted probabilities: relational circuit 0.18, unrolled tree 0.22).
+- On `friction_causes_lift_4_neighbours`, the pipelines disagree on the most effective setting: the relational circuit says a grasp friction coefficient of 0.375 (1.00); the propositional tree says a grasp friction coefficient of 0.375 (1.00); the unrolled tree says a grasp friction coefficient of 0.375 (1.00); the scalars-only tree says a grasp friction coefficient of 0.375 (1.00); the regression adjustment says a grasp friction coefficient of 0.75 (0.90).
+- On `crowding_causes_lift_12_neighbours_adjusting_environment`, every pipeline that answered finds 0 adjacent neighbours the most effective setting (adjusted probabilities: relational circuit 0.88, propositional tree 0.88, unrolled tree 0.88, regression adjustment 0.80).
+- On the scalars, the relational circuit assigns the highest mean log-likelihood (15.37, against propositional tree 15.37, unrolled tree 4.84, scalars-only tree 9.27) to the held-out attempts every pipeline covers; coverage: relational circuit 88.3%, propositional tree 88.3%, unrolled tree 95.0%, scalars-only tree 90.0%.
+- On the scalars and counts, the propositional tree assigns the highest mean log-likelihood (12.86, against relational circuit 12.86, unrolled tree 3.63) to the held-out attempts every pipeline covers; coverage: relational circuit 85.0%, propositional tree 85.0%, unrolled tree 95.0%.
+- On the whole attempt, the relational circuit assigns the highest mean log-likelihood (154.33, against unrolled tree 88.87) to the held-out attempts every pipeline covers; coverage: relational circuit 78.3%, unrolled tree 43.3%.
+- The relational circuit takes 4.38 seconds per answered question on average once its models are fitted.
+- The propositional tree takes 0.64 seconds per answered question on average once its models are fitted.
+- The unrolled tree takes 0.91 seconds per answered question on average once its models are fitted.
+- The scalars-only tree takes 0.84 seconds per answered question on average once its models are fitted.
+- The regression adjustment takes - seconds per answered question on average once its models are fitted.
 
 ## In a clutter of 9 neighbours, which grasp friction coefficient causes the target to be lifted, adjusting for the environment?
 
-Each interventional table below has one row per region of the cause that the model
-distinguishes. *P(region)* is how much of the recorded population that region holds.
-*Naive P(effect)* is the probability of the effect simply conditioned on the region.
-*Adjusted* is the interventional probability after summing out the question's
-confounders, which is what the question asks for. Where the two columns agree, the
-confounder carried no extra information within that region.
+One row per region of the cause the model distinguishes. *n* is how many training rows the region holds, and † marks a region below the support threshold; *P(region)* is how much of the fitted population it holds; *naive P(effect)* is the effect's probability simply conditioned on the region; *adjusted* is the interventional probability after summing out the question's confounders, which is what the question asks for, and the *interval* is its Wilson interval over the region's n. Where naive and adjusted agree, the confounders carried no further information within that region.
 
 ### relational circuit
 
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| 0.125 | 0.242 | 0.000 | 0.000 |
-| 0.1875 | 0.271 | 0.862 | 0.885 |
-| 0.25 | 0.275 | 0.758 | 0.790 |
-| 0.375 | 0.075 | 1.000 | 1.000 |
-| 0.5 | 0.062 | 1.000 | 1.000 |
-| 0.75 | 0.075 | 1.000 | 1.000 |
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.000 | [0.00, 0.06] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.885 | [0.78, 0.94] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.790 | [0.68, 0.87] |
+| 0.375 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+| 0.5 | 15 | 0.062 | 1.000 | 1.000 | [0.80, 1.00] |
+| 0.75 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
 
-EQL's own `cause` search settles on 0.1875, the region that is most probable once the
-effect is required to hold and from which the query's samples are drawn; its adjusted
-probability of the effect is 0.88.
+EQL's own `cause` search settles on 0.1875: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
 
-### flat-table tree
+### propositional tree
 
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| 0.125 | 0.242 | 0.000 | 0.000 |
-| 0.1875 | 0.271 | 0.862 | 0.862 |
-| 0.25 | 0.275 | 0.758 | 0.757 |
-| 0.375 | 0.075 | 1.000 | 1.000 |
-| 0.5 | 0.062 | 1.000 | 1.000 |
-| 0.75 | 0.075 | 1.000 | 1.000 |
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.000 | [0.00, 0.06] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.885 | [0.78, 0.94] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.790 | [0.68, 0.87] |
+| 0.375 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+| 0.5 | 15 | 0.062 | 1.000 | 1.000 | [0.80, 1.00] |
+| 0.75 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
 
-EQL's own `cause` search settles on 0.1875, with an adjusted probability of the effect
-of 0.86.
+EQL's own `cause` search settles on 0.1875: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
 
-The effect of friction is monotone and sharp: no lift at 0.125, a lift in most attempts
-from 0.1875 upwards, and a certain lift from 0.375. The adjustment for the environment
-nudges the two middle levels upwards in the relational circuit (0.862 to 0.885 and
-0.758 to 0.790), because at those levels the bin, with its crowded cartons, drags the
-naive rate down; the flat tree's leaves are wider and absorb that difference.
+### unrolled tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.000 | [0.00, 0.06] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.883 | [0.78, 0.94] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.782 | [0.67, 0.86] |
+| 0.375 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+| 0.5 | 15 | 0.062 | 1.000 | 1.000 | [0.80, 1.00] |
+| 0.75 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+
+EQL's own `cause` search settles on 0.1875: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### scalars-only tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.000 | [0.00, 0.06] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.885 | [0.78, 0.94] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.790 | [0.68, 0.87] |
+| 0.375 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+| 0.5 | 15 | 0.062 | 1.000 | 1.000 | [0.80, 1.00] |
+| 0.75 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+
+EQL's own `cause` search settles on 0.1875: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### regression adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.591 | [0.46, 0.71] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.632 | [0.51, 0.74] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.671 | [0.55, 0.77] |
+| 0.375 | 18 | 0.075 | 1.000 | 0.744 | [0.51, 0.89] |
+| 0.5 | 15 | 0.062 | 1.000 | 0.807 | [0.56, 0.93] |
+| 0.75 | 18 | 0.075 | 1.000 | 0.899 | [0.68, 0.97] |
+
+EQL's own `cause` search settles on 0.75: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.90).
+
 
 ## In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for the environment?
 
-### relational circuit
-
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| 0 | 0.421 | 0.881 | 0.881 |
-| 1 | 0.100 | 0.875 | 0.875 |
-| 2 | 0.233 | 0.446 | 0.446 |
-| 3 | 0.171 | 0.415 | 0.415 |
-| 4 | 0.054 | 0.231 | 0.231 |
-| 5 | 0.021 | 0.400 | 0.400 |
-
-EQL's own `cause` search settles on 0 adjacent neighbours, with an adjusted probability
-of the effect of 0.88.
-
-### flat-table tree
-
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| 0 | 0.421 | 0.881 | 0.881 |
-| 1 | 0.100 | 0.875 | 0.875 |
-| 2 | 0.233 | 0.446 | 0.446 |
-| 3 | 0.171 | 0.415 | 0.415 |
-| 4 | 0.054 | 0.231 | 0.231 |
-| 5 | 0.021 | 0.400 | 0.400 |
-
-EQL's own `cause` search settles on 0 adjacent neighbours, with an adjusted probability
-of the effect of 0.88.
-
-One adjacent neighbour costs almost nothing; the second halves the chance of a lift and
-the fourth quarters it. The value at five neighbours rests on five attempts and should
-not be read as a recovery.
-
-## In a clutter of 9 neighbours, does neighbour 1 standing along the fingers' closing axis cause it to be disturbed by the pick?
+One row per region of the cause the model distinguishes. *n* is how many training rows the region holds, and † marks a region below the support threshold; *P(region)* is how much of the fitted population it holds; *naive P(effect)* is the effect's probability simply conditioned on the region; *adjusted* is the interventional probability after summing out the question's confounders, which is what the question asks for, and the *interval* is its Wilson interval over the region's n. Where naive and adjusted agree, the confounders carried no further information within that region.
 
 ### relational circuit
 
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| across | 0.496 | 0.012 | 0.012 |
-| along | 0.504 | 0.170 | 0.170 |
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.881 | [0.80, 0.93] |
+| 1 | 24 | 0.100 | 0.875 | 0.868 | [0.68, 0.95] |
+| 2 | 56 | 0.233 | 0.446 | 0.446 | [0.32, 0.58] |
+| 3 | 41 | 0.171 | 0.415 | 0.415 | [0.28, 0.57] |
+| 4 | 13 | 0.054 | 0.231 | 0.231 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.400 | [0.12, 0.77] |
 
-EQL's own `cause` search settles on *along*, with an adjusted probability of the effect
-of 0.17.
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
 
-### flat-table tree
+### propositional tree
 
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| across | 0.471 | 0.027 | 0.027 |
-| along | 0.529 | 0.220 | 0.220 |
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.881 | [0.80, 0.93] |
+| 1 | 24 | 0.100 | 0.875 | 0.868 | [0.68, 0.95] |
+| 2 | 56 | 0.233 | 0.446 | 0.446 | [0.32, 0.58] |
+| 3 | 41 | 0.171 | 0.415 | 0.415 | [0.28, 0.57] |
+| 4 | 13 | 0.054 | 0.231 | 0.231 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.400 | [0.12, 0.77] |
 
-EQL's own `cause` search settles on *along*, with an adjusted probability of the effect
-of 0.22.
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
 
-A neighbour standing where the fingers close is disturbed roughly fourteen times as
-often as one standing to the side. The two pipelines differ here because the relational
-template pools every neighbour of every attempt, while the flat tree sees only the
-columns of neighbour 1, so the relational estimate rests on nine times as many rows.
+### unrolled tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.881 | [0.80, 0.93] |
+| 1 | 24 | 0.100 | 0.875 | 0.870 | [0.68, 0.95] |
+| 2 | 56 | 0.233 | 0.446 | 0.446 | [0.32, 0.58] |
+| 3 | 41 | 0.171 | 0.415 | 0.415 | [0.28, 0.57] |
+| 4 | 13 | 0.054 | 0.231 | 0.231 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.400 | [0.12, 0.77] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### scalars-only tree
+
+Refused: the fitted table has no column for the queried variables.
+
+### regression adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.798 | [0.71, 0.86] |
+| 1 | 24 | 0.100 | 0.875 | 0.721 | [0.52, 0.86] |
+| 2 | 56 | 0.233 | 0.446 | 0.629 | [0.50, 0.74] |
+| 3 | 41 | 0.171 | 0.415 | 0.529 | [0.38, 0.67] |
+| 4 | 13 | 0.054 | 0.231 | 0.426 | [0.21, 0.68] |
+| 5 † | 5 | 0.021 | 0.400 | 0.329 | [0.08, 0.72] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.80).
+
+
+## In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for ?
+
+One row per region of the cause the model distinguishes. *n* is how many training rows the region holds, and † marks a region below the support threshold; *P(region)* is how much of the fitted population it holds; *naive P(effect)* is the effect's probability simply conditioned on the region; *adjusted* is the interventional probability after summing out the question's confounders, which is what the question asks for, and the *interval* is its Wilson interval over the region's n. Where naive and adjusted agree, the confounders carried no further information within that region.
+
+### relational circuit
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.881 | [0.80, 0.93] |
+| 1 | 24 | 0.100 | 0.875 | 0.875 | [0.69, 0.96] |
+| 2 | 56 | 0.233 | 0.446 | 0.446 | [0.32, 0.58] |
+| 3 | 41 | 0.171 | 0.415 | 0.415 | [0.28, 0.57] |
+| 4 | 13 | 0.054 | 0.231 | 0.231 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.400 | [0.12, 0.77] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### propositional tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.881 | [0.80, 0.93] |
+| 1 | 24 | 0.100 | 0.875 | 0.875 | [0.69, 0.96] |
+| 2 | 56 | 0.233 | 0.446 | 0.446 | [0.32, 0.58] |
+| 3 | 41 | 0.171 | 0.415 | 0.415 | [0.28, 0.57] |
+| 4 | 13 | 0.054 | 0.231 | 0.231 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.400 | [0.12, 0.77] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### unrolled tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.881 | [0.80, 0.93] |
+| 1 | 24 | 0.100 | 0.875 | 0.875 | [0.69, 0.96] |
+| 2 | 56 | 0.233 | 0.446 | 0.446 | [0.32, 0.58] |
+| 3 | 41 | 0.171 | 0.415 | 0.415 | [0.28, 0.57] |
+| 4 | 13 | 0.054 | 0.231 | 0.231 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.400 | [0.12, 0.77] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### scalars-only tree
+
+Refused: the fitted table has no column for the queried variables.
+
+### regression adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.865 | [0.79, 0.92] |
+| 1 | 24 | 0.100 | 0.875 | 0.748 | [0.55, 0.88] |
+| 2 | 56 | 0.233 | 0.446 | 0.577 | [0.45, 0.70] |
+| 3 | 41 | 0.171 | 0.415 | 0.386 | [0.25, 0.54] |
+| 4 | 13 | 0.054 | 0.231 | 0.225 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.118 | [0.01, 0.55] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.87).
+
+
+## In a clutter of 9 neighbours, does neighbour 0 standing along the fingers' closing axis cause it to be disturbed by the pick?
+
+One row per region of the cause the model distinguishes. *n* is how many training rows the region holds, and † marks a region below the support threshold; *P(region)* is how much of the fitted population it holds; *naive P(effect)* is the effect's probability simply conditioned on the region; *adjusted* is the interventional probability after summing out the question's confounders, which is what the question asks for, and the *interval* is its Wilson interval over the region's n. Where naive and adjusted agree, the confounders carried no further information within that region.
+
+### relational circuit
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| across | 1089 | 0.496 | 0.028 | 0.028 | [0.02, 0.04] |
+| along | 1071 | 0.504 | 0.178 | 0.178 | [0.16, 0.20] |
+
+EQL's own `cause` search settles on along: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.18).
+
+### propositional tree
+
+Refused: the fitted table has no column for the queried variables.
+
+### unrolled tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| across | 113 | 0.471 | 0.027 | 0.027 | [0.01, 0.08] |
+| along | 127 | 0.529 | 0.220 | 0.220 | [0.16, 0.30] |
+
+EQL's own `cause` search settles on along: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.22).
+
+### scalars-only tree
+
+Refused: the fitted table has no column for the queried variables.
+
+### regression adjustment
+
+Refused: the fitted table has no column for the queried variables.
+
 
 ## In a clutter of 4 neighbours, which grasp friction coefficient causes the target to be lifted, adjusting for the environment?
 
+One row per region of the cause the model distinguishes. *n* is how many training rows the region holds, and † marks a region below the support threshold; *P(region)* is how much of the fitted population it holds; *naive P(effect)* is the effect's probability simply conditioned on the region; *adjusted* is the interventional probability after summing out the question's confounders, which is what the question asks for, and the *interval* is its Wilson interval over the region's n. Where naive and adjusted agree, the confounders carried no further information within that region.
+
 ### relational circuit
 
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| 0.125 | 0.242 | 0.000 | 0.000 |
-| 0.1875 | 0.271 | 0.862 | 0.885 |
-| 0.25 | 0.275 | 0.758 | 0.790 |
-| 0.375 | 0.075 | 1.000 | 1.000 |
-| 0.5 | 0.062 | 1.000 | 1.000 |
-| 0.75 | 0.075 | 1.000 | 1.000 |
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.000 | [0.00, 0.06] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.885 | [0.78, 0.94] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.790 | [0.68, 0.87] |
+| 0.375 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+| 0.5 | 15 | 0.062 | 1.000 | 1.000 | [0.80, 1.00] |
+| 0.75 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
 
-EQL's own `cause` search settles on 0.1875, with an adjusted probability of the effect
-of 0.88.
+EQL's own `cause` search settles on 0.1875: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
 
-### flat-table tree
+### propositional tree
 
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| 0.125 | 0.242 | 0.000 | 0.000 |
-| 0.1875 | 0.271 | 0.862 | 0.862 |
-| 0.25 | 0.275 | 0.758 | 0.757 |
-| 0.375 | 0.075 | 1.000 | 1.000 |
-| 0.5 | 0.062 | 1.000 | 1.000 |
-| 0.75 | 0.075 | 1.000 | 1.000 |
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.000 | [0.00, 0.06] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.885 | [0.78, 0.94] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.790 | [0.68, 0.87] |
+| 0.375 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+| 0.5 | 15 | 0.062 | 1.000 | 1.000 | [0.80, 1.00] |
+| 0.75 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
 
-EQL's own `cause` search settles on 0.1875, with an adjusted probability of the effect
-of 0.86.
+EQL's own `cause` search settles on 0.1875: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
 
-The flat tree can answer this one despite the different clutter size because the
-question names four neighbours and the table has columns for nine: the query's
-variables are a subset of the fitted ones. The answer is the scene-level friction
-effect, which does not depend on how many neighbours the query names.
+### unrolled tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.000 | [0.00, 0.06] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.883 | [0.78, 0.94] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.782 | [0.67, 0.86] |
+| 0.375 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+| 0.5 | 15 | 0.062 | 1.000 | 1.000 | [0.80, 1.00] |
+| 0.75 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+
+EQL's own `cause` search settles on 0.1875: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### scalars-only tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.000 | [0.00, 0.06] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.885 | [0.78, 0.94] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.790 | [0.68, 0.87] |
+| 0.375 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+| 0.5 | 15 | 0.062 | 1.000 | 1.000 | [0.80, 1.00] |
+| 0.75 | 18 | 0.075 | 1.000 | 1.000 | [0.82, 1.00] |
+
+EQL's own `cause` search settles on 0.1875: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### regression adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0.125 | 58 | 0.242 | 0.000 | 0.591 | [0.46, 0.71] |
+| 0.1875 | 65 | 0.271 | 0.862 | 0.632 | [0.51, 0.74] |
+| 0.25 | 66 | 0.275 | 0.758 | 0.671 | [0.55, 0.77] |
+| 0.375 | 18 | 0.075 | 1.000 | 0.744 | [0.51, 0.89] |
+| 0.5 | 15 | 0.062 | 1.000 | 0.807 | [0.56, 0.93] |
+| 0.75 | 18 | 0.075 | 1.000 | 0.899 | [0.68, 0.97] |
+
+EQL's own `cause` search settles on 0.75: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.90).
+
 
 ## In a clutter of 12 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for the environment?
 
-### relational circuit
-
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| 0 | 0.421 | 0.881 | 0.881 |
-| 1 | 0.100 | 0.875 | 0.875 |
-| 2 | 0.233 | 0.446 | 0.446 |
-| 3 | 0.171 | 0.415 | 0.415 |
-| 4 | 0.054 | 0.231 | 0.231 |
-| 5 | 0.021 | 0.400 | 0.400 |
-
-EQL's own `cause` search settles on 0 adjacent neighbours, with an adjusted probability
-of the effect of 0.88.
-
-### flat-table tree
-
-Refused: the fitted table has no column for the queried variables.
-
-The relational circuit grounds twelve neighbour templates under the same class circuit
-and reads the crowding count off them, so its answer is the one it gave for nine
-neighbours. The flat tree has no columns for a tenth, eleventh or twelfth neighbour
-and cannot be asked.
-
-## In a clutter of 12 neighbours, does neighbour 12 standing along the fingers' closing axis cause it to be disturbed by the pick?
+One row per region of the cause the model distinguishes. *n* is how many training rows the region holds, and † marks a region below the support threshold; *P(region)* is how much of the fitted population it holds; *naive P(effect)* is the effect's probability simply conditioned on the region; *adjusted* is the interventional probability after summing out the question's confounders, which is what the question asks for, and the *interval* is its Wilson interval over the region's n. Where naive and adjusted agree, the confounders carried no further information within that region.
 
 ### relational circuit
 
-| cause region | P(region) | naive P(effect) | adjusted P(effect given do(cause)) |
-|---|---|---|---|
-| across | 0.496 | 0.012 | 0.012 |
-| along | 0.504 | 0.170 | 0.170 |
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.881 | [0.80, 0.93] |
+| 1 | 24 | 0.100 | 0.875 | 0.868 | [0.68, 0.95] |
+| 2 | 56 | 0.233 | 0.446 | 0.446 | [0.32, 0.58] |
+| 3 | 41 | 0.171 | 0.415 | 0.415 | [0.28, 0.57] |
+| 4 | 13 | 0.054 | 0.231 | 0.231 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.400 | [0.12, 0.77] |
 
-EQL's own `cause` search settles on *along*, with an adjusted probability of the effect
-of 0.17.
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
 
-### flat-table tree
+### propositional tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.881 | [0.80, 0.93] |
+| 1 | 24 | 0.100 | 0.875 | 0.868 | [0.68, 0.95] |
+| 2 | 56 | 0.233 | 0.446 | 0.446 | [0.32, 0.58] |
+| 3 | 41 | 0.171 | 0.415 | 0.415 | [0.28, 0.57] |
+| 4 | 13 | 0.054 | 0.231 | 0.231 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.400 | [0.12, 0.77] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### unrolled tree
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.881 | [0.80, 0.93] |
+| 1 | 24 | 0.100 | 0.875 | 0.870 | [0.68, 0.95] |
+| 2 | 56 | 0.233 | 0.446 | 0.446 | [0.32, 0.58] |
+| 3 | 41 | 0.171 | 0.415 | 0.415 | [0.28, 0.57] |
+| 4 | 13 | 0.054 | 0.231 | 0.231 | [0.08, 0.50] |
+| 5 † | 5 | 0.021 | 0.400 | 0.400 | [0.12, 0.77] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.88).
+
+### scalars-only tree
 
 Refused: the fitted table has no column for the queried variables.
 
-Because the neighbours are exchangeable parts, the relational circuit's answer for the
-twelfth neighbour of twelve is the same as for the first of nine. The flat tree would
-need a column block for a twelfth neighbour and a separate stratified model for it.
+### regression adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 101 | 0.421 | 0.881 | 0.798 | [0.71, 0.86] |
+| 1 | 24 | 0.100 | 0.875 | 0.721 | [0.52, 0.86] |
+| 2 | 56 | 0.233 | 0.446 | 0.629 | [0.50, 0.74] |
+| 3 | 41 | 0.171 | 0.415 | 0.529 | [0.38, 0.67] |
+| 4 | 13 | 0.054 | 0.231 | 0.426 | [0.21, 0.68] |
+| 5 † | 5 | 0.021 | 0.400 | 0.329 | [0.08, 0.72] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.80).
+
+
+## In a clutter of 12 neighbours, does neighbour 11 standing along the fingers' closing axis cause it to be disturbed by the pick?
+
+One row per region of the cause the model distinguishes. *n* is how many training rows the region holds, and † marks a region below the support threshold; *P(region)* is how much of the fitted population it holds; *naive P(effect)* is the effect's probability simply conditioned on the region; *adjusted* is the interventional probability after summing out the question's confounders, which is what the question asks for, and the *interval* is its Wilson interval over the region's n. Where naive and adjusted agree, the confounders carried no further information within that region.
+
+### relational circuit
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| across | 1089 | 0.496 | 0.028 | 0.028 | [0.02, 0.04] |
+| along | 1071 | 0.504 | 0.178 | 0.178 | [0.16, 0.20] |
+
+EQL's own `cause` search settles on along: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.18).
+
+### propositional tree
+
+Refused: the fitted table has no column for the queried variables.
+
+### unrolled tree
+
+Refused: the fitted table has no column for the queried variables.
+
+### scalars-only tree
+
+Refused: the fitted table has no column for the queried variables.
+
+### regression adjustment
+
+Refused: the fitted table has no column for the queried variables.
+

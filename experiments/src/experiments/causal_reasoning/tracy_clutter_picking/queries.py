@@ -123,19 +123,25 @@ class CrowdingCausesLift(AttemptQueryCase, AdjustedCountCase):
 
     @property
     def name(self) -> str:
-        adjusting = "_and_".join(confounder.name for confounder in self.confounders)
-        return (
-            f"crowding_causes_lift_{self.neighbour_count}_neighbours"
-            f"_adjusting_{adjusting}"
+        adjusting = (
+            "adjusting_"
+            + "_and_".join(confounder.name for confounder in self.confounders)
+            if self.confounders
+            else "unadjusted"
         )
+        return f"crowding_causes_lift_{self.neighbour_count}_neighbours_{adjusting}"
 
     @property
     def question(self) -> str:
-        adjusting = " and ".join(confounder.noun for confounder in self.confounders)
+        adjusting = (
+            "adjusting for "
+            + " and ".join(confounder.noun for confounder in self.confounders)
+            if self.confounders
+            else "with nothing adjusted for"
+        )
         return (
             f"In a clutter of {self.neighbour_count} neighbours, how many of them "
-            "standing adjacent to the target causes it to be lifted, adjusting for "
-            f"{adjusting}?"
+            f"standing adjacent to the target causes it to be lifted, {adjusting}?"
         )
 
     def build(self) -> Match:

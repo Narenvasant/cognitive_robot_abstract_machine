@@ -112,6 +112,14 @@ def test_the_crowding_question_is_asked_adjusted_and_unadjusted(
     assert adjustments == [(ENVIRONMENT,), ()]
 
 
+def test_the_unadjusted_crowding_question_says_so(recorded_neighbour_count):
+    unadjusted = CrowdingCausesLift(
+        open_part_count=recorded_neighbour_count, confounders=()
+    )
+    assert unadjusted.name == "crowding_causes_lift_5_neighbours_unadjusted"
+    assert unadjusted.question.endswith("with nothing adjusted for?")
+
+
 def test_report_splits_the_dataset(report):
     assert report.training_example_count == 96
     assert report.test_example_count == 24

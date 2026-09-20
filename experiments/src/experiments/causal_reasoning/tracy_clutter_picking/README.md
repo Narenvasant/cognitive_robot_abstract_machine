@@ -149,11 +149,11 @@ recorded size and again about a clutter of another size.
    live on one part.
 
 Neighbours are numbered from 0. The relational circuit grounds itself for whatever
-objects a query names, so it answers about 4 or 12 neighbours from attempts recorded
-with 9, and its answer changes with the size. A flat table ignores the parts a query
-merely lists, so the trees answer the questions about 4 or 12 neighbours with the very
-numbers they give for 9; and the unrolled tree has columns for 9 neighbours and nothing
-else, so it refuses the question about the twelfth.
+objects a query names, so it can be asked about 4 or 12 neighbours from attempts
+recorded with 9, and about any neighbour by index. A flat table ignores the parts a
+query merely lists, so the trees answer the questions about 4 or 12 neighbours with the
+very numbers they give for 9; and the unrolled tree has columns for 9 neighbours and
+nothing else, so it refuses the question about the twelfth.
 
 Every answer is read per region of the cause with the number of training attempts the
 region holds, a Wilson interval on the adjusted probability, and two summaries that do
