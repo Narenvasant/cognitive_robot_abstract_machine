@@ -724,6 +724,16 @@ class EvaluationReport:
     read as an answer.
     """
 
+    min_samples_per_leaf: float = 0.0
+    """
+    The share of its training rows a leaf of a cause-specific model was allowed to hold.
+    """
+
+    plain_min_samples_per_leaf: float = 0.0
+    """
+    The share of its training rows a leaf of the plain model was allowed to hold.
+    """
+
     pipelines: List[PipelineReport] = field(default_factory=list)
     """
     One report per pipeline.

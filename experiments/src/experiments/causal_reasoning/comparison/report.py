@@ -392,10 +392,12 @@ class MarkdownReport:
         )
 
     def _adjustments(self) -> List[str]:
-        by_statistic: Dict[str, List[QueryOutcome]] = {}
+        by_statistic: Dict[Tuple[str, int], List[QueryOutcome]] = {}
         for outcome in self._first_pipeline.outcomes:
             if isinstance(outcome.case, AdjustedCountCase):
-                by_statistic.setdefault(outcome.case.statistic_name, []).append(outcome)
+                by_statistic.setdefault(
+                    (outcome.case.statistic_name, outcome.case.open_part_count), []
+                ).append(outcome)
         if not any(len(asked) > 1 for asked in by_statistic.values()):
             return []
         lines = [
@@ -407,7 +409,7 @@ class MarkdownReport:
             "below the support threshold.",
             "",
         ]
-        for statistic_name, asked in by_statistic.items():
+        for (statistic_name, _), asked in by_statistic.items():
             cases = [outcome.case for outcome in asked]
             if len(asked) < 2 or not all(outcome.answered for outcome in asked):
                 continue
