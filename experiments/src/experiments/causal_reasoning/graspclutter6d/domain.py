@@ -21,6 +21,8 @@ from krrood.parametrization.feature_extraction.aggregations import (
 )
 from typing_extensions import Generic, List, Self, Sequence, Tuple, TypeVar
 
+from experiments.causal_reasoning.comparison.domain import RelationalDomain
+
 # %% reading a measurement as a level
 
 
@@ -361,3 +363,31 @@ class GraspClutterSceneAggregations(AggregationStatistic[GraspClutterScene]):
             .tolist()
         )
         return result
+
+
+# %% the scene as a relational example
+
+
+class PartField(StrEnum):
+    """
+    The scene's exchangeable-part fields.
+    """
+
+    OBJECTS = "objects"
+    VIEWPOINTS = "viewpoints"
+
+
+def scene_domain() -> RelationalDomain:
+    """
+    :return: The scene as the comparison sees it: its objects and viewpoints as
+        exchangeable parts, whether every object stays graspable as the effect.
+    """
+    return RelationalDomain(
+        example_class=GraspClutterScene,
+        aggregation_class=GraspClutterSceneAggregations,
+        effect_field="all_objects_graspable",
+        noun="scene",
+        plural="scenes",
+        effect_phrase="every object stays graspable",
+        part_nouns={PartField.OBJECTS: "object", PartField.VIEWPOINTS: "viewpoint"},
+    )

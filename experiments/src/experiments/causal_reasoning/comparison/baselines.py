@@ -5,7 +5,7 @@ it can express.
 Regression adjustment is the textbook backdoor estimator: fit a model of the effect on
 the cause and the confounders, then average its prediction at each value of the cause
 over the confounders' distribution in the data. Here the model is a logistic regression
-on the propositional table, so it can be asked the same scene-level questions as the
+on the propositional table, so it can be asked the same example-level questions as the
 propositional tree, and refuses the same ones.
 """
 
@@ -21,29 +21,35 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import OneHotEncoder
 from typing_extensions import Any, List, Optional, Sequence
 
-from experiments.causal_reasoning.graspclutter6d.domain import GraspClutterScene
-from experiments.causal_reasoning.graspclutter6d.evaluation import (
+from experiments.causal_reasoning.comparison.domain import RelationalDomain
+from experiments.causal_reasoning.comparison.evaluation import (
     InterventionalEffect,
     QueryOutcome,
     Refusal,
 )
-from experiments.causal_reasoning.graspclutter6d.flat_table import (
+from experiments.causal_reasoning.comparison.flat_table import (
     FlatTable,
+    Schema,
     TableLayout,
 )
-from experiments.causal_reasoning.graspclutter6d.pipelines import (
+from experiments.causal_reasoning.comparison.pipelines import (
     CircuitSize,
     FitReport,
     cause_variable_name,
     constrained_variable_names,
 )
-from experiments.causal_reasoning.graspclutter6d.queries import CausalQueryCase
+from experiments.causal_reasoning.comparison.queries import CausalQueryCase
 
 
 @dataclass
 class RegressionAdjustmentBaseline:
     """
     Logistic regression adjustment on the propositional table.
+    """
+
+    domain: RelationalDomain
+    """
+    The example and its parts.
     """
 
     regularisation: float = 1.0
@@ -53,25 +59,18 @@ class RegressionAdjustmentBaseline:
 
     min_region_support: int = 10
     """
-    The fewest training scenes a value of the cause may hold for its effect to be read
+    The fewest training examples a value of the cause may hold for its effect to be read
     as an answer.
     """
 
-    table: FlatTable = field(
-        default_factory=lambda: FlatTable(TableLayout.PROPOSITIONAL)
-    )
+    training_examples: List[Any] = field(default_factory=list)
     """
-    The table the scenes are flattened into.
-    """
-
-    training_scenes: List[GraspClutterScene] = field(default_factory=list)
-    """
-    The scenes :meth:`fit` was given.
+    The examples :meth:`fit` was given.
     """
 
     dataframe: Optional[pd.DataFrame] = None
     """
-    The training scenes as rows, once :meth:`fit` ran.
+    The training examples as rows, once :meth:`fit` ran.
     """
 
     fit_report: Optional[FitReport] = None
@@ -86,17 +85,24 @@ class RegressionAdjustmentBaseline:
         """
         return "regression adjustment"
 
-    def fit(self, scenes: Sequence[GraspClutterScene]) -> FitReport:
+    @property
+    def table(self) -> FlatTable:
         """
-        Flatten the scenes; every question fits its own regression on them.
+        The propositional table the examples are flattened into.
+        """
+        return FlatTable(Schema(self.domain), TableLayout.PROPOSITIONAL)
 
-        :param scenes: The scenes to fit on.
+    def fit(self, examples: Sequence[Any]) -> FitReport:
+        """
+        Flatten the examples; every question fits its own regression on them.
+
+        :param examples: The examples to fit on.
         :return: The report the questions' fits keep adding to.
         """
-        self.training_scenes = list(scenes)
+        self.training_examples = list(examples)
         started = time.perf_counter()
-        self.dataframe = self.table.dataframe(self.training_scenes)
-        self.fit_report = FitReport(training_scene_count=len(scenes))
+        self.dataframe = self.table.dataframe(self.training_examples)
+        self.fit_report = FitReport(training_example_count=len(examples))
         self.fit_report.record(time.perf_counter() - started, CircuitSize(0, 0))
         return self.fit_report
 

@@ -10,168 +10,66 @@ nothing about.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, fields
+from abc import ABC
+from dataclasses import dataclass
 
-from krrood.entity_query_language.factories import a, cause, confounder
+from krrood.entity_query_language.factories import cause, confounder
 from krrood.entity_query_language.query.match import Match
-from typing_extensions import Any, Dict, List, Tuple
+from typing_extensions import Any, List, Tuple
 
+from experiments.causal_reasoning.comparison.domain import RelationalDomain
+from experiments.causal_reasoning.comparison.queries import (
+    AdjustedCountCase,
+    CausalQueryCase,
+    Confounder,
+    part_query,
+)
 from experiments.causal_reasoning.graspclutter6d.domain import (
     GraspClutterObject,
-    GraspClutterScene,
-    GraspClutterViewpoint,
     Graspability,
     Occlusion,
+    PartField,
+    scene_domain,
 )
-from experiments.causal_reasoning.graspclutter6d.flat_table import SceneSchema
 
 # %% building blocks
 
 
-def object_query(**specified: Any) -> Match:
-    """
-    A query for one object instance with every attribute left open but the given ones.
-
-    :param specified: Attribute markers or values to set instead of leaving open.
-    :return: The query.
-    """
-    return a(GraspClutterObject)(
-        **{
-            object_field.name: specified.get(object_field.name, ...)
-            for object_field in fields(GraspClutterObject)
-        }
-    )
-
-
-def viewpoint_query(**specified: Any) -> Match:
-    """
-    A query for one viewpoint with every attribute left open but the given ones.
-
-    :param specified: Attribute markers or values to set instead of leaving open.
-    :return: The query.
-    """
-    return a(GraspClutterViewpoint)(
-        **{
-            viewpoint_field.name: specified.get(viewpoint_field.name, ...)
-            for viewpoint_field in fields(GraspClutterViewpoint)
-        }
-    )
-
-
-def scene_query(
-    objects: List[Match],
-    viewpoints: List[Match],
-    schema: SceneSchema = SceneSchema(),
-    **specified: Any,
-) -> Match:
-    """
-    A query for a scene with the given objects and viewpoints and every scalar attribute
-    left open but the given ones.
-
-    :param objects: One query per object instance.
-    :param viewpoints: One query per viewpoint.
-    :param schema: How the scene's attributes are named.
-    :param specified: Scalar attribute markers or values to set instead of leaving open;
-        an aggregation count's name is accepted too.
-    :return: The query.
-    """
-    scalar_fields = schema.scalar_fields
-    return a(GraspClutterScene)(
-        **{name: specified.get(name, ...) for name in scalar_fields},
-        **{
-            name: value
-            for name, value in specified.items()
-            if name not in scalar_fields
-        },
-        objects=objects,
-        viewpoints=viewpoints,
-    )
-
-
-# %% the questions
-
-
 @dataclass(frozen=True, kw_only=True)
-class CausalQueryCase(ABC):
+class SceneQueryCase(CausalQueryCase, ABC):
     """
-    One question, as a query and as words.
-    """
-
-    object_count: int = 1
-    """
-    How many object instances the query lists with every attribute open.
-    """
-
-    viewpoint_count: int = 1
-    """
-    How many viewpoints the query lists with every attribute open.
+    One question about a scene.
     """
 
     @property
-    @abstractmethod
-    def name(self) -> str:
-        """
-        A short identifier for tables.
-        """
-
-    @property
-    @abstractmethod
-    def question(self) -> str:
-        """
-        The question in words.
-        """
-
-    @abstractmethod
-    def build(self) -> Match:
-        """
-        :return: The query, freshly built, with its cause, confounders and effect
-            marked.
-        """
-
-    @abstractmethod
-    def describe_cause(self, region: str) -> str:
-        """
-        :param region: A region of the cause, written out.
-        :return: The cause set to that region, in words.
-        """
-
-    @property
-    @abstractmethod
-    def effect(self) -> str:
-        """
-        The effect in words.
-        """
+    def domain(self) -> RelationalDomain:
+        return scene_domain()
 
     def _open_objects(self) -> List[Match]:
         """
         :return: One fully open query per listed object instance.
         """
-        return [object_query() for _ in range(self.object_count)]
+        return self.open_parts()[PartField.OBJECTS]
 
     def _open_viewpoints(self) -> List[Match]:
         """
         :return: One fully open query per listed viewpoint.
         """
-        return [viewpoint_query() for _ in range(self.viewpoint_count)]
+        return self.open_parts()[PartField.VIEWPOINTS]
 
-
-@dataclass(frozen=True)
-class Confounder:
-    """
-    One scene attribute or aggregation count a question adjusts for, as a variable and
-    in words.
-    """
-
-    name: str
-    """
-    The scene attribute or aggregation count.
-    """
-
-    noun: str
-    """
-    The confounder in words, such as ``the number of objects``.
-    """
+    def _scene_query(
+        self, objects: List[Match], viewpoints: List[Match], **specified: Any
+    ) -> Match:
+        """
+        :param objects: One query per listed object instance.
+        :param viewpoints: One query per listed viewpoint.
+        :param specified: Scene attribute markers or values to set instead of leaving
+            open.
+        :return: The query for the scene.
+        """
+        return self.example_query(
+            {PartField.OBJECTS: objects, PartField.VIEWPOINTS: viewpoints}, **specified
+        )
 
 
 EXTENT = Confounder(name="extent", noun="how far the clutter is spread out")
@@ -186,17 +84,12 @@ Adjusting for the size of the scene.
 
 
 @dataclass(frozen=True, kw_only=True)
-class CountCausesGraspability(CausalQueryCase):
+class CountCausesGraspability(SceneQueryCase, AdjustedCountCase):
     """
     Does one of the scene's aggregation counts cause every object in it to stay
     graspable, once the given confounders are adjusted for?
-    """
 
-    statistic_name: str
-    """
-    The aggregation statistic of
-    :class:`~experiments.causal_reasoning.graspclutter6d.domain.GraspClutterSceneAggregations`
-    that is the cause.
+    A flat table without a column for one of them refuses the question.
     """
 
     count_noun: str
@@ -206,8 +99,7 @@ class CountCausesGraspability(CausalQueryCase):
 
     confounders: Tuple[Confounder, ...] = (EXTENT,)
     """
-    What to adjust for; a flat table without a column for one of them refuses the
-    question.
+    What to adjust for: the spread of the clutter unless asked otherwise.
     """
 
     @property
@@ -224,7 +116,7 @@ class CountCausesGraspability(CausalQueryCase):
         )
 
     def build(self) -> Match:
-        query = scene_query(
+        query = self._scene_query(
             self._open_objects(),
             self._open_viewpoints(),
             **{self.statistic_name: cause},
@@ -242,7 +134,7 @@ class CountCausesGraspability(CausalQueryCase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CatalogueCausesGraspability(CausalQueryCase):
+class CatalogueCausesGraspability(SceneQueryCase):
     """
     Does which object catalogue a scene is built from cause every object in it to stay
     graspable, once one other attribute of the scene is adjusted for?
@@ -270,7 +162,7 @@ class CatalogueCausesGraspability(CausalQueryCase):
         )
 
     def build(self) -> Match:
-        query = scene_query(
+        query = self._scene_query(
             self._open_objects(),
             self._open_viewpoints(),
             object_catalogue=cause,
@@ -288,7 +180,7 @@ class CatalogueCausesGraspability(CausalQueryCase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CatalogueCausesOcclusion(CausalQueryCase):
+class CatalogueCausesOcclusion(SceneQueryCase):
     """
     Does which object catalogue a scene is built from cause one of its objects to be
     heavily occluded?
@@ -313,7 +205,7 @@ class CatalogueCausesOcclusion(CausalQueryCase):
         )
 
     def build(self) -> Match:
-        query = scene_query(
+        query = self._scene_query(
             self._open_objects(), self._open_viewpoints(), object_catalogue=cause
         )
         query.causes_effect(
@@ -331,7 +223,7 @@ class CatalogueCausesOcclusion(CausalQueryCase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class OccludedObjectsCauseBlockedObject(CausalQueryCase):
+class OccludedObjectsCauseBlockedObject(SceneQueryCase):
     """
     Does the number of occluded objects in a scene cause one of its objects to lose
     every grasp?
@@ -356,7 +248,7 @@ class OccludedObjectsCauseBlockedObject(CausalQueryCase):
         )
 
     def build(self) -> Match:
-        query = scene_query(
+        query = self._scene_query(
             self._open_objects(), self._open_viewpoints(), occluded_object_count=cause
         )
         query.causes_effect(
@@ -374,7 +266,7 @@ class OccludedObjectsCauseBlockedObject(CausalQueryCase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SizeCausesBlockedObject(CausalQueryCase):
+class SizeCausesBlockedObject(SceneQueryCase):
     """
     Does an object's size cause it to lose every grasp?
 
@@ -399,8 +291,8 @@ class SizeCausesBlockedObject(CausalQueryCase):
 
     def build(self) -> Match:
         objects = self._open_objects()
-        objects[self.object_index] = object_query(size=cause)
-        query = scene_query(objects, self._open_viewpoints())
+        objects[self.object_index] = part_query(GraspClutterObject, size=cause)
+        query = self._scene_query(objects, self._open_viewpoints())
         query.causes_effect(
             query.variable.objects[self.object_index].graspability
             == Graspability.BLOCKED
@@ -444,18 +336,6 @@ def scene_level_cases() -> List[CausalQueryCase]:
     ]
 
 
-def count_cases_by_statistic() -> Dict[str, List[CountCausesGraspability]]:
-    """
-    :return: The count questions grouped by the count that is their cause, each group in
-        the order of its adjustments.
-    """
-    grouped: Dict[str, List[CountCausesGraspability]] = {}
-    for case in scene_level_cases():
-        if isinstance(case, CountCausesGraspability):
-            grouped.setdefault(case.statistic_name, []).append(case)
-    return grouped
-
-
 def object_level_cases() -> List[CausalQueryCase]:
     """
     :return: The questions whose cause or effect lives on one object, in the order they
@@ -470,10 +350,9 @@ def object_level_cases() -> List[CausalQueryCase]:
 
 def ground_truth_cases() -> List[CausalQueryCase]:
     """
-    The questions asked of the synthetic model: every count and the catalogue as a
-    cause of graspability, each adjusted for the number of objects, which is the
-    model's one confounder, and the questions whose cause or effect lives on one
-    object.
+    The questions asked of the synthetic model: every count and the catalogue as a cause
+    of graspability, each adjusted for the number of objects, which is the model's one
+    confounder, and the questions whose cause or effect lives on one object.
 
     :return: The questions, in the order they are asked.
     """
@@ -501,9 +380,9 @@ def ground_truth_cases() -> List[CausalQueryCase]:
 
 def monte_carlo_cases() -> List[CausalQueryCase]:
     """
-    The questions whose answers are followed as grounding draws more samples: one
-    scene-level count question and one whose effect lives on an object, both of which
-    leave every count open.
+    The questions whose answers are followed as grounding draws more samples: one scene-
+    level count question and one whose effect lives on an object, both of which leave
+    every count open.
 
     :return: The two questions.
     """

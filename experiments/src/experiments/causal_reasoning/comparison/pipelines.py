@@ -1,7 +1,7 @@
 """
-The two causal-query pipelines under comparison, behind one interface: fit on scenes,
+The causal-query pipelines under comparison, behind one interface: fit on examples,
 serve ``cause``/``causes_effect`` EQL queries through a model registry, and report what
-the fits cost and how well they explain held-out scenes.
+the fits cost and how well they explain held-out examples.
 
 Backdoor adjustment needs the circuit it runs on to be support-deterministic over the
 cause variable, which a fit guarantees by stratifying its training rows on that
@@ -48,17 +48,16 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
 from probabilistic_model.probabilistic_model import ProbabilisticModel
 from typing_extensions import Any, Dict, List, Optional, Sequence, Set
 
-from experiments.causal_reasoning.graspclutter6d.domain import GraspClutterScene
-from experiments.causal_reasoning.graspclutter6d.exceptions import (
+from experiments.causal_reasoning.comparison.domain import ExampleView, RelationalDomain
+from experiments.causal_reasoning.comparison.exceptions import (
     FlatTableSchemaMismatchError,
     OneCausePerQueryError,
     PipelineNotFittedError,
 )
-from experiments.causal_reasoning.graspclutter6d.flat_table import (
+from experiments.causal_reasoning.comparison.flat_table import (
     FlatTable,
     PartAttribute,
-    SceneSchema,
-    SceneView,
+    Schema,
     TableLayout,
 )
 
@@ -102,9 +101,9 @@ class FitReport:
     specific model fitted on demand.
     """
 
-    training_scene_count: int
+    training_example_count: int
     """
-    How many scenes the pipeline was fitted on.
+    How many examples the pipeline was fitted on.
     """
 
     model_count: int = 0
@@ -137,48 +136,48 @@ class FitReport:
 @dataclass(frozen=True)
 class LikelihoodReport:
     """
-    How well a fitted pipeline explains held-out scenes.
+    How well a fitted pipeline explains held-out examples.
     """
 
-    scene_count: int
+    example_count: int
     """
-    How many scenes were scored.
+    How many examples were scored.
     """
 
-    covered_scene_count: int
+    covered_example_count: int
     """
     How many of them lie inside the model's support at all.
     """
 
     mean_log_likelihood: float
     """
-    Mean log-likelihood over the covered scenes; ``nan`` if none is covered.
+    Mean log-likelihood over the covered examples; ``nan`` if none is covered.
     """
 
     log_likelihoods: np.ndarray = field(compare=False, repr=False)
     """
-    One log-likelihood per scored scene, in the scenes' order, ``-inf`` for a scene
-    outside the support.
+    One log-likelihood per scored example, in the examples' order, ``-inf`` for an
+    example outside the support.
     """
 
     @property
     def coverage(self) -> float:
         """
-        Share of scenes inside the model's support.
+        Share of examples inside the model's support.
         """
-        return self.covered_scene_count / self.scene_count
+        return self.covered_example_count / self.example_count
 
     @classmethod
     def from_log_likelihoods(cls, log_likelihoods: np.ndarray) -> LikelihoodReport:
         """
-        :param log_likelihoods: One log-likelihood per scored scene, ``-inf`` for a
-            scene outside the support.
+        :param log_likelihoods: One log-likelihood per scored example, ``-inf`` for a
+            example outside the support.
         :return: The report.
         """
         finite = log_likelihoods[np.isfinite(log_likelihoods)]
         return cls(
-            scene_count=len(log_likelihoods),
-            covered_scene_count=len(finite),
+            example_count=len(log_likelihoods),
+            covered_example_count=len(finite),
             mean_log_likelihood=float(finite.mean()) if len(finite) else float("nan"),
             log_likelihoods=log_likelihoods,
         )
@@ -195,8 +194,8 @@ class CauseStratification:
 
     class_columns: Optional[List[str]]
     """
-    The scene-level columns to stratify the class circuit by, or ``None`` to leave it to
-    the plain fit.
+    The example-level columns to stratify the class circuit by, or ``None`` to leave it
+    to the plain fit.
     """
 
     part_attributes: Dict[str, List[str]]
@@ -206,12 +205,10 @@ class CauseStratification:
     """
 
     @classmethod
-    def for_variable(
-        cls, variable_name: str, schema: SceneSchema = SceneSchema()
-    ) -> CauseStratification:
+    def for_variable(cls, variable_name: str, schema: Schema) -> CauseStratification:
         """
         :param variable_name: The cause variable's name, as EQL names it.
-        :param schema: How the scene's attributes are named.
+        :param schema: How the example's attributes are named.
         :return: The stratification that makes a fit support-deterministic over it.
         """
         part = schema.part_attribute(variable_name)
@@ -271,7 +268,7 @@ def constrained_variable_names(parameters: ModelQueryParameters) -> Set[str]:
 @dataclass
 class CausalQueryPipeline(ABC):
     """
-    One way of turning scenes into models that answer causal EQL queries.
+    One way of turning examples into models that answer causal EQL queries.
     """
 
     min_samples_per_leaf: float = 0.05
@@ -284,7 +281,7 @@ class CausalQueryPipeline(ABC):
     See
     :attr:`~probabilistic_model.learning.jpt.jpt.JointProbabilityTree.min_samples_per_leaf`,
     which reads a share below one as a share of its training rows, so the same setting
-    holds for a class circuit over a thousand scenes and for a part template over their
+    holds for a class circuit over a thousand examples and for a part template over their
     tens of thousands of parts.
     """
 
@@ -293,18 +290,18 @@ class CausalQueryPipeline(ABC):
     The fewest training rows a leaf of the plain model may hold, as a share of the rows
     it is fitted on.
 
-    The plain model scores held-out scenes, and a leaf spans only the ranges it saw, so
-    wider leaves cover more of them.
+    The plain model scores held-out examples, and a leaf spans only the ranges it saw,
+    so wider leaves cover more of them.
     """
 
-    schema: SceneSchema = field(default_factory=SceneSchema)
+    domain: RelationalDomain = field(kw_only=True)
     """
-    How the scene's attributes are named.
+    The example and its parts.
     """
 
-    training_scenes: List[GraspClutterScene] = field(default_factory=list)
+    training_examples: List[Any] = field(default_factory=list)
     """
-    The scenes :meth:`fit` was given, kept for the cause-specific fits.
+    The examples :meth:`fit` was given, kept for the cause-specific fits.
     """
 
     fit_report: Optional[FitReport] = None
@@ -320,6 +317,13 @@ class CausalQueryPipeline(ABC):
         """
 
     @property
+    def schema(self) -> Schema:
+        """
+        How the example's attributes are named.
+        """
+        return Schema(self.domain)
+
+    @property
     def registry(self) -> ModelRegistry:
         """
         The registry a
@@ -332,7 +336,7 @@ class CausalQueryPipeline(ABC):
     @abstractmethod
     def table(self) -> FlatTable:
         """
-        The scenes as rows of what the pipeline's plain model is fitted on.
+        The examples as rows of what the pipeline's plain model is fitted on.
         """
 
     @property
@@ -340,26 +344,26 @@ class CausalQueryPipeline(ABC):
     def models_parts(self) -> bool:
         """
         Whether the pipeline models the objects and viewpoints themselves, so that the
-        order a scene lists them in can matter to it.
+        order an example lists them in can matter to it.
         """
 
     @property
     @abstractmethod
     def order_invariant(self) -> bool:
         """
-        Whether fitting on the same scenes with their parts in another order gives the
+        Whether fitting on the same examples with their parts in another order gives the
         same model, so that a study over reorderings need fit it once.
         """
 
-    def fit(self, scenes: Sequence[GraspClutterScene]) -> FitReport:
+    def fit(self, examples: Sequence[Any]) -> FitReport:
         """
-        Fit the plain model, and keep the scenes for the cause-specific fits.
+        Fit the plain model, and keep the examples for the cause-specific fits.
 
-        :param scenes: The scenes to fit on.
+        :param examples: The examples to fit on.
         :return: The report the later fits keep adding to.
         """
-        self.training_scenes = list(scenes)
-        self.fit_report = FitReport(training_scene_count=len(scenes))
+        self.training_examples = list(examples)
+        self.fit_report = FitReport(training_example_count=len(examples))
         started = time.perf_counter()
         size = self._fit_plain_model()
         self.fit_report.record(time.perf_counter() - started, size)
@@ -369,7 +373,7 @@ class CausalQueryPipeline(ABC):
     def _fit_plain_model(self) -> CircuitSize:
         """
         Fit the model that serves every query without a cause, on
-        :attr:`training_scenes`.
+        :attr:`training_examples`.
 
         :return: The size of the fitted circuit.
         """
@@ -378,7 +382,7 @@ class CausalQueryPipeline(ABC):
     def _fit_cause_model(self, cause_name: str) -> CircuitSize:
         """
         Fit the model that serves queries marking the named variable as their cause, on
-        :attr:`training_scenes`.
+        :attr:`training_examples`.
 
         :param cause_name: The cause variable's name, as EQL names it.
         :return: The size of the fitted circuit.
@@ -417,8 +421,8 @@ class CausalQueryPipeline(ABC):
 
     def training_values_of(self, variable_name: str) -> List[Any]:
         """
-        The values the training scenes hold for a variable, one per row the variable
-        is fitted on: one per scene for a scene attribute or count, one per part for a
+        The values the training examples hold for a variable, one per row the variable
+        is fitted on: one per example for an example attribute or count, one per part for a
         part's own attribute.
 
         :param variable_name: The variable's name, as EQL names it.
@@ -431,47 +435,49 @@ class CausalQueryPipeline(ABC):
             return self._part_training_values(part)
         if variable_name not in self.table.columns:
             raise FlatTableSchemaMismatchError([variable_name])
-        return [self.table.row(scene)[variable_name] for scene in self.training_scenes]
+        return [
+            self.table.row(example)[variable_name] for example in self.training_examples
+        ]
 
     @abstractmethod
     def _part_training_values(self, part: PartAttribute) -> List[Any]:
         """
         :param part: One part's attribute, as a query names it.
-        :return: The values the training scenes hold for it, one per row the part
+        :return: The values the training examples hold for it, one per row the part
             template or column is fitted on.
         """
 
     @abstractmethod
-    def plain_circuit_of(self, view: SceneView) -> Optional[ProbabilisticCircuit]:
+    def plain_circuit_of(self, view: ExampleView) -> Optional[ProbabilisticCircuit]:
         """
-        The plain model's joint over as much of a scene as the view asks for.
+        The plain model's joint over as much of an example as the view asks for.
 
-        :param view: How much of a scene to look at.
+        :param view: How much of an example to look at.
         :return: The circuit, or ``None`` if the pipeline models less than that.
         :raises PipelineNotFittedError: If :meth:`fit` never ran.
         """
 
     def log_likelihood(
-        self, scenes: Sequence[GraspClutterScene], view: SceneView
+        self, examples: Sequence[Any], view: ExampleView
     ) -> Optional[LikelihoodReport]:
         """
-        Score held-out scenes under the plain model, on as much of them as the view asks
-        for.
+        Score held-out examples under the plain model, on as much of them as the view
+        asks for.
 
-        :param scenes: The scenes to score.
-        :param view: How much of a scene to look at.
+        :param examples: The examples to score.
+        :param view: How much of an example to look at.
         :return: The report, or ``None`` if the pipeline models less than the view; a
-            scene the pipeline's table has no row for counts as outside the support.
+            example the pipeline's table has no row for counts as outside the support.
         """
         circuit = self.plain_circuit_of(view)
         if circuit is None:
             return None
-        log_likelihoods = np.full(len(scenes), -np.inf)
+        log_likelihoods = np.full(len(examples), -np.inf)
         fitting = [
-            index for index, scene in enumerate(scenes) if self.table.fits(scene)
+            index for index, example in enumerate(examples) if self.table.fits(example)
         ]
         if fitting:
-            rows = [self.table.row(scenes[index]) for index in fitting]
+            rows = [self.table.row(examples[index]) for index in fitting]
             log_likelihoods[fitting] = log_likelihoods_of_rows(circuit, rows)
         return LikelihoodReport.from_log_likelihoods(log_likelihoods)
 
@@ -514,7 +520,7 @@ class PipelineRegistry(ModelRegistry):
 @dataclass
 class RelationalPipeline(CausalQueryPipeline):
     """
-    A relational probabilistic circuit fitted on the scenes' relational structure and
+    A relational probabilistic circuit fitted on the examples' relational structure and
     grounded per query into a
     :class:`~probabilistic_model.probabilistic_circuit.causal.causal_circuit.CausalCircuit`.
     """
@@ -567,7 +573,7 @@ class RelationalPipeline(CausalQueryPipeline):
         :return: The model, not yet fitted.
         """
         return RelationalProbabilisticCircuit(
-            GraspClutterScene,
+            self.domain.example_class,
             monte_carlo_sample_count=self.monte_carlo_sample_count,
             learning_method=self._learning_method(
                 min_samples_per_leaf, stratification.class_columns
@@ -596,25 +602,25 @@ class RelationalPipeline(CausalQueryPipeline):
 
     def _training_rows(self) -> List[Any]:
         """
-        The training scenes as data access objects, each with its parts in a canonical
-        order, so that the fit is the same whatever order the scenes list their parts
+        The training examples as data access objects, each with its parts in a canonical
+        order, so that the fit is the same whatever order the examples list their parts
         in. The tree learner the templates are fitted with breaks ties by row order, and
-        the parts of every scene are pooled into its rows.
+        the parts of every example are pooled into its rows.
 
-        :return: One data access object per training scene.
+        :return: One data access object per training example.
         """
-        return [to_dao(self._canonical(scene)) for scene in self.training_scenes]
+        return [to_dao(self._canonical(example)) for example in self.training_examples]
 
-    def _canonical(self, scene: GraspClutterScene) -> GraspClutterScene:
+    def _canonical(self, example: Any) -> Any:
         """
-        :param scene: A scene.
-        :return: The scene with every part list sorted by the parts' attribute values.
+        :param example: An example.
+        :return: The example with every part list sorted by the parts' attribute values.
         """
         return replace(
-            scene,
+            example,
             **{
                 part_field: sorted(
-                    vars(scene)[part_field],
+                    vars(example)[part_field],
                     key=lambda part: tuple(
                         str(value) if isinstance(value, Enum) else value
                         for value in vars(part).values()
@@ -659,7 +665,7 @@ class RelationalPipeline(CausalQueryPipeline):
 
     @property
     def table(self) -> FlatTable:
-        return FlatTable(TableLayout.PROPOSITIONAL, schema=self.schema)
+        return FlatTable(self.schema, TableLayout.PROPOSITIONAL)
 
     @property
     def models_parts(self) -> bool:
@@ -672,15 +678,15 @@ class RelationalPipeline(CausalQueryPipeline):
     def _part_training_values(self, part: PartAttribute) -> List[Any]:
         return [
             vars(one)[part.attribute]
-            for scene in self.training_scenes
-            for one in vars(scene)[part.part_field]
+            for example in self.training_examples
+            for one in vars(example)[part.part_field]
         ]
 
-    def plain_circuit_of(self, view: SceneView) -> Optional[ProbabilisticCircuit]:
+    def plain_circuit_of(self, view: ExampleView) -> Optional[ProbabilisticCircuit]:
         if self.plain_model is None:
             raise PipelineNotFittedError(self.name)
         class_circuit = self.plain_model.class_probabilistic_circuit
-        if view is SceneView.SCALARS:
+        if view is ExampleView.SCALARS:
             scalar_columns = set(self.schema.scalar_columns)
             return class_circuit.marginal(
                 [
@@ -692,40 +698,40 @@ class RelationalPipeline(CausalQueryPipeline):
         return class_circuit
 
     def log_likelihood(
-        self, scenes: Sequence[GraspClutterScene], view: SceneView
+        self, examples: Sequence[Any], view: ExampleView
     ) -> Optional[LikelihoodReport]:
         """
-        Score held-out scenes under the plain model, on as much of them as the view asks
-        for. A whole scene is scored the way the relational circuit factorizes it: the
-        class circuit over its scalars and counts, times each part template over one
-        object or viewpoint given those counts, the parts taken in canonical order so
-        that the sum does not depend on the order the scene lists them in.
+        Score held-out examples under the plain model, on as much of them as the view
+        asks for. A whole example is scored the way the relational circuit factorizes
+        it: the class circuit over its scalars and counts, times each part template over
+        one object or viewpoint given those counts, the parts taken in canonical order
+        so that the sum does not depend on the order the example lists them in.
 
-        :param scenes: The scenes to score.
-        :param view: How much of a scene to look at.
+        :param examples: The examples to score.
+        :param view: How much of an example to look at.
         :return: The report.
         """
-        if view is not SceneView.WHOLE_SCENE:
-            return super().log_likelihood(scenes, view)
+        if view is not ExampleView.WHOLE:
+            return super().log_likelihood(examples, view)
         log_likelihoods = (
             super()
-            .log_likelihood(scenes, SceneView.SCALARS_AND_COUNTS)
+            .log_likelihood(examples, ExampleView.SCALARS_AND_COUNTS)
             .log_likelihoods.copy()
         )
         for part_field in self.plain_model.exchangeable_distribution_templates:
-            log_likelihoods += self.part_log_likelihoods(scenes, part_field)
+            log_likelihoods += self.part_log_likelihoods(examples, part_field)
         return LikelihoodReport.from_log_likelihoods(log_likelihoods)
 
     def part_log_likelihoods(
-        self, scenes: Sequence[GraspClutterScene], part_field: str
+        self, examples: Sequence[Any], part_field: str
     ) -> np.ndarray:
         """
-        Score one kind of part of held-out scenes under its plain template, given each
-        scene's counts.
+        Score one kind of part of held-out examples under its plain template, given each
+        example's counts.
 
-        :param scenes: The scenes to score.
+        :param examples: The examples to score.
         :param part_field: The exchangeable-part field.
-        :return: One summed log-likelihood per scene over its parts of that kind,
+        :return: One summed log-likelihood per example over its parts of that kind,
             ``-inf`` outside the support.
         :raises PipelineNotFittedError: If :meth:`fit` never ran.
         """
@@ -735,28 +741,29 @@ class RelationalPipeline(CausalQueryPipeline):
         return np.array(
             [
                 self._part_log_likelihood(
-                    template, scene, vars(self._canonical(scene))[part_field]
+                    template, example, vars(self._canonical(example))[part_field]
                 )
-                for scene in scenes
+                for example in examples
             ]
         )
 
     def _part_log_likelihood(
         self,
         template: ExchangeableDistributionTemplate,
-        scene: GraspClutterScene,
+        example: Any,
         parts: Sequence[Any],
     ) -> float:
         """
         :param template: The fitted template of one exchangeable part.
-        :param scene: The scene the parts belong to.
-        :param parts: The scene's parts of that kind.
-        :return: The summed log-likelihood of every part given the scene's counts.
+        :param example: The example the parts belong to.
+        :param parts: The example's parts of that kind.
+        :return: The summed log-likelihood of every part given the example's counts.
         """
         circuit = template.template_distribution.class_probabilistic_circuit
         latents = template.latent_variables
         counts = {
-            variable.name: self.table.row(scene)[variable.name] for variable in latents
+            variable.name: self.table.row(example)[variable.name]
+            for variable in latents
         }
         if not parts:
             return 0.0
@@ -777,7 +784,7 @@ class FlatTableRegistry(ModelRegistry):
     Serves a circuit fitted on the flat table for queries over that table's columns,
     wrapped as a causal circuit when the query marks a cause.
 
-    A query may list a scene's objects and viewpoints, which the table has no columns
+    A query may list an example's objects and viewpoints, which the table has no columns
     for, as long as it says nothing about them; the served circuit then simply lacks
     them.
     """
@@ -821,14 +828,20 @@ class FlatTableRegistry(ModelRegistry):
 @dataclass
 class FlatTablePipeline(CausalQueryPipeline):
     """
-    Joint probability trees fitted on the scenes flattened into one table, each wrapped
+    Joint probability trees fitted on the examples flattened into one table, each wrapped
     as a
     :class:`~probabilistic_model.probabilistic_circuit.causal.causal_circuit.CausalCircuit`.
     """
 
-    flat_table: FlatTable = field(default_factory=FlatTable)
+    layout: TableLayout = TableLayout.PROPOSITIONAL
     """
-    The table the scenes are flattened into.
+    What the table the examples are flattened into holds besides their scalars.
+    """
+
+    part_widths: Dict[str, int] = field(default_factory=dict)
+    """
+    Per unrolled part field, how many positions the table has; empty unless the layout
+    unrolls the parts.
     """
 
     plain_circuit: Optional[ProbabilisticCircuit] = None
@@ -843,26 +856,26 @@ class FlatTablePipeline(CausalQueryPipeline):
 
     @property
     def name(self) -> str:
-        return f"{self.flat_table.layout} tree"
+        return f"{self.layout} tree"
 
     @property
     def table(self) -> FlatTable:
-        return self.flat_table
+        return FlatTable(self.schema, self.layout, part_widths=self.part_widths)
 
     @property
     def models_parts(self) -> bool:
-        return self.flat_table.layout.has_parts
+        return self.layout.has_parts
 
     @property
     def order_invariant(self) -> bool:
-        return not self.flat_table.layout.has_parts
+        return not self.layout.has_parts
 
     def _part_training_values(self, part: PartAttribute) -> List[Any]:
         column = self.schema.part_column(part)
-        return [self.table.row(scene)[column] for scene in self.training_scenes]
+        return [self.table.row(example)[column] for example in self.training_examples]
 
     def _training_dataframe(self) -> pd.DataFrame:
-        return self.table.dataframe(self.training_scenes)
+        return self.table.dataframe(self.training_examples)
 
     def _fit_plain_model(self) -> CircuitSize:
         dataframe = self._training_dataframe()
@@ -892,7 +905,7 @@ class FlatTablePipeline(CausalQueryPipeline):
         )
         return FlatTableRegistry(circuit=circuit)
 
-    def plain_circuit_of(self, view: SceneView) -> Optional[ProbabilisticCircuit]:
+    def plain_circuit_of(self, view: ExampleView) -> Optional[ProbabilisticCircuit]:
         if self.plain_circuit is None:
             raise PipelineNotFittedError(self.name)
         columns = self.table.columns_of(view)
@@ -911,22 +924,11 @@ class FlatTablePipeline(CausalQueryPipeline):
 # %% hybrid pipeline
 
 
-OBJECTS_FIELD = "objects"
-"""
-The scene's exchangeable-part field the hybrid pipeline treats as exchangeable.
-"""
-
-VIEWPOINTS_FIELD = "viewpoints"
-"""
-The scene's exchangeable-part field the hybrid pipeline holds by position.
-"""
-
-
 @dataclass
 class HybridRegistry(ModelRegistry):
     """
     Routes a query to the model of the part it constrains: the relational circuit for a
-    query about an object, the positional tree for everything else.
+    query about an exchangeable part, the positional tree for everything else.
     """
 
     pipeline: HybridPipeline
@@ -937,37 +939,48 @@ class HybridRegistry(ModelRegistry):
     def get_model(self, parameters: ModelQueryParameters) -> ProbabilisticModel:
         cause_name = cause_variable_name(parameters)
         constrained = constrained_variable_names(parameters)
-        about_an_object = any(
+        about_an_exchangeable_part = any(
             (part := self.pipeline.schema.part_attribute(name)) is not None
-            and part.part_field == OBJECTS_FIELD
+            and part.part_field in self.pipeline.exchangeable_fields
             for name in constrained
         )
-        member = self.pipeline.objects if about_an_object else self.pipeline.scene
+        member = (
+            self.pipeline.exchangeable
+            if about_an_exchangeable_part
+            else self.pipeline.positional
+        )
         return member.registry_for(cause_name).get_model(parameters)
 
 
 @dataclass
 class HybridPipeline(CausalQueryPipeline):
     """
-    Objects exchangeable, viewpoints positional: a relational circuit over the scene's
-    objects and a tree over its scalars, its counts and its viewpoints by position,
-    which is where the recording rig gives a position a meaning.
+    Some parts exchangeable, the rest positional: a relational circuit over the
+    exchangeable parts and a tree over the example's scalars, its counts and the
+    positional parts by position, for a relation where a position genuinely means the
+    same thing in every example.
 
-    A whole scene is scored as the tree over scalars, counts and viewpoints times the
-    object template over each object given the counts. A question about an object goes
-    to the relational circuit, whose answers cannot depend on the order the objects are
-    listed in; every other question goes to the tree.
-    """
-
-    objects: RelationalPipeline = field(default_factory=RelationalPipeline)
-    """
-    The relational circuit, whose object template is used.
+    A whole example is scored as the tree over scalars, counts and positional parts
+    times each exchangeable part's template over the parts given the counts. A question
+    about an exchangeable part goes to the relational circuit, whose answers cannot
+    depend on the order the parts are listed in; every other question goes to the tree.
     """
 
-    scene: Optional[FlatTablePipeline] = None
+    positional_fields: Sequence[str] = ()
     """
-    The tree over the scalars, the counts and the viewpoints by position, sized to the
-    training scenes at :meth:`fit`.
+    The exchangeable-part fields held by position.
+    """
+
+    exchangeable: Optional[RelationalPipeline] = None
+    """
+    The relational circuit, whose templates over the exchangeable parts are used; built
+    at :meth:`fit`.
+    """
+
+    positional: Optional[FlatTablePipeline] = None
+    """
+    The tree over the scalars, the counts and the positional parts, sized to the
+    training examples at :meth:`fit`.
     """
 
     @property
@@ -975,14 +988,25 @@ class HybridPipeline(CausalQueryPipeline):
         return "hybrid circuit"
 
     @property
+    def exchangeable_fields(self) -> List[str]:
+        """
+        The exchangeable-part fields the relational circuit keeps as templates.
+        """
+        return [
+            part_field
+            for part_field in self.domain.part_fields
+            if part_field not in self.positional_fields
+        ]
+
+    @property
     def registry(self) -> ModelRegistry:
         return HybridRegistry(pipeline=self)
 
     @property
     def table(self) -> FlatTable:
-        if self.scene is None:
+        if self.positional is None:
             raise PipelineNotFittedError(self.name)
-        return self.scene.table
+        return self.positional.table
 
     @property
     def models_parts(self) -> bool:
@@ -992,25 +1016,32 @@ class HybridPipeline(CausalQueryPipeline):
     def order_invariant(self) -> bool:
         return False
 
-    def fit(self, scenes: Sequence[GraspClutterScene]) -> FitReport:
-        self.training_scenes = list(scenes)
-        self.scene = FlatTablePipeline(
-            flat_table=FlatTable.unrolled_for(scenes, part_fields=[VIEWPOINTS_FIELD]),
+    def fit(self, examples: Sequence[Any]) -> FitReport:
+        self.training_examples = list(examples)
+        self.positional = FlatTablePipeline(
+            domain=self.domain,
+            layout=TableLayout.UNROLLED,
+            part_widths=FlatTable.unrolled_for(
+                self.schema, examples, part_fields=self.positional_fields
+            ).part_widths,
             min_samples_per_leaf=self.min_samples_per_leaf,
             plain_min_samples_per_leaf=self.plain_min_samples_per_leaf,
         )
-        self.objects.min_samples_per_leaf = self.min_samples_per_leaf
-        self.objects.plain_min_samples_per_leaf = self.plain_min_samples_per_leaf
+        self.exchangeable = RelationalPipeline(
+            domain=self.domain,
+            min_samples_per_leaf=self.min_samples_per_leaf,
+            plain_min_samples_per_leaf=self.plain_min_samples_per_leaf,
+        )
         started = time.perf_counter()
         size = self._fit_plain_model()
-        self.fit_report = FitReport(training_scene_count=len(scenes))
+        self.fit_report = FitReport(training_example_count=len(examples))
         self.fit_report.record(time.perf_counter() - started, size)
         return self.fit_report
 
     def _fit_plain_model(self) -> CircuitSize:
-        self.scene.fit(self.training_scenes)
-        self.objects.fit(self.training_scenes)
-        return self.scene.fit_report.size + self.objects.fit_report.size
+        self.positional.fit(self.training_examples)
+        self.exchangeable.fit(self.training_examples)
+        return self.positional.fit_report.size + self.exchangeable.fit_report.size
 
     def _fit_cause_model(self, cause_name: str) -> CircuitSize:
         raise NotImplementedError("The members fit their own cause models.")
@@ -1025,43 +1056,68 @@ class HybridPipeline(CausalQueryPipeline):
         return self.registry
 
     def _part_training_values(self, part: PartAttribute) -> List[Any]:
-        if part.part_field == OBJECTS_FIELD:
-            return self.objects.training_values_of(self.schema.part_column(part))
-        return self.scene.training_values_of(self.schema.part_column(part))
+        member = (
+            self.exchangeable
+            if part.part_field in self.exchangeable_fields
+            else self.positional
+        )
+        return member.training_values_of(self.schema.part_column(part))
 
-    def plain_circuit_of(self, view: SceneView) -> Optional[ProbabilisticCircuit]:
-        return self.scene.plain_circuit_of(view)
+    def plain_circuit_of(self, view: ExampleView) -> Optional[ProbabilisticCircuit]:
+        return self.positional.plain_circuit_of(view)
 
     def log_likelihood(
-        self, scenes: Sequence[GraspClutterScene], view: SceneView
+        self, examples: Sequence[Any], view: ExampleView
     ) -> Optional[LikelihoodReport]:
         """
-        Score held-out scenes, on as much of them as the view asks for: a whole scene as
-        the tree over its scalars, counts and viewpoints times the object template over
-        each of its objects given the counts.
+        Score held-out examples, on as much of them as the view asks for: a whole
+        example as the tree over its scalars, counts and positional parts times each
+        exchangeable part's template over the parts given the counts.
 
-        :param scenes: The scenes to score.
-        :param view: How much of a scene to look at.
+        :param examples: The examples to score.
+        :param view: How much of an example to look at.
         :return: The report.
         """
-        if view is not SceneView.WHOLE_SCENE:
-            return self.scene.log_likelihood(scenes, view)
-        log_likelihoods = self.scene.log_likelihood(scenes, view).log_likelihoods.copy()
-        log_likelihoods += self.objects.part_log_likelihoods(scenes, OBJECTS_FIELD)
+        if view is not ExampleView.WHOLE:
+            return self.positional.log_likelihood(examples, view)
+        log_likelihoods = self.positional.log_likelihood(
+            examples, view
+        ).log_likelihoods.copy()
+        for part_field in self.exchangeable_fields:
+            log_likelihoods += self.exchangeable.part_log_likelihoods(
+                examples, part_field
+            )
         return LikelihoodReport.from_log_likelihoods(log_likelihoods)
 
 
-def pipelines(scenes: Sequence[GraspClutterScene]) -> List[CausalQueryPipeline]:
+def pipelines(
+    domain: RelationalDomain,
+    examples: Sequence[Any],
+    positional_fields: Sequence[str] = (),
+) -> List[CausalQueryPipeline]:
     """
-    :param scenes: The scenes the pipelines will be fitted on, which size the unrolled
-        table.
-    :return: Every pipeline, unfitted: the relational circuit, the hybrid circuit and
-        one flat-table tree per layout.
+    :param domain: The example and its parts.
+    :param examples: The examples the pipelines will be fitted on, which size the
+        unrolled table.
+    :param positional_fields: The part fields a position means the same thing in for
+        every example; a hybrid circuit holding them by position is compared too when
+        there are any.
+    :return: Every pipeline, unfitted: the relational circuit, the hybrid circuit if
+        asked for, and one flat-table tree per layout.
     """
-    return [
-        RelationalPipeline(),
-        HybridPipeline(),
-        FlatTablePipeline(flat_table=FlatTable(TableLayout.PROPOSITIONAL)),
-        FlatTablePipeline(flat_table=FlatTable.unrolled_for(scenes)),
-        FlatTablePipeline(flat_table=FlatTable(TableLayout.SCALARS)),
+    schema = Schema(domain)
+    compared: List[CausalQueryPipeline] = [RelationalPipeline(domain=domain)]
+    if positional_fields:
+        compared.append(
+            HybridPipeline(domain=domain, positional_fields=tuple(positional_fields))
+        )
+    compared += [
+        FlatTablePipeline(domain=domain, layout=TableLayout.PROPOSITIONAL),
+        FlatTablePipeline(
+            domain=domain,
+            layout=TableLayout.UNROLLED,
+            part_widths=FlatTable.unrolled_for(schema, examples).part_widths,
+        ),
+        FlatTablePipeline(domain=domain, layout=TableLayout.SCALARS),
     ]
+    return compared

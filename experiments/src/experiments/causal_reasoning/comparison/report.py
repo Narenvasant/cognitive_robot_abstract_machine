@@ -13,21 +13,21 @@ from enum import StrEnum
 import numpy as np
 from typing_extensions import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from experiments.causal_reasoning.graspclutter6d.evaluation import (
+from experiments.causal_reasoning.comparison.domain import ExampleView, RelationalDomain
+from experiments.causal_reasoning.comparison.evaluation import (
     EvaluationReport,
     GroundTruthReport,
     InterventionalEffect,
-    MonteCarloReport,
-    ScalingReport,
     LearningCurveReport,
+    MonteCarloReport,
     PermutationReport,
     PipelineReport,
     QueryOutcome,
+    ScalingReport,
     SplitReport,
 )
-from experiments.causal_reasoning.graspclutter6d.flat_table import SceneView
-from experiments.causal_reasoning.graspclutter6d.pipelines import LikelihoodReport
-from experiments.causal_reasoning.graspclutter6d.queries import count_cases_by_statistic
+from experiments.causal_reasoning.comparison.pipelines import LikelihoodReport
+from experiments.causal_reasoning.comparison.queries import AdjustedCountCase
 
 
 class Verdict(StrEnum):
@@ -39,10 +39,72 @@ class Verdict(StrEnum):
     REFUSED = "refused"
 
 
+@dataclass(frozen=True)
+class ReportText:
+    """
+    What an experiment says about itself in its report: the prose around the tables
+    that describes the dataset and the pipelines rather than the numbers.
+    """
+
+    title: str
+    """
+    The document's title.
+    """
+
+    introduction: Tuple[str, ...]
+    """
+    The paragraphs before the setup, one string each: what the dataset is, what the
+    pipelines see of it and how the questions are asked.
+    """
+
+    effect_summary: str
+    """
+    What the effect-rate tables group the examples by, in words, completing "grouped
+    by ...".
+    """
+
+    answerability_note: str = ""
+    """
+    What the pattern of answers and refusals means, after the answerability table.
+    """
+
+    reordering_note: str = ""
+    """
+    What the order the dataset lists the parts in means, if anything, in the
+    reordering section.
+    """
+
+    ground_truth_note: str = ""
+    """
+    How the model with known truth is built and what to expect of it, before its
+    tables.
+    """
+
+    learning_curve_note: str = ""
+    """
+    Why the pipelines need the amounts of data they do, before the curve.
+    """
+
+    scaling_note: str = ""
+    """
+    Why the pipelines grow the way they do, before the scaling table.
+    """
+
+
 @dataclass
 class MarkdownReport:
     """
     Renders a comparison as Markdown.
+    """
+
+    domain: RelationalDomain
+    """
+    The example and its parts.
+    """
+
+    text: ReportText
+    """
+    What the experiment says about itself.
     """
 
     report: EvaluationReport
@@ -52,7 +114,7 @@ class MarkdownReport:
 
     permutations: Optional[PermutationReport] = None
     """
-    The same questions under random orderings of the objects and viewpoints, if run.
+    The same questions under random orderings of the parts, if run.
     """
 
     splits: Optional[SplitReport] = None
@@ -78,8 +140,8 @@ class MarkdownReport:
 
     scaling: Optional[ScalingReport] = None
     """
-    How fit time, query time and circuit size grow with the number of objects in a
-    scene, if run.
+    How fit time, query time and circuit size grow with the number of parts in an
+    example, if run.
     """
 
     def render(self) -> str:
@@ -88,7 +150,7 @@ class MarkdownReport:
         """
         sections = [
             self._setup(),
-            self._graspability(),
+            self._effect_rates(),
             self._answerability(),
             self._trends(),
             self._adjustments(),
@@ -164,6 +226,14 @@ class MarkdownReport:
         )
 
     @staticmethod
+    def _note(note: str) -> str:
+        """
+        :param note: A sentence the experiment adds to a section, or nothing.
+        :return: The note with a leading space, or an empty string.
+        """
+        return f" {note}" if note else ""
+
+    @staticmethod
     def _region_order(region: str) -> Tuple[int, float, str]:
         """
         :param region: A cause region, written out.
@@ -178,94 +248,44 @@ class MarkdownReport:
 
     def _setup(self) -> List[str]:
         report = self.report
-        return [
-            "# GraspClutter6D: relational circuit against flat-table trees",
-            "",
-            "The GraspClutter6D dataset records a thousand real, densely cluttered bin, "
-            "shelf and table scenes, each photographed from thirteen poses by four "
-            "cameras, with the ground-truth pose and the visible share of every object "
-            "instance in every frame, and with analytic antipodal grasps annotated on "
-            "every object model and checked for collision against every scene it stands "
-            "in. A scene here is its own attributes (which object catalogue it is built "
-            "from, how far its clutter is spread, how far it is stacked, and whether "
-            "every object in it keeps a grasp) with one exchangeable part per object "
-            "instance (size, diameter, visibility, occlusion, graspability) and one per "
-            "camera frame (camera, distance, proximity, clarity). A scene holds between "
-            "five and twenty object instances, and they have no canonical order; the "
-            "annotation file lists them in the order they were labelled, and nothing "
-            "ties a position to an identity.",
-            "",
-            "Four pipelines were fitted on the same scenes and asked the same "
-            "`cause`/`causes_effect` EQL queries:",
-            "",
-            "- **relational circuit**: a relational probabilistic circuit fitted on the "
-            "scenes' relational structure, one circuit over the scene's own attributes "
-            "and its aggregation counts (small objects, occluded objects, near "
-            "viewpoints, clear viewpoints), one template over an object's attributes "
-            "and one over a viewpoint's, grounded per query into a circuit over exactly "
-            "the queried scene, objects and viewpoints and registered as a causal "
-            "circuit;",
-            "- **propositional tree**: a joint probability tree fitted on the scenes "
-            "flattened into one table of the scene's own attributes and the same four "
-            "counts, the classic propositional summary of a relational example, "
-            "registered as a causal circuit the same way;",
-            "- **unrolled tree**: the same tree on a table that also carries every "
-            "object's and viewpoint's attributes under the part's position, padded with "
-            "an absent marker past a scene's last part, so that a column means whatever "
-            "part a scene happens to list at that position;",
-            "- **scalars-only tree**: the same tree on the scene's own attributes "
-            "alone, what a flat learner sees without the relational feature "
-            "extraction.",
-            "",
-            "Every flat tree answers a query by backdoor adjustment on a table column; "
-            "the relational circuit does the same on the variable of a grounded "
-            "circuit. In both, the model is stratified so it is support-deterministic "
-            "over the cause, the effect's probability is read off every region of the "
-            "cause, and any variable the query marks as a confounder is summed out of "
-            "that reading. Every query lists one object and one viewpoint with all "
-            "their attributes open, which is what makes grounding retain the scene's "
-            "counts as variables; a flat table ignores parts a query says nothing about "
-            "and refuses a query that constrains a column it does not have.",
-            "",
+        plural = self.domain.plural
+        lines = [f"# {self.text.title}", ""]
+        for paragraph in self.text.introduction:
+            lines += [paragraph, ""]
+        lines += [
             "## Setup",
             "",
-            f"- scenes: {report.training_scene_count + report.test_scene_count}"
-            f" ({report.training_scene_count} to fit on, "
-            f"{report.test_scene_count} held out)",
-            "- scenes leaving every object graspable: "
-            f"{self._percent(report.graspable_rate)}",
+            f"- {plural}: {report.training_example_count + report.test_example_count}"
+            f" ({report.training_example_count} to fit on, "
+            f"{report.test_example_count} held out)",
+            f"- {plural} where {self.domain.effect_phrase}: "
+            f"{self._percent(report.effect_rate)}",
             "- fewest training rows per leaf, as a share of the rows fitted on: "
             f"{report.min_samples_per_leaf} in a cause-specific model, "
             f"{report.plain_min_samples_per_leaf} in the plain model that scores "
-            "held-out scenes",
+            f"held-out {plural}",
             f"- split seed: {report.random_seed}",
-            f"- fewest training scenes a cause region may hold for its effect to be "
+            f"- fewest training {plural} a cause region may hold for its effect to be "
             f"read as an answer: {report.min_region_support}; a region below that is "
             "marked † in the tables and takes no part in any summary",
         ]
+        return lines
 
-    def _graspability(self) -> List[str]:
+    def _effect_rates(self) -> List[str]:
+        plural = self.domain.plural
         lines = [
-            "## How often a scene leaves every object graspable",
+            f"## How often {self.domain.effect_phrase}",
             "",
-            "The scenes themselves, before any model: the share that leave every object "
-            "instance with at least one antipodal grasp the rest of the scene does not "
-            "block, grouped by the object catalogue the scene is built from, by how "
-            "many of its objects are small, by how many of them the cameras do not "
-            "see whole, and by how many objects it holds at all. This is the signal "
-            "the models are asked to explain.",
+            f"The {plural} themselves, before any model: the share where "
+            f"{self.domain.effect_phrase}, grouped by {self.text.effect_summary}. "
+            "This is the signal the models are asked to explain.",
             "",
         ]
-        for title, rates in (
-            ("object catalogue", self.report.graspable_by_catalogue),
-            ("small objects", self.report.graspable_by_small_object_count),
-            ("occluded objects", self.report.graspable_by_occluded_object_count),
-            ("objects", self.report.graspable_by_object_count),
-        ):
+        for title, rates in self.report.effect_rates_by.items():
             lines += self._table(
-                [title, "scenes", "every object graspable"],
+                [title, plural, "effect"],
                 [
-                    [str(value), str(rate.scene_count), self._percent(rate.rate)]
+                    [str(value), str(rate.example_count), self._percent(rate.rate)]
                     for value, rate in rates.items()
                 ],
             )
@@ -279,7 +299,8 @@ class MarkdownReport:
             "One row per question, one column per pipeline. An answered cell says, in "
             "words, which setting of the cause makes the effect most likely after "
             "adjustment and how likely, against the least favourable setting, over "
-            "the regions that hold enough training scenes to be read; a refused cell "
+            f"the regions that hold enough training {self.domain.plural} to be read; "
+            "a refused cell "
             "says why the pipeline could not answer at all.",
             "",
         ]
@@ -291,15 +312,8 @@ class MarkdownReport:
                 row.append(self._verdict(pipeline.outcomes[case_index]))
             rows.append(row)
         lines += self._table(["question"] + names, rows)
-        lines += [
-            "",
-            "A question about counts needs the counts: the scalars-only tree refuses "
-            "it. A question whose effect is one object's own attribute needs the "
-            "objects: the propositional tree refuses it, the unrolled tree answers it "
-            "about whatever object the scenes list at that position, and the relational "
-            "circuit answers it about an exchangeable object. What an answer about "
-            '"object 0" is worth is what the reordering below measures.',
-        ]
+        if self.text.answerability_note:
+            lines += ["", self.text.answerability_note]
         return lines
 
     def _verdict(self, outcome: QueryOutcome) -> str:
@@ -315,7 +329,7 @@ class MarkdownReport:
         if best is None:
             return (
                 f"{Verdict.ANSWERED}, but no region of the cause holds "
-                f"{outcome.min_region_support} training scenes."
+                f"{outcome.min_region_support} training {self.domain.plural}."
             )
         return (
             f"{Verdict.ANSWERED}: with {case.describe_cause(best.cause_region)}, "
@@ -378,22 +392,24 @@ class MarkdownReport:
         )
 
     def _adjustments(self) -> List[str]:
+        by_statistic: Dict[str, List[QueryOutcome]] = {}
+        for outcome in self._first_pipeline.outcomes:
+            if isinstance(outcome.case, AdjustedCountCase):
+                by_statistic.setdefault(outcome.case.statistic_name, []).append(outcome)
+        if not any(len(asked) > 1 for asked in by_statistic.values()):
+            return []
         lines = [
             "## What adjusting for changes",
             "",
-            "The same count question adjusted for the spread of the clutter, for the "
-            "number of objects, and for both, read off the relational circuit (the "
-            "propositional tree gives the same numbers on these columns). *n* is how "
-            "many training scenes hold that value of the cause; † marks a region "
+            "The same count question under each set of confounders it was asked with, "
+            f"read off the {self._first_pipeline.name}. *n* is how many training "
+            f"{self.domain.plural} hold that value of the cause; † marks a region "
             "below the support threshold.",
             "",
         ]
-        outcomes = {
-            outcome.case.name: outcome for outcome in self._first_pipeline.outcomes
-        }
-        for statistic_name, cases in count_cases_by_statistic().items():
-            asked = [outcomes[case.name] for case in cases if case.name in outcomes]
-            if not asked or not all(outcome.answered for outcome in asked):
+        for statistic_name, asked in by_statistic.items():
+            cases = [outcome.case for outcome in asked]
+            if len(asked) < 2 or not all(outcome.answered for outcome in asked):
                 continue
             lines += [f"### {statistic_name}", ""]
             by_region: Dict[str, Dict[str, InterventionalEffect]] = {}
@@ -403,8 +419,12 @@ class MarkdownReport:
                         outcome.case.name
                     ] = effect
             header = ["cause region", "n", "naive"] + [
-                "adjusted for "
-                + " and ".join(confounder.noun for confounder in case.confounders)
+                (
+                    "adjusted for "
+                    + " and ".join(confounder.noun for confounder in case.confounders)
+                    if case.confounders
+                    else "unadjusted"
+                )
                 for case in cases
             ]
             rows = []
@@ -440,6 +460,7 @@ class MarkdownReport:
         return f"{effect.cause_region} †"
 
     def _quantities(self) -> List[str]:
+        plural, noun = self.domain.plural, self.domain.noun
         lines = [
             "## Fit and likelihood",
             "",
@@ -447,7 +468,7 @@ class MarkdownReport:
             "support-deterministic model per distinct cause the questions asked about "
             "and the pipeline could fit; *training seconds* and the *nodes*/*edges* of "
             "every fitted circuit are summed over them, which for the relational "
-            "circuit includes the object and viewpoint templates.",
+            "circuit includes the part templates.",
             "",
         ]
         lines += self._table(
@@ -465,27 +486,26 @@ class MarkdownReport:
         )
         lines += [
             "",
-            "How well each explains scenes it never saw, on three views of a scene: its "
-            "own scalars, which every pipeline models; its scalars and counts; and the "
-            "whole scene, objects and viewpoints included, which only the pipelines "
+            f"How well each explains {plural} it never saw, on three views of a "
+            f"{noun}: its own scalars, which every pipeline models; its scalars and "
+            f"counts; and the whole {noun}, parts included, which only the pipelines "
             "that model the parts can score. The relational circuit scores a whole "
-            "scene as its class circuit over the scalars and counts times each part "
-            "template over one object or viewpoint given the counts; the unrolled tree "
-            "scores it as one row. *Held-out coverage* is the share of held-out scenes "
-            "that lie inside the plain model's support at all, since a tree's leaves "
-            "span only the value ranges they were fitted on, and a whole scene is "
-            "covered only if every one of its objects and viewpoints is. The *mean "
-            "log-likelihood* is over the covered scenes only; the last column restricts "
-            "it to the scenes every pipeline in the table covers, so the numbers are "
-            "over the same rows.",
+            f"{noun} as its class circuit over the scalars and counts times each part "
+            "template over one part given the counts; the unrolled tree scores it as "
+            f"one row. *Held-out coverage* is the share of held-out {plural} that lie "
+            "inside the plain model's support at all, since a tree's leaves span only "
+            f"the value ranges they were fitted on, and a whole {noun} is covered only "
+            "if every one of its parts is. The *mean log-likelihood* is over the "
+            f"covered {plural} only; the last column restricts it to the {plural} every "
+            "pipeline in the table covers, so the numbers are over the same rows.",
         ]
-        for view in SceneView:
+        for view in ExampleView:
             scored = [
                 pipeline
                 for pipeline in self.report.pipelines
                 if pipeline.likelihoods[view] is not None
             ]
-            lines += ["", f"### {view}", ""]
+            lines += ["", f"### {self.domain.view_label(view)}", ""]
             lines += self._table(
                 [
                     "pipeline",
@@ -542,18 +562,21 @@ class MarkdownReport:
 
     def _permutations(self) -> List[str]:
         permutations = self.permutations
+        noun, plural = self.domain.noun, self.domain.plural
+        first_part = self.domain.part_fields[0]
+        part_noun = self.domain.part_noun(first_part)
         lines = [
-            "## Does the order of the objects matter?",
+            "## Does the order of the parts matter?",
             "",
-            f"Every scene's objects and viewpoints were put in a random order, "
+            f"Every {noun}'s parts were put in a random order, "
             f"{permutations.ordering_count} times over, and each time the pipelines "
             "that model the parts were refitted on the same split and asked the "
-            "questions about objects again; the parts in the order the dataset lists "
+            "questions about parts again; the parts in the order the dataset lists "
             "them is the baseline every reordering is measured against. A relational "
-            "circuit treats the objects as exchangeable, so nothing about it can "
-            "depend on the order; an unrolled table's column `objects[0]` holds a "
-            "different object of every scene after each reordering. Per question and "
-            "pipeline: how many reorderings were answered; over the cause regions "
+            f"circuit treats the {part_noun}s as exchangeable, so nothing about it can "
+            f"depend on the order; an unrolled table's column `{first_part}[0]` holds a "
+            f"different {part_noun} of every {noun} after each reordering. Per question "
+            "and pipeline: how many reorderings were answered; over the cause regions "
             "every answered ordering distinguishes, the mean standard deviation and "
             "the widest range of the adjusted probability; the share of reorderings "
             "whose most effective region is not the dataset-order one; and the share "
@@ -585,14 +608,11 @@ class MarkdownReport:
         )
         lines += [
             "",
-            "The whole-scene likelihood of the same held-out scenes with the parts in "
-            "the order the dataset lists them, and over the reorderings. The "
-            "dataset's order is not arbitrary throughout: a scene's frames are "
-            "numbered by the recording rig, four cameras per pose in a fixed sequence, "
-            "so which camera took frame *i* is the same in every scene, and a column "
-            "that addresses a viewpoint by position addresses a real thing. Its "
-            "objects carry no such order. *Largest drop* is how far below the "
-            "dataset-order likelihood the worst reordering took each pipeline.",
+            f"The whole-{noun} likelihood of the same held-out {plural} with the parts "
+            "in the order the dataset lists them, and over the reorderings. "
+            + (self.text.reordering_note + " " if self.text.reordering_note else "")
+            + "*Largest drop* is how far below the dataset-order likelihood the worst "
+            "reordering took each pipeline.",
             "",
         ]
         lines += self._table(
@@ -610,7 +630,7 @@ class MarkdownReport:
                     f" / {self._mean_and_spread([report.mean_log_likelihood for report in reordered])}",
                     self._number(permutations.largest_likelihood_drop(name), 2),
                 ]
-                for name in permutations.whole_scene_likelihoods
+                for name in permutations.whole_example_likelihoods
                 for reordered in [permutations.reordered(name)]
             ],
         )
@@ -642,17 +662,17 @@ class MarkdownReport:
             "",
             f"The comparison repeated over {len(splits.reports)} random splits (seeds "
             f"{', '.join(str(report.random_seed) for report in splits.reports)}), "
-            "mean ± standard deviation. The likelihoods are over the scenes every "
-            "pipeline modelling the view covers.",
+            "mean ± standard deviation. The likelihoods are over the "
+            f"{self.domain.plural} every pipeline modelling the view covers.",
             "",
         ]
-        for view in SceneView:
+        for view in ExampleView:
             names = [
                 name
                 for name in splits.pipeline_names
                 if splits.reports[0].pipeline(name).likelihoods[view] is not None
             ]
-            lines += [f"### {view}", ""]
+            lines += [f"### {self.domain.view_label(view)}", ""]
             lines += self._table(
                 [
                     "pipeline",
@@ -712,21 +732,22 @@ class MarkdownReport:
         lines = [
             "## How much training data it takes",
             "",
-            f"Every pipeline's plain model fitted on a growing share of the scenes and "
-            f"scored on the same held-out fifth, over {len(seeds)} splits, mean ± "
-            "standard deviation of the held-out coverage and of the mean log-likelihood "
-            "over the covered scenes. The relational circuit's templates pool every "
-            "object of every training scene, and every frame of it, where the unrolled "
-            "tree sees one row per scene.",
+            f"Every pipeline's plain model fitted on a growing share of the "
+            f"{self.domain.plural} and scored on the same held-out fifth, over "
+            f"{len(seeds)} splits, mean ± standard deviation of the held-out coverage "
+            f"and of the mean log-likelihood over the covered {self.domain.plural}. "
+            "The relational circuit's templates pool every part of every training "
+            f"{self.domain.noun}, where the unrolled tree sees one row per "
+            f"{self.domain.noun}." + self._note(self.text.learning_curve_note),
         ]
-        for view in (SceneView.SCALARS_AND_COUNTS, SceneView.WHOLE_SCENE):
+        for view in (ExampleView.SCALARS_AND_COUNTS, ExampleView.WHOLE):
             names = [
                 name
                 for name in curve.pipeline_names
                 if curve.points_of(name, curve.train_fractions[0])[0].likelihoods[view]
                 is not None
             ]
-            lines += ["", f"### {view}", ""]
+            lines += ["", f"### {self.domain.view_label(view)}", ""]
             header = ["training share"]
             for name in names:
                 header += [f"{name}, coverage", f"{name}, mean log-likelihood"]
@@ -758,24 +779,18 @@ class MarkdownReport:
         lines = [
             "## Error against known truth",
             "",
-            "Scenes sampled from a structural causal model over the same domain, whose "
-            "interventional probabilities are computed by construction: the cause is "
-            "forced to a value in the mechanism and the effect's rate read off "
-            f"{'{:,}'.format(200000)} forced scenes. The number of objects is the "
-            "model's one confounder, driving both the causes and the effect, and the "
-            "scenes list their small objects first, so a column that addresses an "
-            "object by position is systematically misleading. Every pipeline was "
-            f"fitted on {truth.scene_count} scenes per setting and asked the questions "
-            "adjusted for the number of objects; *mean* and *max absolute error* are "
-            "over every supported cause region of every answered question, the "
-            "*support-weighted* error weighs each region by the training rows it "
-            "holds, *worst ordering* is the mean absolute error under the reordering "
-            "of the parts the pipeline did worst on, and *rank correlation* is "
-            "Spearman's between the answered and the true probabilities over a "
-            "question's regions. A count's extreme values are rare in the data and "
-            "rarer still within every stratum of the confounder, so no estimator "
-            "recovers their interventional probability well; the questions whose "
-            "cause or effect lives on one object are where the pipelines differ.",
+            f"{self.domain.plural.capitalize()} sampled from a structural causal model "
+            "over the same domain, whose interventional probabilities are known by "
+            "construction."
+            + self._note(self.text.ground_truth_note)
+            + f" Every pipeline was fitted on {truth.example_count} "
+            f"{self.domain.plural} per setting and asked the questions; *mean* and "
+            "*max absolute error* are over every supported cause region of every "
+            "answered question, the *support-weighted* error weighs each region by "
+            "the training rows it holds, *worst ordering* is the mean absolute error "
+            "under the reordering of the parts the pipeline did worst on, and *rank "
+            "correlation* is Spearman's between the answered and the true "
+            "probabilities over a question's regions.",
             "",
         ]
         lines += self._table(
@@ -806,13 +821,11 @@ class MarkdownReport:
             ],
         )
         lines += ["", "Mean absolute error per setting of the model:", ""]
+        setting_names = list(truth.descriptions[truth.configurations[0]])
         lines += self._table(
-            ["objects per scene", "confounding strength"] + truth.pipeline_names,
+            setting_names + truth.pipeline_names,
             [
-                [
-                    str(configuration.object_count_centre),
-                    self._number(configuration.confounding_strength, 1),
-                ]
+                list(truth.descriptions[configuration].values())
                 + [
                     self._number(
                         truth.mean_absolute_error(
@@ -901,17 +914,19 @@ class MarkdownReport:
         lines = [
             "## Cost against the number of objects",
             "",
-            "The pipelines that model the parts, fitted on synthetic scenes of growing "
-            f"size ({scaling.scene_count} scenes each) and asked one question about "
-            "an object. The relational circuit's part templates pool every object of "
-            "every scene into one circuit, so their size follows the number of "
+            "The pipelines that model the parts, fitted on synthetic "
+            f"{self.domain.plural} of growing size ({scaling.example_count} "
+            f"{self.domain.plural} each) and asked one question about a part. The "
+            "relational circuit's part templates pool every part of every "
+            f"{self.domain.noun} into one circuit, so their size follows the number of "
             "distinct part attributes, not the number of parts; the unrolled table "
             "carries one block of columns per position, so its tree grows with the "
-            "widest scene. *First ask* includes fitting the cause-specific model, "
-            "*asked again* is grounding and adjustment alone.",
+            f"widest {self.domain.noun}. *First ask* includes fitting the "
+            "cause-specific model, *asked again* is grounding and adjustment alone."
+            + self._note(self.text.scaling_note),
             "",
         ]
-        header = ["objects per scene"]
+        header = [f"parts per {self.domain.noun}"]
         for name in scaling.pipeline_names:
             header += [
                 f"{name}, fit seconds",
@@ -920,10 +935,10 @@ class MarkdownReport:
                 f"{name}, asked again",
             ]
         rows = []
-        for centre in scaling.object_count_centres:
-            row = [str(centre)]
+        for size in scaling.sizes:
+            row = [str(size)]
             for name in scaling.pipeline_names:
-                point = scaling.point(name, centre)
+                point = scaling.point(name, size)
                 row += [
                     self._number(point.fit.training_duration, 1),
                     str(point.fit.size.node_count),
@@ -1000,10 +1015,10 @@ class MarkdownReport:
 
     def _likelihood_findings(self) -> List[str]:
         """
-        Which pipeline explains the held-out scenes best, per view.
+        Which pipeline explains the held-out examples best, per view.
         """
         lines = []
-        for view in SceneView:
+        for view in ExampleView:
             shared = self.report.shared_coverage_log_likelihoods[view]
             if len(shared) < 2:
                 continue
@@ -1015,10 +1030,11 @@ class MarkdownReport:
             best = max(finite, key=finite.get)
             if len(set(finite.values())) == 1:
                 lines.append(
-                    f"- On the {view}, every pipeline modelling it assigns the same "
-                    f"mean log-likelihood ({self._number(finite[best], 2)}) to the "
-                    "held-out scenes: on those columns they are the same tree fitted on "
-                    "the same rows."
+                    f"- On the {self.domain.view_label(view)}, every pipeline modelling "
+                    f"it assigns the same mean log-likelihood "
+                    f"({self._number(finite[best], 2)}) to the held-out "
+                    f"{self.domain.plural}: on those columns they are the same tree "
+                    "fitted on the same rows."
                 )
                 continue
             others = ", ".join(
@@ -1032,9 +1048,10 @@ class MarkdownReport:
                 if pipeline.likelihoods[view] is not None
             )
             lines.append(
-                f"- On the {view}, the {best} assigns the highest mean log-likelihood "
-                f"({self._number(finite[best], 2)}, against {others}) to the held-out "
-                f"scenes every pipeline covers; coverage: {coverage}."
+                f"- On the {self.domain.view_label(view)}, the {best} assigns the "
+                f"highest mean log-likelihood ({self._number(finite[best], 2)}, against "
+                f"{others}) to the held-out {self.domain.plural} every pipeline covers; "
+                f"coverage: {coverage}."
             )
         return lines
 
@@ -1063,7 +1080,8 @@ class MarkdownReport:
                 f"{self._number(max(ranges), 2) if ranges else '-'} and its most "
                 "effective region moved in "
                 f"{self._share(float(np.mean(flips))) if flips else '-'} of the "
-                "reorderings; its whole-scene mean log-likelihood fell by up to "
+                f"reorderings; its whole-{self.domain.noun} mean log-likelihood fell "
+                "by up to "
                 f"{self._number(self.permutations.largest_likelihood_drop(name), 2)}"
                 " from the dataset's own order"
             )

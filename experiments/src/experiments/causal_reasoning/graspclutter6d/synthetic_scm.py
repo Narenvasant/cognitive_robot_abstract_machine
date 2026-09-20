@@ -17,12 +17,17 @@ first, so a column addressing an object by position is systematically misleading
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 import numpy as np
-from typing_extensions import Any, List, Optional
+from typing_extensions import Any, Dict, List, Optional, Sequence, Tuple
 
+from experiments.causal_reasoning.comparison.evaluation import (
+    InterventionalEffect,
+    KnownTruth,
+)
+from experiments.causal_reasoning.comparison.queries import CausalQueryCase
 from experiments.causal_reasoning.graspclutter6d.domain import (
     CameraModel,
     GraspClutterObject,
@@ -38,7 +43,6 @@ from experiments.causal_reasoning.graspclutter6d.domain import (
 from experiments.causal_reasoning.graspclutter6d.queries import (
     CatalogueCausesGraspability,
     CatalogueCausesOcclusion,
-    CausalQueryCase,
     CountCausesGraspability,
     OccludedObjectsCauseBlockedObject,
     SizeCausesBlockedObject,
@@ -585,3 +589,130 @@ class SceneStructuralCausalModel:
             proximity=Proximity.NEAR if clear else Proximity.FAR,
             clarity=ViewClarity.CLEAR if clear else ViewClarity.OBSTRUCTED,
         )
+
+
+# %% the model as known truth
+
+
+@dataclass(frozen=True)
+class ModelSetting:
+    """
+    One setting of the synthetic model.
+    """
+
+    object_count_centre: int
+    """
+    The typical number of objects in a scene.
+    """
+
+    confounding_strength: float
+    """
+    How strongly the number of objects drives both the causes and the effect.
+    """
+
+    def model(self) -> SceneStructuralCausalModel:
+        """
+        :return: The model under this setting.
+        """
+        return SceneStructuralCausalModel(
+            object_count_centre=self.object_count_centre,
+            confounding_strength=self.confounding_strength,
+        )
+
+
+def region_value(effect: InterventionalEffect, cause: Cause) -> Any:
+    """
+    :param effect: One region's effect, whose region is written out.
+    :param cause: The cause the region is a value of.
+    :return: The value the region names, as the model forces it.
+    """
+    if cause is Cause.CATALOGUE:
+        return ObjectCatalogue(effect.cause_region)
+    if cause is Cause.OBJECT_SIZE:
+        return ObjectSize(effect.cause_region)
+    return int(effect.ordinal)
+
+
+@dataclass
+class SceneTruth(KnownTruth):
+    """
+    The synthetic model's interventional probabilities under several settings, each
+    computed once per intervention and effect.
+    """
+
+    settings: Sequence[ModelSetting] = (
+        ModelSetting(5, 0.6),
+        ModelSetting(10, 0.0),
+        ModelSetting(10, 0.3),
+        ModelSetting(10, 0.6),
+        ModelSetting(20, 0.6),
+    )
+    """
+    The settings to run.
+    """
+
+    random_seed: int = 0
+    """
+    Seed of the forced samples, the same for every intervention.
+    """
+
+    sample_count: int = 200_000
+    """
+    How many forced scenes each probability is read off.
+    """
+
+    known: Dict[Tuple[ModelSetting, Intervention, Effect], float] = field(
+        default_factory=dict
+    )
+    """
+    The probabilities computed so far.
+    """
+
+    @property
+    def configurations(self) -> Sequence[ModelSetting]:
+        return self.settings
+
+    def describe(self, configuration: ModelSetting) -> Dict[str, str]:
+        return {
+            "objects per scene": str(configuration.object_count_centre),
+            "confounding strength": f"{configuration.confounding_strength:.1f}",
+        }
+
+    def examples(
+        self, configuration: ModelSetting, count: int, random_state: np.random.Generator
+    ) -> List[GraspClutterScene]:
+        return configuration.model().scenes(count, random_state)
+
+    def probability(
+        self,
+        configuration: ModelSetting,
+        case: CausalQueryCase,
+        effect: InterventionalEffect,
+    ) -> float:
+        question = CausalQuestion.of(case)
+        intervention = Intervention(
+            question.cause, region_value(effect, question.cause)
+        )
+        key = (configuration, intervention, question.effect)
+        if key not in self.known:
+            self.known[key] = configuration.model().interventional_probability(
+                intervention,
+                question.effect,
+                np.random.default_rng(self.random_seed),
+                self.sample_count,
+            )
+        return self.known[key]
+
+
+def scenes_of_size(
+    object_count_centre: int, scene_count: int, random_state: np.random.Generator
+) -> List[GraspClutterScene]:
+    """
+    :param object_count_centre: The typical number of objects per scene.
+    :param scene_count: How many scenes to sample.
+    :param random_state: Source of randomness.
+    :return: Scenes sampled from the model at that size.
+    """
+    return SceneStructuralCausalModel(object_count_centre=object_count_centre).scenes(
+        scene_count, random_state
+    )

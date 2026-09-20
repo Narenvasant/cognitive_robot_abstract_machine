@@ -138,20 +138,36 @@ learner.
 
 ## The pipelines
 
+The pipelines, the studies and the report are not this experiment's own: they live in
+the shared `experiments.causal_reasoning.comparison` package and work on any relational
+example a `RelationalDomain` describes, so that every dataset compared this way is
+compared the same way. This package supplies the domain, the data, the questions and the
+words.
+
 | file | what it holds |
 |---|---|
 | `annotations.py` | reading a scene's three BOP files, from disk or from the dataset server, and the geometry derived from them |
 | `grasp_labels.py` | counting the grasps a scene leaves each of its objects, and the index that keeps those counts |
-| `dataset.py` | building the scenes, the levels their measurements are read as, and a synthetic generator of the same shape for tests |
+| `dataset.py` | building the scenes, the levels their measurements are read as, a synthetic generator of the same shape for tests, and the graspability summaries the report opens with |
 | `scene_store.py` | keeping the built scenes in a database and reading them back |
-| `synthetic_scm.py` | a structural causal model over the same domain, whose interventional probabilities are computed by forcing a cause in the mechanism |
-| `baselines.py` | regression adjustment on the propositional table |
-| `flat_table.py` | `SceneSchema`, how EQL names every attribute; `FlatTable`, the scenes as one row each in one of the three `TableLayout`s; `SceneView`, how much of a scene a likelihood is taken over |
-| `pipelines.py` | `CausalQueryPipeline` and its three implementations: `RelationalPipeline`, `HybridPipeline`, and `FlatTablePipeline` once per layout |
+| `domain.py` | the scene, its parts and their aggregation counts, and `scene_domain()`, the scene as the shared comparison sees it |
 | `queries.py` | the question catalogue, each question one EQL query that reads the same for every pipeline |
-| `evaluation.py` | asking every question to every pipeline and recording what came of it (`evaluate`), then the studies: `permutation_study` reorders every scene's parts and asks the object questions again, `split_study` repeats the comparison over several random splits, `learning_curve` fits on growing shares of the scenes, `ground_truth_study` scores every pipeline against the synthetic model's truth, `monte_carlo_study` follows the relational circuit's answers as grounding draws more samples, `scaling_study` measures cost against the number of objects |
-| `report.py` | rendering the comparison and the studies as Markdown |
-| `run_pipeline.py` | the whole comparison end to end |
+| `synthetic_scm.py` | a structural causal model over the same domain, whose interventional probabilities are computed by forcing a cause in the mechanism, and `SceneTruth`, the model as the known truth the shared ground-truth study scores against |
+| `run_pipeline.py` | the whole comparison end to end: the `Experiment` handed to the shared runner, and the report's prose |
+
+And in the shared package:
+
+| file | what it holds |
+|---|---|
+| `domain.py` | `RelationalDomain`, what an example and its exchangeable parts are; `ExampleView`, how much of an example a likelihood is taken over |
+| `flat_table.py` | `Schema`, how EQL names every attribute; `FlatTable`, the examples as one row each in one of the three `TableLayout`s |
+| `pipelines.py` | `CausalQueryPipeline` and its three implementations: `RelationalPipeline`, `HybridPipeline`, and `FlatTablePipeline` once per layout |
+| `baselines.py` | regression adjustment on the propositional table |
+| `queries.py` | what every question is made of: `CausalQueryCase`, `Confounder`, and the open-part queries |
+| `dataset.py` | `ExampleDataset`: splitting, reordering the parts, and the effect's rate |
+| `evaluation.py` | asking every question to every pipeline and recording what came of it (`evaluate`), then the studies: `permutation_study` reorders every example's parts and asks the part questions again, `split_study` repeats the comparison over several random splits, `learning_curve` fits on growing shares of the examples, `ground_truth_study` scores every pipeline against a `KnownTruth`, `monte_carlo_study` follows the relational circuit's answers as grounding draws more samples, `scaling_study` measures cost against the number of parts |
+| `report.py` | rendering the comparison and the studies as Markdown, around the `ReportText` an experiment writes |
+| `run.py` | `Experiment`, `RunSettings` and `run`, the studies in order with the report written after each |
 
 **One model per cause.** Backdoor adjustment needs the circuit to be
 support-deterministic over the cause: no sum unit may mix branches that overlap on it. A

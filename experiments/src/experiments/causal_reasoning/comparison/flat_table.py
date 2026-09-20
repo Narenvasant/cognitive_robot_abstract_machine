@@ -1,21 +1,20 @@
 """
-Flattening scenes into one table, named the way EQL names the same attributes, so a
+Flattening examples into one table, named the way EQL names the same attributes, so a
 query built for the relational pipeline reads the flat table's columns unchanged.
 
-A scene holds between five and twenty object instances and no canonical order over them,
-so a flat table has to choose what to do with the parts. The three layouts are the
-choices a flat learner has: keep only the scene's own scalars, add the aggregation
-counts the relational model derives from the parts, or unroll the parts into one block
-of columns per position and pad the positions a scene does not fill. Values are kept as
-they are, an enum member stays a member, which is also how a fitted tree's leaves and a
+An example has some number of exchangeable parts and no canonical order over them, so a
+flat table has to choose what to do with the parts. The three layouts are the choices a
+flat learner has: keep only the example's own scalars, add the aggregation counts the
+relational model derives from the parts, or unroll the parts into one block of columns
+per position and pad the positions an example does not fill. Values are kept as they
+are, an enum member stays a member, which is also how a fitted tree's leaves and a
 query's conditions read them.
 """
 
 from __future__ import annotations
 
-import enum
 import re
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 import pandas as pd
@@ -30,27 +29,26 @@ from typing_extensions import (
     Sequence,
     Tuple,
     Type,
-    get_args,
-    get_type_hints,
 )
 
-from experiments.causal_reasoning.graspclutter6d.domain import (
-    GraspClutterScene,
-    GraspClutterSceneAggregations,
+from experiments.causal_reasoning.comparison.domain import (
+    ExampleView,
+    PartPadding,
+    RelationalDomain,
 )
-from experiments.causal_reasoning.graspclutter6d.exceptions import (
+from experiments.causal_reasoning.comparison.exceptions import (
     FlatTableSchemaMismatchError,
 )
 
 
 class TableLayout(StrEnum):
     """
-    What a flat table holds of a scene besides its own scalars.
+    What a flat table holds of an example besides its own scalars.
     """
 
     SCALARS = "scalars-only"
     """
-    The scene's own scalars and nothing of its parts.
+    The example's own scalars and nothing of its parts.
     """
 
     PROPOSITIONAL = "propositional"
@@ -62,7 +60,7 @@ class TableLayout(StrEnum):
     UNROLLED = "unrolled"
     """
     The scalars, the counts, and every part's attributes under the part's position,
-    padded where a scene has fewer parts than the widest one.
+    padded where an example has fewer parts than the widest one.
     """
 
     @property
@@ -80,80 +78,15 @@ class TableLayout(StrEnum):
         return self is TableLayout.UNROLLED
 
 
-class SceneView(StrEnum):
-    """
-    How much of a scene a likelihood is taken over.
-    """
-
-    SCALARS = "scalars"
-    """
-    The scene's own scalars.
-    """
-
-    SCALARS_AND_COUNTS = "scalars and counts"
-    """
-    The scalars and the aggregation counts over the parts.
-    """
-
-    WHOLE_SCENE = "whole scene"
-    """
-    The scalars, the counts, and every object and viewpoint.
-    """
-
-
-class AbsentPart(StrEnum):
-    """
-    The symbol an unrolled column holds where a scene has no part at that position.
-    """
-
-    ABSENT = "absent"
-
-
-@dataclass(frozen=True)
-class PartPadding:
-    """
-    What an unrolled column holds at a position the scene has no part for, per kind of
-    attribute.
-    """
-
-    symbol: AbsentPart = AbsentPart.ABSENT
-    """
-    For an enum attribute: a symbol of its own next to the enum's members.
-    """
-
-    integer: int = -1
-    """
-    For an integer attribute: a value no real part shows, since every count and index
-    the parts carry is a count of something.
-    """
-
-    real: float = -1.0
-    """
-    For a continuous attribute: a value outside every real one, since a part's diameter,
-    visibility and distance are all positive.
-    """
-
-    def value_for(self, attribute_type: Type) -> Any:
-        """
-        :param attribute_type: The attribute's type.
-        :return: The padding value of that kind.
-        """
-        if issubclass(attribute_type, enum.Enum):
-            return self.symbol
-        if issubclass(attribute_type, float):
-            return self.real
-        return self.integer
-
-
 @dataclass(frozen=True)
 class PartAttribute:
     """
-    One attribute of one of a scene's exchangeable parts, as a query names it.
+    One attribute of one of an example's exchangeable parts, as a query names it.
     """
 
     part_field: str
     """
-    The exchangeable-part field of the scene, ``objects`` or ``viewpoints``.
+    The exchangeable-part field of the example, ``objects`` or ``viewpoints``.
     """
 
     index: int
@@ -168,38 +101,37 @@ class PartAttribute:
 
 
 @dataclass(frozen=True)
-class SceneSchema:
+class Schema:
     """
-    The attributes of a scene as EQL names them: the scene's own scalars, its
-    aggregation counts, and each object's or viewpoint's attributes under the part's
-    index.
+    The attributes of an example as EQL names them: the example's own scalars, its
+    aggregation counts, and each part's attributes under the part's index.
+    """
+
+    domain: RelationalDomain
+    """
+    The example and its parts.
     """
 
     @property
     def part_fields(self) -> Tuple[str, ...]:
         """
-        The exchangeable-part fields of
-        :class:`~experiments.causal_reasoning.graspclutter6d.domain.GraspClutterScene`,
-        which are the fields
-        :class:`~experiments.causal_reasoning.graspclutter6d.domain.GraspClutterSceneAggregations`
-        aggregates over.
+        The exchangeable-part fields of the example.
         """
-        return tuple(GraspClutterSceneAggregations.aggregation_registry)
+        return self.domain.part_fields
 
     def part_class(self, part_field: str) -> Type:
         """
         :param part_field: An exchangeable-part field.
         :return: The class of that field's parts.
         """
-        [part_class] = get_args(get_type_hints(GraspClutterScene)[part_field])
-        return part_class
+        return self.domain.part_class(part_field)
 
     def part_attribute_types(self, part_field: str) -> Dict[str, Type]:
         """
         :param part_field: An exchangeable-part field.
         :return: The attributes of that field's parts and their types.
         """
-        return get_type_hints(self.part_class(part_field))
+        return self.domain.part_attribute_types(part_field)
 
     @property
     def aggregation_statistics(self) -> Tuple[Callable[..., Any], ...]:
@@ -211,7 +143,7 @@ class SceneSchema:
         return tuple(
             statistic
             for part_field in self.part_fields
-            for statistic in GraspClutterSceneAggregations.aggregation_registry[
+            for statistic in self.domain.aggregation_class.aggregation_registry[
                 part_field
             ]
         )
@@ -219,20 +151,18 @@ class SceneSchema:
     @property
     def scalar_fields(self) -> Tuple[str, ...]:
         """
-        The scene's own scalar attributes.
+        The example's own scalar attributes.
         """
-        return tuple(
-            scene_field.name
-            for scene_field in fields(GraspClutterScene)
-            if scene_field.name not in self.part_fields
-        )
+        return self.domain.scalar_fields
 
     def scalar_column(self, field_name: str) -> str:
         """
-        :param field_name: A scene scalar field.
+        :param field_name: An example scalar field.
         :return: The column, and EQL variable, name of that field.
         """
-        return get_class_and_attribute_name(GraspClutterScene.__name__, field_name)
+        return get_class_and_attribute_name(
+            self.domain.example_class.__name__, field_name
+        )
 
     @property
     def scalar_columns(self) -> Tuple[str, ...]:
@@ -251,11 +181,11 @@ class SceneSchema:
     def part_attribute(self, variable_name: str) -> Optional[PartAttribute]:
         """
         :param variable_name: A variable name, as EQL names it.
-        :return: The part attribute it names, or ``None`` if it names a scene-level
+        :return: The part attribute it names, or ``None`` if it names an example-level
             variable.
         """
         pattern = re.compile(
-            rf"^{re.escape(GraspClutterScene.__name__)}\."
+            rf"^{re.escape(self.domain.example_class.__name__)}\."
             rf"({'|'.join(map(re.escape, self.part_fields))})\[(\d+)\]\.(\w+)$"
         )
         match = pattern.match(variable_name)
@@ -270,7 +200,7 @@ class SceneSchema:
             names by its class and its call.
         """
         return get_class_and_attribute_name(
-            GraspClutterSceneAggregations.__name__, f"{statistic_name}()"
+            self.domain.aggregation_class.__name__, f"{statistic_name}()"
         )
 
     @property
@@ -287,54 +217,56 @@ class SceneSchema:
 @dataclass
 class FlatTable:
     """
-    Scenes as one row each, holding what the layout says of them.
+    Examples as one row each, holding what the layout says of them.
     """
 
-    layout: TableLayout = TableLayout.PROPOSITIONAL
-    """
-    What the rows hold besides the scene's own scalars.
-    """
-
-    part_widths: Dict[str, int] = field(default_factory=dict)
-    """
-    Per unrolled part field, how many positions a row has; a scene with more parts of
-    that kind cannot be a row, one with fewer is padded.
-
-    A part field left out is not unrolled at all, which is how a table holds a scene's
-    viewpoints by position and leaves its objects to a model that treats them as
-    exchangeable.
-    """
-
-    padding: PartPadding = PartPadding()
-    """
-    What a position without a part holds.
-    """
-
-    schema: SceneSchema = field(default_factory=SceneSchema)
+    schema: Schema
     """
     How the columns are named.
     """
 
+    layout: TableLayout = TableLayout.PROPOSITIONAL
+    """
+    What the rows hold besides the example's own scalars.
+    """
+
+    part_widths: Dict[str, int] = field(default_factory=dict)
+    """
+    Per unrolled part field, how many positions a row has; an example with more parts of
+    that kind cannot be a row, one with fewer is padded.
+
+    A part field left out is not unrolled at all, which is how a table holds an
+    example's viewpoints by position and leaves its objects to a model that treats them
+    as exchangeable.
+    """
+
+    @property
+    def padding(self) -> PartPadding:
+        """
+        What a position without a part holds.
+        """
+        return self.schema.domain.padding
+
     @classmethod
     def unrolled_for(
         cls,
-        scenes: Sequence[GraspClutterScene],
-        schema: SceneSchema = SceneSchema(),
+        schema: Schema,
+        examples: Sequence[Any],
         part_fields: Optional[Sequence[str]] = None,
     ) -> FlatTable:
         """
-        :param scenes: The scenes the table has to hold.
         :param schema: How the columns are named.
+        :param examples: The examples the table has to hold.
         :param part_fields: The part fields to unroll; every one if not given.
         :return: An unrolled table wide enough for the largest of them.
         """
         return cls(
+            schema=schema,
             layout=TableLayout.UNROLLED,
             part_widths={
-                part_field: max(len(vars(scene)[part_field]) for scene in scenes)
+                part_field: max(len(vars(example)[part_field]) for example in examples)
                 for part_field in (part_fields or schema.part_fields)
             },
-            schema=schema,
         )
 
     @property
@@ -374,59 +306,59 @@ class FlatTable:
             columns += self.part_columns
         return columns
 
-    def columns_of(self, view: SceneView) -> Optional[List[str]]:
+    def columns_of(self, view: ExampleView) -> Optional[List[str]]:
         """
-        :param view: How much of a scene to look at.
+        :param view: How much of an example to look at.
         :return: The columns holding that much, or ``None`` if the layout holds less.
         """
-        if view is SceneView.SCALARS:
+        if view is ExampleView.SCALARS:
             return list(self.schema.scalar_columns)
-        if view is SceneView.SCALARS_AND_COUNTS and self.layout.has_counts:
+        if view is ExampleView.SCALARS_AND_COUNTS and self.layout.has_counts:
             return list(self.schema.scalar_columns) + list(
                 self.schema.aggregation_columns
             )
-        if view is SceneView.WHOLE_SCENE and self.layout.has_parts:
+        if view is ExampleView.WHOLE and self.layout.has_parts:
             return self.columns
         return None
 
-    def fits(self, scene: GraspClutterScene) -> bool:
+    def fits(self, example: Any) -> bool:
         """
-        :param scene: A scene.
+        :param example: An example.
         :return: Whether the table has a position for every one of its parts.
         """
-        return not self._overflowing_columns(scene)
+        return not self._overflowing_columns(example)
 
-    def _overflowing_columns(self, scene: GraspClutterScene) -> List[str]:
+    def _overflowing_columns(self, example: Any) -> List[str]:
         """
-        :param scene: A scene.
+        :param example: An example.
         :return: The columns its parts past the table's width would need.
         """
         return [
             self.schema.part_column(PartAttribute(part_field, index, attribute))
             for part_field in self.unrolled_fields
             for index in range(
-                self.part_widths[part_field], len(vars(scene)[part_field])
+                self.part_widths[part_field], len(vars(example)[part_field])
             )
             for attribute in self.schema.part_attribute_types(part_field)
         ]
 
-    def row(self, scene: GraspClutterScene) -> Dict[str, Any]:
+    def row(self, example: Any) -> Dict[str, Any]:
         """
-        :param scene: The scene to flatten.
-        :return: The scene's values, keyed by column.
-        :raises FlatTableSchemaMismatchError: If the scene has more parts than the table
+        :param example: The example to flatten.
+        :return: The example's values, keyed by column.
+        :raises FlatTableSchemaMismatchError: If the example has more parts than the table
             has positions.
         """
-        overflowing = self._overflowing_columns(scene)
+        overflowing = self._overflowing_columns(example)
         if overflowing:
             raise FlatTableSchemaMismatchError(overflowing)
-        scene_values = vars(scene)
+        example_values = vars(example)
         row = {
-            self.schema.scalar_column(name): scene_values[name]
+            self.schema.scalar_column(name): example_values[name]
             for name in self.schema.scalar_fields
         }
         if self.layout.has_counts:
-            aggregations = GraspClutterSceneAggregations(instance=scene)
+            aggregations = self.schema.domain.aggregation_class(instance=example)
             row.update(
                 {
                     self.schema.aggregation_column(statistic.__name__): statistic(
@@ -436,13 +368,13 @@ class FlatTable:
                 }
             )
         for part_field in self.unrolled_fields:
-            row.update(self._part_values(part_field, scene_values[part_field]))
+            row.update(self._part_values(part_field, example_values[part_field]))
         return row
 
     def _part_values(self, part_field: str, parts: Sequence[Any]) -> Dict[str, Any]:
         """
         :param part_field: The exchangeable-part field the parts belong to.
-        :param parts: The scene's parts of that kind, in the scene's order.
+        :param parts: The example's parts of that kind, in the example's order.
         :return: Every position's attribute values, padded past the last part.
         """
         attribute_types = self.schema.part_attribute_types(part_field)
@@ -460,9 +392,11 @@ class FlatTable:
                 )
         return values
 
-    def dataframe(self, scenes: Iterable[GraspClutterScene]) -> pd.DataFrame:
+    def dataframe(self, examples: Iterable[Any]) -> pd.DataFrame:
         """
-        :param scenes: The scenes to flatten.
-        :return: One row per scene, columns in :attr:`columns` order.
+        :param examples: The examples to flatten.
+        :return: One row per example, columns in :attr:`columns` order.
         """
-        return pd.DataFrame([self.row(scene) for scene in scenes], columns=self.columns)
+        return pd.DataFrame(
+            [self.row(example) for example in examples], columns=self.columns
+        )

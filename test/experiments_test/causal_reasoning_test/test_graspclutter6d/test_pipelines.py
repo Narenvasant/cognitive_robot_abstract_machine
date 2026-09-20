@@ -10,23 +10,25 @@ import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO clas
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.graspclutter6d.evaluation import QuestionAsker
-from experiments.causal_reasoning.graspclutter6d.exceptions import (
+from experiments.causal_reasoning.comparison.domain import ExampleView
+from experiments.causal_reasoning.comparison.evaluation import QuestionAsker
+from experiments.causal_reasoning.comparison.exceptions import (
     FlatTableSchemaMismatchError,
     PipelineNotFittedError,
 )
-from experiments.causal_reasoning.graspclutter6d.flat_table import (
+from experiments.causal_reasoning.comparison.flat_table import (
     FlatTable,
-    SceneView,
+    Schema,
     TableLayout,
 )
-from experiments.causal_reasoning.graspclutter6d.pipelines import (
+from experiments.causal_reasoning.comparison.pipelines import (
     CauseStratification,
     FlatTablePipeline,
     HybridPipeline,
     RelationalPipeline,
     pipelines,
 )
+from experiments.causal_reasoning.graspclutter6d.domain import PartField, scene_domain
 from experiments.causal_reasoning.graspclutter6d.queries import (
     CatalogueCausesGraspability,
     CountCausesGraspability,
@@ -42,11 +44,26 @@ synthetic scenes to still split.
 
 
 @pytest.fixture
+def schema() -> Schema:
+    return Schema(scene_domain())
+
+
+def scene_pipelines(synthetic_scenes):
+    """
+    :param synthetic_scenes: The scenes the pipelines will be fitted on.
+    :return: Every pipeline the experiment compares, unfitted.
+    """
+    return pipelines(
+        scene_domain(), synthetic_scenes, positional_fields=(PartField.VIEWPOINTS,)
+    )
+
+
+@pytest.fixture
 def fitted_pipelines(synthetic_scenes):
     """
     Every pipeline fitted on the synthetic scenes.
     """
-    fitted = pipelines(synthetic_scenes)
+    fitted = scene_pipelines(synthetic_scenes)
     for pipeline in fitted:
         pipeline.min_samples_per_leaf = LEAF_SHARE
         pipeline.plain_min_samples_per_leaf = LEAF_SHARE
@@ -55,7 +72,7 @@ def fitted_pipelines(synthetic_scenes):
 
 
 def test_every_layout_and_the_relational_circuit_are_compared(synthetic_scenes):
-    assert [pipeline.name for pipeline in pipelines(synthetic_scenes)] == [
+    assert [pipeline.name for pipeline in scene_pipelines(synthetic_scenes)] == [
         "relational circuit",
         "hybrid circuit",
         f"{TableLayout.PROPOSITIONAL} tree",
@@ -66,7 +83,7 @@ def test_every_layout_and_the_relational_circuit_are_compared(synthetic_scenes):
 
 def test_a_pipeline_that_was_never_fitted_says_so():
     with pytest.raises(PipelineNotFittedError):
-        RelationalPipeline().registry_for(None)
+        RelationalPipeline(domain=scene_domain()).registry_for(None)
 
 
 def test_fitting_reports_one_model_before_any_cause_is_asked_about(fitted_pipelines):
@@ -109,15 +126,19 @@ def test_a_pipeline_without_the_parts_refuses_a_question_about_one(fitted_pipeli
         pipeline.registry_for("GraspClutterScene.objects[0].size")
 
 
-def test_a_scene_level_cause_stratifies_the_class_circuit_not_a_template():
-    stratification = CauseStratification.for_variable("GraspClutterScene.extent")
+def test_a_scene_level_cause_stratifies_the_class_circuit_not_a_template(schema):
+    stratification = CauseStratification.for_variable(
+        "GraspClutterScene.extent", schema
+    )
     assert stratification.class_columns == ["GraspClutterScene.extent"]
     assert stratification.part_attributes == {}
 
 
-def test_a_part_level_cause_stratifies_that_parts_template_not_the_class_circuit():
+def test_a_part_level_cause_stratifies_that_parts_template_not_the_class_circuit(
+    schema,
+):
     stratification = CauseStratification.for_variable(
-        "GraspClutterScene.objects[3].size"
+        "GraspClutterScene.objects[3].size", schema
     )
     assert stratification.class_columns is None
     assert stratification.part_attributes == {"objects": ["size"]}
@@ -127,8 +148,7 @@ def test_only_the_pipelines_that_model_parts_score_a_whole_scene(
     fitted_pipelines, synthetic_scenes
 ):
     scored = {
-        name: pipeline.log_likelihood(synthetic_scenes, SceneView.WHOLE_SCENE)
-        is not None
+        name: pipeline.log_likelihood(synthetic_scenes, ExampleView.WHOLE) is not None
         for name, pipeline in fitted_pipelines.items()
     }
     assert scored == {
@@ -140,23 +160,25 @@ def test_every_pipeline_covers_the_scenes_it_was_fitted_on(
     fitted_pipelines, synthetic_scenes
 ):
     for pipeline in fitted_pipelines.values():
-        report = pipeline.log_likelihood(synthetic_scenes, SceneView.SCALARS)
+        report = pipeline.log_likelihood(synthetic_scenes, ExampleView.SCALARS)
         assert report.coverage == 1.0
 
 
 def test_a_scene_the_table_has_no_room_for_lies_outside_the_support(
-    synthetic_scenes,
+    synthetic_scenes, schema
 ):
     narrow = FlatTablePipeline(
-        flat_table=FlatTable.unrolled_for(synthetic_scenes),
+        domain=scene_domain(),
+        layout=TableLayout.UNROLLED,
+        part_widths=FlatTable.unrolled_for(schema, synthetic_scenes).part_widths,
         min_samples_per_leaf=LEAF_SHARE,
         plain_min_samples_per_leaf=LEAF_SHARE,
     )
     narrow.fit(synthetic_scenes)
     scene = synthetic_scenes[0]
     larger = replace(scene, objects=scene.objects + [scene.objects[0]])
-    report = narrow.log_likelihood([larger], SceneView.WHOLE_SCENE)
-    assert report.covered_scene_count == 0
+    report = narrow.log_likelihood([larger], ExampleView.WHOLE)
+    assert report.covered_example_count == 0
 
 
 def test_the_questions_name_the_variables_the_pipelines_are_asked_about():
@@ -190,9 +212,11 @@ def test_the_relational_circuit_gives_the_same_answers_whatever_order_the_parts_
             np.random.default_rng(ordering)
         )
         pipeline = RelationalPipeline(
-            min_samples_per_leaf=0.2, plain_min_samples_per_leaf=0.2
+            domain=scene_domain(),
+            min_samples_per_leaf=0.2,
+            plain_min_samples_per_leaf=0.2,
         )
-        pipeline.fit(reordered.scenes)
+        pipeline.fit(reordered.examples)
         outcomes = [asker.ask(pipeline, case) for case in object_level_cases()]
         answers.append(
             (
@@ -206,7 +230,7 @@ def test_the_relational_circuit_gives_the_same_answers_whatever_order_the_parts_
                     for outcome in outcomes
                 ],
                 pipeline.log_likelihood(
-                    reordered.scenes, SceneView.WHOLE_SCENE
+                    reordered.examples, ExampleView.WHOLE
                 ).mean_log_likelihood,
             )
         )
@@ -224,9 +248,14 @@ def test_the_hybrid_answers_object_questions_exactly_as_the_relational_circuit(
 ):
     asker = QuestionAsker(random_seed=0, min_region_support=1)
     relational = RelationalPipeline(
-        min_samples_per_leaf=0.2, plain_min_samples_per_leaf=0.2
+        domain=scene_domain(), min_samples_per_leaf=0.2, plain_min_samples_per_leaf=0.2
     )
-    hybrid = HybridPipeline(min_samples_per_leaf=0.2, plain_min_samples_per_leaf=0.2)
+    hybrid = HybridPipeline(
+        domain=scene_domain(),
+        positional_fields=(PartField.VIEWPOINTS,),
+        min_samples_per_leaf=0.2,
+        plain_min_samples_per_leaf=0.2,
+    )
     relational.fit(synthetic_scenes)
     hybrid.fit(synthetic_scenes)
     for case in object_level_cases():
@@ -245,17 +274,24 @@ def test_the_hybrid_answers_object_questions_exactly_as_the_relational_circuit(
 def test_the_hybrid_holds_the_viewpoints_by_position_and_not_the_objects(
     synthetic_scenes,
 ):
-    hybrid = HybridPipeline(min_samples_per_leaf=0.2, plain_min_samples_per_leaf=0.2)
+    hybrid = HybridPipeline(
+        domain=scene_domain(),
+        positional_fields=(PartField.VIEWPOINTS,),
+        min_samples_per_leaf=0.2,
+        plain_min_samples_per_leaf=0.2,
+    )
     hybrid.fit(synthetic_scenes)
-    assert hybrid.table.unrolled_fields == ["viewpoints"]
+    assert hybrid.table.unrolled_fields == [PartField.VIEWPOINTS]
     assert not any("objects[" in column for column in hybrid.table.columns)
-    assert hybrid.log_likelihood(synthetic_scenes, SceneView.WHOLE_SCENE) is not None
+    assert hybrid.log_likelihood(synthetic_scenes, ExampleView.WHOLE) is not None
     assert not hybrid.order_invariant
 
 
-def test_a_table_unrolls_only_the_part_fields_it_is_told_to(synthetic_scenes):
-    table = FlatTable.unrolled_for(synthetic_scenes, part_fields=["viewpoints"])
-    assert table.unrolled_fields == ["viewpoints"]
+def test_a_table_unrolls_only_the_part_fields_it_is_told_to(synthetic_scenes, schema):
+    table = FlatTable.unrolled_for(
+        schema, synthetic_scenes, part_fields=[PartField.VIEWPOINTS]
+    )
+    assert table.unrolled_fields == [PartField.VIEWPOINTS]
     row = table.row(synthetic_scenes[0])
     assert all("objects[" not in column for column in row)
     assert any("viewpoints[" in column for column in row)

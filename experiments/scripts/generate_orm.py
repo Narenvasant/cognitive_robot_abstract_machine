@@ -9,16 +9,23 @@ import coraplex.orm.ormatic_interface
 from krrood.ormatic.ormatic import ORMatic
 from krrood.ormatic.utils import classes_of_module
 import experiments.control_loop_experiments.control_loop_profiler
+from experiments.causal_reasoning.comparison import (
+    baselines as comparison_baselines,
+    dataset as comparison_dataset,
+    domain as comparison_domain,
+    evaluation as comparison_evaluation,
+    exceptions as comparison_exceptions,
+    flat_table as comparison_flat_table,
+    pipelines as comparison_pipelines,
+    queries as comparison_queries,
+    report as comparison_report,
+    run as comparison_run,
+)
 from experiments.causal_reasoning.graspclutter6d import (
     annotations as graspclutter6d_annotations,
-    baselines as graspclutter6d_baselines,
-    evaluation as graspclutter6d_evaluation,
     exceptions as graspclutter6d_exceptions,
-    flat_table as graspclutter6d_flat_table,
     grasp_labels as graspclutter6d_grasp_labels,
-    pipelines as graspclutter6d_pipelines,
     queries as graspclutter6d_queries,
-    report as graspclutter6d_report,
     run_pipeline as graspclutter6d_run_pipeline,
     scene_store as graspclutter6d_scene_store,
     synthetic_scm as graspclutter6d_synthetic_scm,
@@ -36,15 +43,20 @@ ignored_classes |= set(
 # the causal-query comparison fits and measures models over its domain instead of
 # describing the domain, and reads the dataset's own files instead of the domain's
 for comparison_module in (
+    comparison_baselines,
+    comparison_dataset,
+    comparison_domain,
+    comparison_evaluation,
+    comparison_exceptions,
+    comparison_flat_table,
+    comparison_pipelines,
+    comparison_queries,
+    comparison_report,
+    comparison_run,
     graspclutter6d_annotations,
-    graspclutter6d_baselines,
-    graspclutter6d_evaluation,
     graspclutter6d_exceptions,
-    graspclutter6d_flat_table,
     graspclutter6d_grasp_labels,
-    graspclutter6d_pipelines,
     graspclutter6d_queries,
-    graspclutter6d_report,
     graspclutter6d_run_pipeline,
     graspclutter6d_scene_store,
     graspclutter6d_synthetic_scm,

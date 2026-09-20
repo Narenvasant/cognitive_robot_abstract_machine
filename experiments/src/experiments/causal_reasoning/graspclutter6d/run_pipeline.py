@@ -1,8 +1,9 @@
 """
 Fit every pipeline on the GraspClutter6D scenes, ask them every question of the
-catalogue, repeat that over random orderings of the parts and over random splits,
-measure how the likelihoods grow with the training set, score every pipeline against the
-known truth of a synthetic model of the same domain, and write it all out as Markdown.
+catalogue, repeat that over random orderings of the parts, score every pipeline against
+the known truth of a synthetic model of the same domain, follow the relational answers
+as grounding draws more samples, measure how the likelihoods grow with the training set
+and how the cost grows with the number of objects, and write it all out as Markdown.
 
 Run with::
 
@@ -29,20 +30,33 @@ from pathlib import Path
 
 from typing_extensions import Optional
 
+from experiments.causal_reasoning.comparison.evaluation import Comparison
+from experiments.causal_reasoning.comparison.report import ReportText
+from experiments.causal_reasoning.comparison.run import (
+    Experiment,
+    RunSettings,
+    ScalingSetup,
+    run,
+)
 from experiments.causal_reasoning.graspclutter6d.dataset import (
-    GraspClutterDataset,
     fetch_graspclutter_scenes,
+    graspability_summaries,
+    graspclutter_dataset,
 )
-from experiments.causal_reasoning.graspclutter6d.evaluation import (
-    evaluate,
-    ground_truth_study,
-    learning_curve,
-    monte_carlo_study,
-    permutation_study,
-    scaling_study,
-    split_study,
+from experiments.causal_reasoning.graspclutter6d.domain import PartField, scene_domain
+from experiments.causal_reasoning.graspclutter6d.queries import (
+    OccludedObjectsCauseBlockedObject,
+    ground_truth_cases,
+    monte_carlo_cases,
+    object_level_cases,
+    query_catalogue,
 )
-from experiments.causal_reasoning.graspclutter6d.report import MarkdownReport
+from experiments.causal_reasoning.graspclutter6d.synthetic_scm import (
+    SceneTruth,
+    scenes_of_size,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -64,138 +78,144 @@ class ExperimentFiles:
         return self.package_directory / "results.md"
 
 
-logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ReportWriter:
+def report_text() -> ReportText:
     """
-    Writes the report out after every study, so that a run stopped part-way leaves what
-    it has finished on disk and a reader can follow it as it goes.
+    :return: What the report says about the dataset and the pipelines.
     """
+    return ReportText(
+        title="GraspClutter6D: relational circuit against flat-table trees",
+        introduction=(
+            "The GraspClutter6D dataset records a thousand real, densely cluttered "
+            "bin, shelf and table scenes, each photographed from thirteen poses by "
+            "four cameras, with the ground-truth pose and the visible share of every "
+            "object instance in every frame, and with analytic antipodal grasps "
+            "annotated on every object model and checked for collision against every "
+            "scene it stands in. A scene here is its own attributes (which object "
+            "catalogue it is built from, how far its clutter is spread, how far it is "
+            "stacked, and whether every object in it keeps a grasp) with one "
+            "exchangeable part per object instance (size, diameter, visibility, "
+            "occlusion, graspability) and one per camera frame (camera, distance, "
+            "proximity, clarity). A scene holds between five and twenty object "
+            "instances, and they have no canonical order; the annotation file lists "
+            "them in the order they were labelled, and nothing ties a position to an "
+            "identity.",
+            "Five pipelines were fitted on the same scenes and asked the same "
+            "`cause`/`causes_effect` EQL queries:",
+            "- **relational circuit**: a relational probabilistic circuit fitted on "
+            "the scenes' relational structure, one circuit over the scene's own "
+            "attributes and its aggregation counts (small objects, occluded objects, "
+            "near viewpoints, clear viewpoints), one template over an object's "
+            "attributes and one over a viewpoint's, grounded per query into a circuit "
+            "over exactly the queried scene, objects and viewpoints and registered as "
+            "a causal circuit;\n"
+            "- **hybrid circuit**: the same, except that the viewpoints, whose "
+            "position in a scene the recording rig fixes, are held by position "
+            "rather than pooled into a template;\n"
+            "- **propositional tree**: a joint probability tree fitted on the scenes "
+            "flattened into one table of the scene's own attributes and the same four "
+            "counts, the classic propositional summary of a relational example, "
+            "registered as a causal circuit the same way;\n"
+            "- **unrolled tree**: the same tree on a table that also carries every "
+            "object's and viewpoint's attributes under the part's position, padded "
+            "with an absent marker past a scene's last part, so that a column means "
+            "whatever part a scene happens to list at that position;\n"
+            "- **scalars-only tree**: the same tree on the scene's own attributes "
+            "alone, what a flat learner sees without the relational feature "
+            "extraction.",
+            "Every flat tree answers a query by backdoor adjustment on a table column; "
+            "the relational circuit does the same on the variable of a grounded "
+            "circuit. In both, the model is stratified so it is support-deterministic "
+            "over the cause, the effect's probability is read off every region of the "
+            "cause, and any variable the query marks as a confounder is summed out of "
+            "that reading. Every query lists one object and one viewpoint with all "
+            "their attributes open, which is what makes grounding retain the scene's "
+            "counts as variables; a flat table ignores parts a query says nothing "
+            "about and refuses a query that constrains a column it does not have.",
+        ),
+        effect_summary=(
+            "the object catalogue the scene is built from, by how many of its objects "
+            "are small, by how many of them the cameras do not see whole, and by how "
+            "many objects it holds at all"
+        ),
+        answerability_note=(
+            "A question about counts needs the counts: the scalars-only tree refuses "
+            "it. A question whose effect is one object's own attribute needs the "
+            "objects: the propositional tree refuses it, the unrolled tree answers it "
+            "about whatever object the scenes list at that position, and the "
+            "relational circuit answers it about an exchangeable object. What an "
+            'answer about "object 0" is worth is what the reordering below measures.'
+        ),
+        reordering_note=(
+            "The dataset's order is not arbitrary throughout: a scene's frames are "
+            "numbered by the recording rig, four cameras per pose in a fixed sequence, "
+            "so which camera took frame *i* is the same in every scene, and a column "
+            "that addresses a viewpoint by position addresses a real thing. Its "
+            "objects carry no such order."
+        ),
+        ground_truth_note=(
+            "The cause is forced to a value in the mechanism and the effect's rate "
+            "read off 200,000 forced scenes. The number of objects is the model's one "
+            "confounder, driving both the causes and the effect, and the scenes list "
+            "their small objects first, so a column that addresses an object by "
+            "position is systematically misleading. A count's extreme values are rare "
+            "in the data and rarer still within every stratum of the confounder, so "
+            "no estimator recovers their interventional probability well; the "
+            "questions whose cause or effect lives on one object are where the "
+            "pipelines differ."
+        ),
+        learning_curve_note=(
+            "Every object of every training scene, and every frame of it, goes into "
+            "the templates."
+        ),
+    )
 
-    output: Path
+
+def graspclutter_experiment() -> Experiment:
     """
-    The Markdown file to write.
+    :return: The GraspClutter6D comparison: what is compared and what is asked.
     """
+    return Experiment(
+        comparison=Comparison(
+            domain=scene_domain(),
+            positional_fields=(PartField.VIEWPOINTS,),
+            summaries=graspability_summaries,
+        ),
+        text=report_text(),
+        cases=query_catalogue(),
+        part_cases=object_level_cases(),
+        monte_carlo_cases=monte_carlo_cases(),
+        truth=SceneTruth(),
+        truth_cases=ground_truth_cases(),
+        scaling=ScalingSetup(
+            examples_of_size=scenes_of_size, case=OccludedObjectsCauseBlockedObject()
+        ),
+        results=ExperimentFiles().results,
+    )
 
-    report: MarkdownReport
-    """
-    The report, which the studies fill in one by one.
-    """
 
-    def after(self, study: str) -> None:
-        """
-        Write the report as it stands.
-
-        :param study: What was just finished, for the log.
-        """
-        self.output.write_text(self.report.render())
-        logger.info("%s; wrote %s", study, self.output)
-
-
-def main(
-    output: Path,
-    scene_limit: Optional[int],
-    rebuild: bool,
-    train_fraction: float,
-    seed: int,
-    min_samples_per_leaf: Optional[float],
-    plain_min_samples_per_leaf: Optional[float],
-    ordering_count: int,
-    split_count: int,
-    min_region_support: int,
-) -> None:
+def main(settings: RunSettings, scene_limit: Optional[int], rebuild: bool) -> None:
     """
     Run the comparison and every study around it, and write them out.
 
-    :param output: The Markdown file to write.
+    :param settings: The run's knobs.
     :param scene_limit: Read only the first scenes of the dataset; all of them if not
         given.
     :param rebuild: Build the scenes afresh instead of reading the stored ones.
-    :param train_fraction: Share of scenes to fit on.
-    :param seed: Seed of the split and of the questions' Monte-Carlo grounding; the
-        learning curve and any repeated splits use the seeds counting up from it.
-    :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
-        model may hold; the pipelines' own default if not given.
-    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
-        model may hold; the pipelines' own default if not given.
-    :param ordering_count: How many random orderings of the parts to try.
-    :param split_count: How many random splits to repeat the comparison over.
-    :param min_region_support: The fewest training scenes a cause region may hold for
-        its effect to be read as an answer.
     """
     import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO classes
 
-    dataset = GraspClutterDataset(
+    dataset = graspclutter_dataset(
         fetch_graspclutter_scenes(scene_limit=scene_limit, rebuild=rebuild)
     )
-    logger.info("Read %d scenes", len(dataset.scenes))
-    settings = dict(
-        train_fraction=train_fraction,
-        min_samples_per_leaf=min_samples_per_leaf,
-        plain_min_samples_per_leaf=plain_min_samples_per_leaf,
-        min_region_support=min_region_support,
-    )
-    rendered = MarkdownReport(evaluate(dataset, random_seed=seed, **settings))
-    write = ReportWriter(output=output, report=rendered)
-    write.after("Comparing on one split")
-    rendered.truth = ground_truth_study(
-        random_seed=seed,
-        min_samples_per_leaf=min_samples_per_leaf,
-        plain_min_samples_per_leaf=plain_min_samples_per_leaf,
-        min_region_support=min_region_support,
-    )
-    write.after("Scoring against the synthetic model's truth")
-    rendered.permutations = permutation_study(
-        dataset, ordering_count=ordering_count, random_seed=seed, **settings
-    )
-    write.after(f"Reordering the parts {ordering_count} times")
-    rendered.monte_carlo = monte_carlo_study(dataset, random_seed=seed, **settings)
-    write.after("Following the answers as grounding draws more samples")
-    rendered.curve = learning_curve(
-        dataset,
-        random_seeds=range(seed, seed + 3),
-        plain_min_samples_per_leaf=plain_min_samples_per_leaf,
-    )
-    write.after("Measuring the learning curve")
-    rendered.scaling = scaling_study(
-        random_seed=seed,
-        min_samples_per_leaf=min_samples_per_leaf,
-        plain_min_samples_per_leaf=plain_min_samples_per_leaf,
-    )
-    write.after("Measuring cost against the number of objects")
-    if split_count > 0:
-        rendered.splits = split_study(
-            dataset, random_seeds=range(seed, seed + split_count), **settings
-        )
-        write.after(f"Repeating over {split_count} splits")
-    logger.info("Wrote %s", output)
+    logger.info("Read %d scenes", len(dataset.examples))
+    run(graspclutter_experiment(), dataset, settings)
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ExperimentFiles().results)
+    RunSettings.add_arguments(parser, ExperimentFiles().results)
     parser.add_argument("--scenes", type=int, default=None)
     parser.add_argument("--rebuild", action="store_true")
-    parser.add_argument("--train-fraction", type=float, default=0.8)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--min-samples-per-leaf", type=float, default=None)
-    parser.add_argument("--plain-min-samples-per-leaf", type=float, default=None)
-    parser.add_argument("--orderings", type=int, default=20)
-    parser.add_argument("--splits", type=int, default=0)
-    parser.add_argument("--min-region-support", type=int, default=10)
     arguments = parser.parse_args()
-    main(
-        arguments.output,
-        arguments.scenes,
-        arguments.rebuild,
-        arguments.train_fraction,
-        arguments.seed,
-        arguments.min_samples_per_leaf,
-        arguments.plain_min_samples_per_leaf,
-        arguments.orderings,
-        arguments.splits,
-        arguments.min_region_support,
-    )
+    main(RunSettings.from_arguments(arguments), arguments.scenes, arguments.rebuild)

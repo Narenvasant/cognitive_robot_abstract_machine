@@ -32,46 +32,32 @@ from random_events.interval import Interval
 from random_events.product_algebra import Event
 from random_events.variable import Variable
 from scipy.stats import spearmanr
-from typing_extensions import Any, Dict, List, Optional, Sequence, Tuple, Type
+from abc import ABC, abstractmethod
+from typing_extensions import (
+    Any,
+    Callable,
+    Dict,
+    Hashable,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+)
 
-from experiments.causal_reasoning.graspclutter6d.dataset import (
-    GraspClutterDataset,
-    GraspableRate,
-)
-from experiments.causal_reasoning.graspclutter6d.domain import (
-    GraspClutterScene,
-    GraspClutterSceneAggregations,
-)
-from experiments.causal_reasoning.graspclutter6d.exceptions import (
+from experiments.causal_reasoning.comparison.dataset import EffectRate, ExampleDataset
+from experiments.causal_reasoning.comparison.domain import ExampleView, RelationalDomain
+from experiments.causal_reasoning.comparison.exceptions import (
     FlatTableSchemaMismatchError,
 )
-from experiments.causal_reasoning.graspclutter6d.flat_table import SceneView
-from experiments.causal_reasoning.graspclutter6d.pipelines import (
+from experiments.causal_reasoning.comparison.pipelines import (
     CausalQueryPipeline,
     FitReport,
     LikelihoodReport,
     RelationalPipeline,
     pipelines,
 )
-from experiments.causal_reasoning.graspclutter6d.domain import (
-    ObjectCatalogue,
-    ObjectSize,
-)
-from experiments.causal_reasoning.graspclutter6d.queries import (
-    CausalQueryCase,
-    OccludedObjectsCauseBlockedObject,
-    ground_truth_cases,
-    monte_carlo_cases,
-    object_level_cases,
-    query_catalogue,
-)
-from experiments.causal_reasoning.graspclutter6d.synthetic_scm import (
-    Cause,
-    CausalQuestion,
-    Effect,
-    Intervention,
-    SceneStructuralCausalModel,
-)
+from experiments.causal_reasoning.comparison.queries import CausalQueryCase
 
 # %% what one question yields on one pipeline
 
@@ -83,7 +69,7 @@ class Refusal(StrEnum):
 
     SCHEMA_MISMATCH = "the fitted table has no column for the queried variables"
     """
-    The question constrains an object's or a viewpoint's attribute, which the flat table
+    The question constrains a part's attribute, which the flat table
     has no column for.
     """
 
@@ -237,7 +223,7 @@ class InterventionalEffect:
 
     support_count: int
     """
-    How many training rows of the cause fall in the region: scenes for a scene-level
+    How many training rows of the cause fall in the region: examples for an example-level
     cause, parts for a part's own attribute.
     """
 
@@ -686,11 +672,11 @@ class PipelineReport:
     What its fits cost.
     """
 
-    likelihoods: Dict[SceneView, Optional[LikelihoodReport]] = field(
+    likelihoods: Dict[ExampleView, Optional[LikelihoodReport]] = field(
         default_factory=dict
     )
     """
-    How well its plain model explains the held-out scenes, per view; ``None`` for a view
+    How well its plain model explains the held-out examples, per view; ``None`` for a view
     the pipeline models less than.
     """
 
@@ -711,53 +697,25 @@ class EvaluationReport:
     The seed of the split and of the questions' Monte-Carlo grounding.
     """
 
-    training_scene_count: int
+    training_example_count: int
     """
-    How many scenes the pipelines were fitted on.
-    """
-
-    test_scene_count: int
-    """
-    How many held-out scenes they were scored on.
+    How many examples the pipelines were fitted on.
     """
 
-    graspable_rate: float
+    test_example_count: int
     """
-    Share of all scenes that leave every object graspable.
-    """
-
-    graspable_by_catalogue: Dict[str, GraspableRate] = field(default_factory=dict)
-    """
-    The share per object catalogue.
+    How many held-out examples they were scored on.
     """
 
-    graspable_by_small_object_count: Dict[int, GraspableRate] = field(
-        default_factory=dict
-    )
+    effect_rate: float
     """
-    The share per small-object count.
+    Share of all examples that show the effect the questions ask about.
     """
 
-    graspable_by_occluded_object_count: Dict[int, GraspableRate] = field(
-        default_factory=dict
-    )
+    effect_rates_by: Dict[str, Dict[Any, EffectRate]] = field(default_factory=dict)
     """
-    The share per occluded-object count.
-    """
-
-    graspable_by_object_count: Dict[int, GraspableRate] = field(default_factory=dict)
-    """
-    The share per number of objects.
-    """
-
-    min_samples_per_leaf: float = 0.0
-    """
-    The fewest training rows a leaf of a cause-specific model was allowed to hold.
-    """
-
-    plain_min_samples_per_leaf: float = 0.0
-    """
-    The fewest training rows a leaf of the plain model was allowed to hold.
+    The share per value of what the experiment summarises the examples by, per
+    summary's title.
     """
 
     min_region_support: int = 10
@@ -771,11 +729,11 @@ class EvaluationReport:
     One report per pipeline.
     """
 
-    shared_coverage_log_likelihoods: Dict[SceneView, Dict[str, float]] = field(
+    shared_coverage_log_likelihoods: Dict[ExampleView, Dict[str, float]] = field(
         default_factory=dict
     )
     """
-    Per view, each pipeline's mean log-likelihood over the held-out scenes every pipeline
+    Per view, each pipeline's mean log-likelihood over the held-out examples every pipeline
     modelling that view covers, so the numbers are comparable, keyed by pipeline name.
     """
 
@@ -792,9 +750,9 @@ def shared_coverage_log_likelihoods(
     log_likelihoods: Dict[str, np.ndarray],
 ) -> Dict[str, float]:
     """
-    :param log_likelihoods: Each pipeline's log-likelihood per held-out scene, by
+    :param log_likelihoods: Each pipeline's log-likelihood per held-out example, by
         pipeline name.
-    :return: Each pipeline's mean over the scenes every pipeline covers.
+    :return: Each pipeline's mean over the examples every pipeline covers.
     """
     covered_by_all = np.all(
         [np.isfinite(values) for values in log_likelihoods.values()], axis=0
@@ -809,46 +767,74 @@ def shared_coverage_log_likelihoods(
     }
 
 
-def configured_pipelines(
-    scenes: Sequence[GraspClutterScene],
-    min_samples_per_leaf: Optional[float],
-    plain_min_samples_per_leaf: Optional[float],
-) -> List[CausalQueryPipeline]:
+@dataclass(frozen=True)
+class Comparison:
     """
-    :param scenes: The scenes the pipelines will be fitted on.
-    :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
-        model may hold; the pipelines' own default if not given.
-    :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
-        may hold; the pipelines' own default if not given.
-    :return: Every pipeline, unfitted, with those settings.
+    What one experiment compares: its example, which of its parts are positional, and
+    how it summarises the effect over its examples.
     """
-    configured = pipelines(scenes)
-    for pipeline in configured:
-        if min_samples_per_leaf is not None:
-            pipeline.min_samples_per_leaf = min_samples_per_leaf
-        if plain_min_samples_per_leaf is not None:
-            pipeline.plain_min_samples_per_leaf = plain_min_samples_per_leaf
-    return configured
+
+    domain: RelationalDomain
+    """
+    The example and its parts.
+    """
+
+    positional_fields: Tuple[str, ...] = ()
+    """
+    The part fields a position means the same thing in for every example; a hybrid
+    circuit holding them by position is compared when there are any.
+    """
+
+    summaries: Callable[[ExampleDataset], Dict[str, Dict[Any, EffectRate]]] = (
+        lambda dataset: {}
+    )
+    """
+    The effect's rate per value of whatever the experiment groups its examples by,
+    per summary's title, for the report.
+    """
+
+    def pipelines(
+        self,
+        examples: Sequence[Any],
+        min_samples_per_leaf: Optional[float],
+        plain_min_samples_per_leaf: Optional[float],
+    ) -> List[CausalQueryPipeline]:
+        """
+        :param examples: The examples the pipelines will be fitted on.
+        :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
+            model may hold; the pipelines' own default if not given.
+        :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
+            model may hold; the pipelines' own default if not given.
+        :return: Every pipeline, unfitted, with those settings.
+        """
+        configured = pipelines(self.domain, examples, self.positional_fields)
+        for pipeline in configured:
+            if min_samples_per_leaf is not None:
+                pipeline.min_samples_per_leaf = min_samples_per_leaf
+            if plain_min_samples_per_leaf is not None:
+                pipeline.plain_min_samples_per_leaf = plain_min_samples_per_leaf
+        return configured
 
 
 def score_every_view(
-    pipeline: CausalQueryPipeline, scenes: Sequence[GraspClutterScene]
-) -> Dict[SceneView, Optional[LikelihoodReport]]:
+    pipeline: CausalQueryPipeline, examples: Sequence[Any]
+) -> Dict[ExampleView, Optional[LikelihoodReport]]:
     """
     :param pipeline: A fitted pipeline.
-    :param scenes: The held-out scenes.
+    :param examples: The held-out examples.
     :return: The pipeline's likelihood report per view.
     """
-    return {view: pipeline.log_likelihood(scenes, view) for view in SceneView}
+    return {view: pipeline.log_likelihood(examples, view) for view in ExampleView}
 
 
 def evaluate(
-    dataset: GraspClutterDataset,
+    comparison: Comparison,
+    dataset: ExampleDataset,
+    cases: Sequence[CausalQueryCase],
     train_fraction: float = 0.8,
     random_seed: int = 0,
     min_samples_per_leaf: Optional[float] = None,
     plain_min_samples_per_leaf: Optional[float] = None,
-    cases: Optional[Sequence[CausalQueryCase]] = None,
     time_repeats: bool = True,
     min_region_support: int = 10,
 ) -> EvaluationReport:
@@ -856,60 +842,45 @@ def evaluate(
     Fit every pipeline on part of the dataset, score them on the rest, and ask them every
     question.
 
-    :param dataset: The scenes.
-    :param train_fraction: Share of scenes to fit on.
+    :param comparison: What is compared.
+    :param dataset: The examples.
+    :param cases: The questions to ask.
+    :param train_fraction: Share of examples to fit on.
     :param random_seed: Seed of the split and of the questions' Monte-Carlo grounding.
     :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
         model may hold; the pipelines' own default if not given.
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
         may hold; the pipelines' own default if not given.
-    :param cases: The questions to ask; defaults to :func:`query_catalogue`.
     :param time_repeats: Whether to ask every question a second time to time it alone.
     :param min_region_support: The fewest training rows a cause region may hold for its
         effect to be read as an answer.
     :return: The comparison.
     """
     training, test = dataset.split(train_fraction, np.random.default_rng(random_seed))
-    cases = list(cases or query_catalogue())
     report = EvaluationReport(
         random_seed=random_seed,
-        training_scene_count=len(training.scenes),
-        test_scene_count=len(test.scenes),
+        training_example_count=len(training.examples),
+        test_example_count=len(test.examples),
         min_region_support=min_region_support,
-        graspable_rate=dataset.graspable_rate,
-        graspable_by_catalogue=dataset.graspable_rate_by(
-            lambda scene: scene.object_catalogue
-        ),
-        graspable_by_small_object_count=dataset.graspable_rate_by(
-            lambda scene: GraspClutterSceneAggregations(
-                instance=scene
-            ).small_object_count()
-        ),
-        graspable_by_occluded_object_count=dataset.graspable_rate_by(
-            lambda scene: GraspClutterSceneAggregations(
-                instance=scene
-            ).occluded_object_count()
-        ),
-        graspable_by_object_count=dataset.graspable_rate_by(
-            lambda scene: len(scene.objects)
-        ),
+        effect_rate=dataset.effect_rate,
+        effect_rates_by=comparison.summaries(dataset),
     )
     asker = QuestionAsker(
         random_seed=random_seed, min_region_support=min_region_support
     )
-    log_likelihoods: Dict[SceneView, Dict[str, np.ndarray]] = {
-        view: {} for view in SceneView
+    log_likelihoods: Dict[ExampleView, Dict[str, np.ndarray]] = {
+        view: {} for view in ExampleView
     }
-    for pipeline in configured_pipelines(
-        training.scenes, min_samples_per_leaf, plain_min_samples_per_leaf
+    for pipeline in comparison.pipelines(
+        training.examples, min_samples_per_leaf, plain_min_samples_per_leaf
     ):
         report.min_samples_per_leaf = pipeline.min_samples_per_leaf
         report.plain_min_samples_per_leaf = pipeline.plain_min_samples_per_leaf
-        fit = pipeline.fit(training.scenes)
+        fit = pipeline.fit(training.examples)
         pipeline_report = PipelineReport(
             name=pipeline.name,
             fit=fit,
-            likelihoods=score_every_view(pipeline, test.scenes),
+            likelihoods=score_every_view(pipeline, test.examples),
         )
         for view, likelihood in pipeline_report.likelihoods.items():
             if likelihood is not None:
@@ -921,7 +892,9 @@ def evaluate(
                 outcome.repeat_duration = asker.time_repeat(pipeline, outcome.case)
         report.pipelines.append(pipeline_report)
     report.pipelines.append(
-        regression_adjustment_report(training.scenes, cases, min_region_support)
+        regression_adjustment_report(
+            comparison.domain, training.examples, cases, min_region_support
+        )
     )
     report.shared_coverage_log_likelihoods = {
         view: shared_coverage_log_likelihoods(values)
@@ -931,7 +904,8 @@ def evaluate(
 
 
 def regression_adjustment_report(
-    scenes: Sequence[GraspClutterScene],
+    domain: RelationalDomain,
+    examples: Sequence[Any],
     cases: Sequence[CausalQueryCase],
     min_region_support: int,
 ) -> PipelineReport:
@@ -939,22 +913,25 @@ def regression_adjustment_report(
     Ask the regression-adjustment baseline every question, as a report shaped like a
     pipeline's, with no likelihoods since it models no distribution.
 
-    :param scenes: The scenes to fit on.
+    :param domain: The example and its parts.
+    :param examples: The examples to fit on.
     :param cases: The questions.
-    :param min_region_support: The fewest training scenes a cause region may hold for
-        its effect to be read as an answer.
+    :param min_region_support: The fewest training examples a cause region may hold
+        for its effect to be read as an answer.
     :return: The report.
     """
-    from experiments.causal_reasoning.graspclutter6d.baselines import (
+    from experiments.causal_reasoning.comparison.baselines import (
         RegressionAdjustmentBaseline,
     )
 
-    baseline = RegressionAdjustmentBaseline(min_region_support=min_region_support)
-    fit = baseline.fit(scenes)
+    baseline = RegressionAdjustmentBaseline(
+        domain=domain, min_region_support=min_region_support
+    )
+    fit = baseline.fit(examples)
     return PipelineReport(
         name=baseline.name,
         fit=fit,
-        likelihoods={view: None for view in SceneView},
+        likelihoods={view: None for view in ExampleView},
         outcomes=[baseline.ask(case) for case in cases],
     )
 
@@ -1150,8 +1127,8 @@ class PermutedOutcomes:
 @dataclass
 class PermutationReport:
     """
-    How the pipelines' answers and likelihoods move when the objects and viewpoints of
-    every scene are put in another order.
+    How the pipelines' answers and likelihoods move when the parts of every example are
+    put in another order.
     """
 
     ordering_count: int
@@ -1164,34 +1141,34 @@ class PermutationReport:
     One entry per pipeline and question.
     """
 
-    whole_scene_likelihoods: Dict[str, List[LikelihoodReport]] = field(
+    whole_example_likelihoods: Dict[str, List[LikelihoodReport]] = field(
         default_factory=dict
     )
     """
-    Per pipeline that models whole scenes, its held-out likelihood report with the
+    Per pipeline that models whole examples, its held-out likelihood report with the
     parts in the dataset's order first, then under each reordering.
     """
 
     def in_dataset_order(self, pipeline_name: str) -> LikelihoodReport:
         """
-        :param pipeline_name: A pipeline modelling whole scenes.
-        :return: Its held-out whole-scene likelihood with the parts in the dataset's
+        :param pipeline_name: A pipeline modelling whole examples.
+        :return: Its held-out whole-example likelihood with the parts in the dataset's
             order.
         """
-        return self.whole_scene_likelihoods[pipeline_name][0]
+        return self.whole_example_likelihoods[pipeline_name][0]
 
     def reordered(self, pipeline_name: str) -> List[LikelihoodReport]:
         """
-        :param pipeline_name: A pipeline modelling whole scenes.
-        :return: Its held-out whole-scene likelihood under each reordering.
+        :param pipeline_name: A pipeline modelling whole examples.
+        :return: Its held-out whole-example likelihood under each reordering.
         """
-        return self.whole_scene_likelihoods[pipeline_name][1:]
+        return self.whole_example_likelihoods[pipeline_name][1:]
 
     def largest_likelihood_drop(self, pipeline_name: str) -> float:
         """
-        :param pipeline_name: A pipeline modelling whole scenes.
+        :param pipeline_name: A pipeline modelling whole examples.
         :return: How far below the dataset-order likelihood the worst reordering took
-            its mean whole-scene log-likelihood.
+            its mean whole-example log-likelihood.
         """
         means = [report.mean_log_likelihood for report in self.reordered(pipeline_name)]
         return float(
@@ -1200,36 +1177,37 @@ class PermutationReport:
 
 
 def permutation_study(
-    dataset: GraspClutterDataset,
+    comparison: Comparison,
+    dataset: ExampleDataset,
+    cases: Sequence[CausalQueryCase],
     ordering_count: int = 20,
     train_fraction: float = 0.8,
     random_seed: int = 0,
     min_samples_per_leaf: Optional[float] = None,
     plain_min_samples_per_leaf: Optional[float] = None,
-    cases: Optional[Sequence[CausalQueryCase]] = None,
     min_region_support: int = 10,
 ) -> PermutationReport:
     """
     Fit the pipelines that model the parts with the parts in the dataset's own order,
-    then put every scene's objects and viewpoints in a random order, several times over,
-    and each time refit them and ask them the questions about objects again. The split
-    is the same every time; only the order within a scene changes.
+    then put every example's parts in a random order, several times over,
+    and each time refit them and ask them the questions about one part again. The split
+    is the same every time; only the order within an example changes.
 
-    :param dataset: The scenes.
+    :param comparison: What is compared.
+    :param dataset: The examples.
+    :param cases: The questions to ask, the ones about one part.
     :param ordering_count: How many random reorderings to try.
-    :param train_fraction: Share of scenes to fit on.
+    :param train_fraction: Share of examples to fit on.
     :param random_seed: Seed of the split, the orderings and the Monte-Carlo grounding.
     :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
         model may hold; the pipelines' own default if not given.
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
         may hold; the pipelines' own default if not given.
-    :param cases: The questions to ask; defaults to :func:`object_level_cases`.
     :param min_region_support: The fewest training rows a cause region may hold for its
         effect to be read as an answer.
     :return: The study.
     """
     training, test = dataset.split(train_fraction, np.random.default_rng(random_seed))
-    cases = list(cases or object_level_cases())
     asker = QuestionAsker(
         random_seed=random_seed, min_region_support=min_region_support
     )
@@ -1245,16 +1223,16 @@ def permutation_study(
             )
         )
     for ordering_index, (ordered_training, ordered_test) in enumerate(orderings):
-        for pipeline in configured_pipelines(
-            ordered_training.scenes, min_samples_per_leaf, plain_min_samples_per_leaf
+        for pipeline in comparison.pipelines(
+            ordered_training.examples, min_samples_per_leaf, plain_min_samples_per_leaf
         ):
             if not pipeline.models_parts:
                 continue
-            pipeline.fit(ordered_training.scenes)
+            pipeline.fit(ordered_training.examples)
             likelihood = pipeline.log_likelihood(
-                ordered_test.scenes, SceneView.WHOLE_SCENE
+                ordered_test.examples, ExampleView.WHOLE
             )
-            report.whole_scene_likelihoods.setdefault(pipeline.name, []).append(
+            report.whole_example_likelihoods.setdefault(pipeline.name, []).append(
                 likelihood
             )
             for case in cases:
@@ -1293,10 +1271,10 @@ class SplitReport:
         """
         return [pipeline.name for pipeline in self.reports[0].pipelines]
 
-    def coverage(self, pipeline_name: str, view: SceneView) -> List[float]:
+    def coverage(self, pipeline_name: str, view: ExampleView) -> List[float]:
         """
         :param pipeline_name: A pipeline's name.
-        :param view: How much of a scene to look at.
+        :param view: How much of an example to look at.
         :return: The pipeline's held-out coverage per split.
         """
         return [
@@ -1304,11 +1282,13 @@ class SplitReport:
             for report in self.reports
         ]
 
-    def shared_log_likelihood(self, pipeline_name: str, view: SceneView) -> List[float]:
+    def shared_log_likelihood(
+        self, pipeline_name: str, view: ExampleView
+    ) -> List[float]:
         """
         :param pipeline_name: A pipeline's name.
-        :param view: How much of a scene to look at.
-        :return: The pipeline's mean log-likelihood over the scenes every pipeline
+        :param view: How much of an example to look at.
+        :return: The pipeline's mean log-likelihood over the examples every pipeline
             modelling that view covers, per split.
         """
         return [
@@ -1329,25 +1309,27 @@ class SplitReport:
 
 
 def split_study(
-    dataset: GraspClutterDataset,
+    comparison: Comparison,
+    dataset: ExampleDataset,
+    cases: Sequence[CausalQueryCase],
     random_seeds: Sequence[int] = (0, 1, 2, 3, 4),
     train_fraction: float = 0.8,
     min_samples_per_leaf: Optional[float] = None,
     plain_min_samples_per_leaf: Optional[float] = None,
-    cases: Optional[Sequence[CausalQueryCase]] = None,
     min_region_support: int = 10,
 ) -> SplitReport:
     """
     Repeat the comparison over several random splits.
 
-    :param dataset: The scenes.
+    :param comparison: What is compared.
+    :param dataset: The examples.
+    :param cases: The questions to ask.
     :param random_seeds: One seed per split.
-    :param train_fraction: Share of scenes to fit on.
+    :param train_fraction: Share of examples to fit on.
     :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
         model may hold; the pipelines' own default if not given.
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
         may hold; the pipelines' own default if not given.
-    :param cases: The questions to ask; defaults to :func:`query_catalogue`.
     :param min_region_support: The fewest training rows a cause region may hold for its
         effect to be read as an answer.
     :return: The study.
@@ -1355,12 +1337,13 @@ def split_study(
     return SplitReport(
         reports=[
             evaluate(
+                comparison,
                 dataset,
+                cases,
                 train_fraction=train_fraction,
                 random_seed=random_seed,
                 min_samples_per_leaf=min_samples_per_leaf,
                 plain_min_samples_per_leaf=plain_min_samples_per_leaf,
-                cases=cases,
                 time_repeats=False,
                 min_region_support=min_region_support,
             )
@@ -1385,7 +1368,7 @@ class LearningCurvePoint:
 
     train_fraction: float
     """
-    Share of the scenes it was fitted on.
+    Share of the examples it was fitted on.
     """
 
     random_seed: int
@@ -1393,7 +1376,7 @@ class LearningCurvePoint:
     The seed of the split.
     """
 
-    likelihoods: Dict[SceneView, Optional[LikelihoodReport]]
+    likelihoods: Dict[ExampleView, Optional[LikelihoodReport]]
     """
     Its likelihood report per view.
     """
@@ -1441,19 +1424,21 @@ class LearningCurveReport:
 
 
 def learning_curve(
-    dataset: GraspClutterDataset,
+    comparison: Comparison,
+    dataset: ExampleDataset,
     train_fractions: Sequence[float] = (0.2, 0.4, 0.6, 0.8),
     random_seeds: Sequence[int] = (0, 1, 2),
     plain_min_samples_per_leaf: Optional[float] = None,
 ) -> LearningCurveReport:
     """
     Fit every pipeline's plain model on growing shares of the dataset and score the same
-    held-out scenes each time.
+    held-out examples each time.
 
-    The held-out scenes are the last fifth of every split's shuffle, whatever the training
-    share, so every size is scored on the same scenes.
+    The held-out examples are the last fifth of every split's shuffle, whatever the training
+    share, so every size is scored on the same examples.
 
-    :param dataset: The scenes.
+    :param comparison: What is compared.
+    :param dataset: The examples.
     :param train_fractions: The training-set sizes to measure.
     :param random_seeds: One seed per split.
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
@@ -1466,10 +1451,10 @@ def learning_curve(
             max(train_fractions), np.random.default_rng(random_seed)
         )
         for train_fraction in train_fractions:
-            training = available.scenes[
-                : round(train_fraction / max(train_fractions) * len(available.scenes))
+            training = available.examples[
+                : round(train_fraction / max(train_fractions) * len(available.examples))
             ]
-            for pipeline in configured_pipelines(
+            for pipeline in comparison.pipelines(
                 training, None, plain_min_samples_per_leaf
             ):
                 pipeline.fit(training)
@@ -1478,7 +1463,7 @@ def learning_curve(
                         pipeline_name=pipeline.name,
                         train_fraction=train_fraction,
                         random_seed=random_seed,
-                        likelihoods=score_every_view(pipeline, test.scenes),
+                        likelihoods=score_every_view(pipeline, test.examples),
                     )
                 )
     return report
@@ -1542,7 +1527,7 @@ class GroundTruthOutcome:
     ordering: int
     """
     Which ordering of the parts the pipeline was fitted on: zero for the model's own,
-    which lists the small objects first, and counting up for random reorderings.
+    and counting up for random reorderings.
     """
 
     outcome: QueryOutcome
@@ -1593,23 +1578,6 @@ class GroundTruthOutcome:
         return float(spearmanr(answered, true).statistic)
 
 
-@dataclass(frozen=True)
-class GroundTruthConfiguration:
-    """
-    One setting of the synthetic model.
-    """
-
-    object_count_centre: int
-    """
-    The typical number of objects in a scene.
-    """
-
-    confounding_strength: float
-    """
-    How strongly the number of objects drives both the causes and the effect.
-    """
-
-
 @dataclass
 class GroundTruthReport:
     """
@@ -1617,9 +1585,9 @@ class GroundTruthReport:
     settings and over reorderings of the parts.
     """
 
-    scene_count: int
+    example_count: int
     """
-    How many scenes each pipeline was fitted on per setting.
+    How many examples each pipeline was fitted on per setting.
     """
 
     ordering_count: int
@@ -1627,15 +1595,18 @@ class GroundTruthReport:
     How many random reorderings were tried per setting.
     """
 
-    outcomes: List[Tuple[GroundTruthConfiguration, GroundTruthOutcome]] = field(
-        default_factory=list
-    )
+    outcomes: List[Tuple[Hashable, GroundTruthOutcome]] = field(default_factory=list)
     """
     Every scored answer, with the setting it was scored under.
     """
 
+    descriptions: Dict[Hashable, Dict[str, str]] = field(default_factory=dict)
+    """
+    Per setting, its parameters by name, for the tables.
+    """
+
     @property
-    def configurations(self) -> List[GroundTruthConfiguration]:
+    def configurations(self) -> List[Hashable]:
         """
         The settings, in the order they were run.
         """
@@ -1653,7 +1624,7 @@ class GroundTruthReport:
     def of(
         self,
         pipeline_name: str,
-        configuration: Optional[GroundTruthConfiguration] = None,
+        configuration: Optional[Hashable] = None,
         ordering: Optional[int] = None,
     ) -> List[GroundTruthOutcome]:
         """
@@ -1746,72 +1717,66 @@ class GroundTruthReport:
         return float(np.mean([outcome.answered for outcome in outcomes]))
 
 
-def _region_value(effect: InterventionalEffect, cause: Cause) -> Any:
+class KnownTruth(ABC):
     """
-    :param effect: One region's effect, whose region is written out.
-    :param cause: The cause the region is a value of.
-    :return: The value the region names, as the model forces it.
-    """
-    if cause is Cause.CATALOGUE:
-        return ObjectCatalogue(effect.cause_region)
-    if cause is Cause.OBJECT_SIZE:
-        return ObjectSize(effect.cause_region)
-    return int(effect.ordinal)
-
-
-@dataclass
-class TruthOracle:
-    """
-    The synthetic model's interventional probabilities, computed once per intervention
-    and effect.
+    A model of the domain whose interventional probabilities are known, under several
+    settings, so that a pipeline's answers can be scored against them.
     """
 
-    model: SceneStructuralCausalModel
-    """
-    The model.
-    """
-
-    random_seed: int = 0
-    """
-    Seed of the forced samples, the same for every intervention.
-    """
-
-    sample_count: int = 200_000
-    """
-    How many forced scenes each probability is read off.
-    """
-
-    known: Dict[Tuple[Intervention, Effect], float] = field(default_factory=dict)
-    """
-    The probabilities computed so far.
-    """
-
-    def probability(self, intervention: Intervention, effect: Effect) -> float:
+    @property
+    @abstractmethod
+    def configurations(self) -> Sequence[Hashable]:
         """
-        :param intervention: The cause and the value it is forced to.
-        :param effect: The event to read.
-        :return: The probability of the effect under the intervention.
+        The settings to run, each a hashable description of one model.
         """
-        key = (intervention, effect)
-        if key not in self.known:
-            self.known[key] = self.model.interventional_probability(
-                intervention,
-                effect,
-                np.random.default_rng(self.random_seed),
-                self.sample_count,
-            )
-        return self.known[key]
+
+    @abstractmethod
+    def describe(self, configuration: Hashable) -> Dict[str, str]:
+        """
+        :param configuration: One setting.
+        :return: Its parameters, by name, for the report's tables.
+        """
+
+    @abstractmethod
+    def examples(
+        self, configuration: Hashable, count: int, random_state: np.random.Generator
+    ) -> List[Any]:
+        """
+        :param configuration: One setting.
+        :param count: How many examples to sample.
+        :param random_state: Source of randomness.
+        :return: Examples sampled from the model under that setting.
+        """
+
+    @abstractmethod
+    def probability(
+        self,
+        configuration: Hashable,
+        case: CausalQueryCase,
+        effect: InterventionalEffect,
+    ) -> float:
+        """
+        :param configuration: One setting.
+        :param case: A question.
+        :param effect: One region of its cause, as a pipeline answered for it.
+        :return: The true probability of the question's effect under the intervention
+            setting the cause to that region.
+        """
 
     def score(
-        self, outcome: QueryOutcome, pipeline_name: str, ordering: int
+        self,
+        configuration: Hashable,
+        outcome: QueryOutcome,
+        pipeline_name: str,
+        ordering: int,
     ) -> GroundTruthOutcome:
         """
-        :param outcome: What a pipeline answered.
+        :param configuration: The setting the pipeline was fitted under.
+        :param outcome: What the pipeline answered.
         :param pipeline_name: The pipeline.
         :param ordering: Which ordering of the parts it was fitted on.
         :return: The answer scored against the truth, over its supported regions.
         """
-        question = CausalQuestion.of(outcome.case)
         return GroundTruthOutcome(
             pipeline_name=pipeline_name,
             case=outcome.case,
@@ -1822,10 +1787,7 @@ class TruthOracle:
                     cause_region=effect.cause_region,
                     adjusted_probability=effect.adjusted_probability,
                     true_probability=self.probability(
-                        Intervention(
-                            question.cause, _region_value(effect, question.cause)
-                        ),
-                        question.effect,
+                        configuration, outcome.case, effect
                     ),
                     support_count=effect.support_count,
                 )
@@ -1835,76 +1797,71 @@ class TruthOracle:
 
 
 def ground_truth_study(
-    configurations: Sequence[GroundTruthConfiguration] = (
-        GroundTruthConfiguration(5, 0.6),
-        GroundTruthConfiguration(10, 0.0),
-        GroundTruthConfiguration(10, 0.3),
-        GroundTruthConfiguration(10, 0.6),
-        GroundTruthConfiguration(20, 0.6),
-    ),
-    scene_count: int = 400,
+    comparison: Comparison,
+    truth: KnownTruth,
+    cases: Sequence[CausalQueryCase],
+    example_count: int = 400,
     ordering_count: int = 5,
     random_seed: int = 0,
     min_samples_per_leaf: Optional[float] = None,
     plain_min_samples_per_leaf: Optional[float] = None,
-    cases: Optional[Sequence[CausalQueryCase]] = None,
     min_region_support: int = 10,
-    truth_sample_count: int = 200_000,
 ) -> GroundTruthReport:
     """
-    Fit every pipeline on scenes sampled from the synthetic model, under each of its
-    settings, ask the questions, and score every answer against the interventional
-    probability the model gives by construction; then reorder the parts and score the
-    pipelines whose fit can see the order again.
+    Fit every pipeline on examples sampled from a model whose interventional
+    probabilities are known, under each of its settings, ask the questions, and score
+    every answer against the truth; then reorder the parts and score the pipelines whose
+    fit can see the order again.
 
-    :param configurations: The model's settings to run.
-    :param scene_count: How many scenes to fit on per setting.
+    :param comparison: What is compared.
+    :param truth: The model and its settings.
+    :param cases: The questions to ask.
+    :param example_count: How many examples to fit on per setting.
     :param ordering_count: How many random reorderings to try per setting.
-    :param random_seed: Seed of the sampled scenes, the reorderings, the Monte-Carlo
-        grounding and the forced samples.
+    :param random_seed: Seed of the sampled examples, the reorderings and the
+        Monte-Carlo grounding.
     :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
         model may hold; the pipelines' own default if not given.
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
         may hold; the pipelines' own default if not given.
-    :param cases: The questions to ask; defaults to :func:`ground_truth_cases`.
     :param min_region_support: The fewest training rows a cause region may hold for its
         effect to be scored.
-    :param truth_sample_count: How many forced scenes each true probability is read off.
     :return: The study.
     """
-    cases = list(cases or ground_truth_cases())
     asker = QuestionAsker(
         random_seed=random_seed, min_region_support=min_region_support
     )
-    report = GroundTruthReport(scene_count=scene_count, ordering_count=ordering_count)
-    for configuration in configurations:
-        model = SceneStructuralCausalModel(
-            object_count_centre=configuration.object_count_centre,
-            confounding_strength=configuration.confounding_strength,
-        )
-        oracle = TruthOracle(
-            model, random_seed=random_seed, sample_count=truth_sample_count
-        )
-        dataset = GraspClutterDataset(
-            model.scenes(scene_count, np.random.default_rng(random_seed))
+    report = GroundTruthReport(
+        example_count=example_count, ordering_count=ordering_count
+    )
+    for configuration in truth.configurations:
+        report.descriptions[configuration] = truth.describe(configuration)
+        dataset = ExampleDataset(
+            comparison.domain,
+            truth.examples(
+                configuration, example_count, np.random.default_rng(random_seed)
+            ),
         )
         orderings = [dataset] + [
             dataset.with_shuffled_parts(np.random.default_rng([random_seed, ordering]))
             for ordering in range(ordering_count)
         ]
         for ordering, ordered in enumerate(orderings):
-            for pipeline in configured_pipelines(
-                ordered.scenes, min_samples_per_leaf, plain_min_samples_per_leaf
+            for pipeline in comparison.pipelines(
+                ordered.examples, min_samples_per_leaf, plain_min_samples_per_leaf
             ):
                 if ordering > 0 and pipeline.order_invariant:
                     continue
-                pipeline.fit(ordered.scenes)
+                pipeline.fit(ordered.examples)
                 for case in cases:
                     report.outcomes.append(
                         (
                             configuration,
-                            oracle.score(
-                                asker.ask(pipeline, case), pipeline.name, ordering
+                            truth.score(
+                                configuration,
+                                asker.ask(pipeline, case),
+                                pipeline.name,
+                                ordering,
                             ),
                         )
                     )
@@ -2001,13 +1958,14 @@ class MonteCarloReport:
 
 
 def monte_carlo_study(
-    dataset: GraspClutterDataset,
+    comparison: Comparison,
+    dataset: ExampleDataset,
+    cases: Sequence[CausalQueryCase],
     sample_counts: Sequence[int] = (50, 200, 1000, 2000, 8000, 32000),
     train_fraction: float = 0.8,
     random_seed: int = 0,
     min_samples_per_leaf: Optional[float] = None,
     plain_min_samples_per_leaf: Optional[float] = None,
-    cases: Optional[Sequence[CausalQueryCase]] = None,
     min_region_support: int = 10,
 ) -> MonteCarloReport:
     """
@@ -2015,32 +1973,32 @@ def monte_carlo_study(
     drawing more and more samples for the counts a query leaves open, to find how many
     it takes for the answers to settle.
 
-    :param dataset: The scenes.
+    :param comparison: What is compared.
+    :param dataset: The examples.
+    :param cases: The questions to ask, ones that leave every count open.
     :param sample_counts: The numbers of samples to try; the largest is the reference.
-    :param train_fraction: Share of scenes to fit on.
+    :param train_fraction: Share of examples to fit on.
     :param random_seed: Seed of the split and of the Monte-Carlo grounding.
     :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
         model may hold; the pipeline's own default if not given.
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
         may hold; the pipeline's own default if not given.
-    :param cases: The questions to ask; defaults to :func:`monte_carlo_cases`.
     :param min_region_support: The fewest training rows a cause region may hold for its
         effect to be read as an answer.
     :return: The study.
     """
     training, _ = dataset.split(train_fraction, np.random.default_rng(random_seed))
-    cases = list(cases or monte_carlo_cases())
     asker = QuestionAsker(
         random_seed=random_seed, min_region_support=min_region_support
     )
     [pipeline] = [
         candidate
-        for candidate in configured_pipelines(
-            training.scenes, min_samples_per_leaf, plain_min_samples_per_leaf
+        for candidate in comparison.pipelines(
+            training.examples, min_samples_per_leaf, plain_min_samples_per_leaf
         )
         if isinstance(candidate, RelationalPipeline)
     ]
-    pipeline.fit(training.scenes)
+    pipeline.fit(training.examples)
     report = MonteCarloReport(reference_sample_count=max(sample_counts))
     for sample_count in sorted(sample_counts):
         pipeline.set_monte_carlo_sample_count(sample_count)
@@ -2057,7 +2015,7 @@ def monte_carlo_study(
 @dataclass(frozen=True)
 class ScalingPoint:
     """
-    What one pipeline cost on scenes of one size.
+    What one pipeline cost on examples of one size.
     """
 
     pipeline_name: str
@@ -2065,9 +2023,9 @@ class ScalingPoint:
     The pipeline.
     """
 
-    object_count_centre: int
+    size: int
     """
-    The typical number of objects in a scene.
+    The typical number of parts in an example.
     """
 
     fit: FitReport
@@ -2077,7 +2035,7 @@ class ScalingPoint:
 
     query_duration: float
     """
-    Wall-clock seconds one object-level question took, its cause-specific model
+    Wall-clock seconds one part-level question took, its cause-specific model
     fitted first.
     """
 
@@ -2091,12 +2049,12 @@ class ScalingPoint:
 class ScalingReport:
     """
     How the pipelines' fit time, query time and circuit size grow with the number of
-    objects in a scene.
+    parts in an example.
     """
 
-    scene_count: int
+    example_count: int
     """
-    How many scenes each pipeline was fitted on per size.
+    How many examples each pipeline was fitted on per size.
     """
 
     points: List[ScalingPoint] = field(default_factory=list)
@@ -2105,11 +2063,11 @@ class ScalingReport:
     """
 
     @property
-    def object_count_centres(self) -> List[int]:
+    def sizes(self) -> List[int]:
         """
         The sizes measured, ascending.
         """
-        return sorted({point.object_count_centre for point in self.points})
+        return sorted({point.size for point in self.points})
 
     @property
     def pipeline_names(self) -> List[str]:
@@ -2118,63 +2076,66 @@ class ScalingReport:
         """
         return list(dict.fromkeys(point.pipeline_name for point in self.points))
 
-    def point(self, pipeline_name: str, object_count_centre: int) -> ScalingPoint:
+    def point(self, pipeline_name: str, size: int) -> ScalingPoint:
         """
         :param pipeline_name: A pipeline's name.
-        :param object_count_centre: A size.
+        :param size: A size.
         :return: The pipeline's measurement at that size.
         """
         [point] = [
             point
             for point in self.points
-            if point.pipeline_name == pipeline_name
-            and point.object_count_centre == object_count_centre
+            if point.pipeline_name == pipeline_name and point.size == size
         ]
         return point
 
 
 def scaling_study(
-    object_count_centres: Sequence[int] = (5, 10, 20, 50),
-    scene_count: int = 400,
+    comparison: Comparison,
+    examples_of_size: Callable[[int, int, np.random.Generator], List[Any]],
+    case: CausalQueryCase,
+    sizes: Sequence[int] = (5, 10, 20, 50),
+    example_count: int = 400,
     random_seed: int = 0,
     min_samples_per_leaf: Optional[float] = None,
     plain_min_samples_per_leaf: Optional[float] = None,
-    case: Optional[CausalQueryCase] = None,
 ) -> ScalingReport:
     """
-    Fit the pipelines that model the parts on synthetic scenes of growing size and time
-    one object-level question on each.
+    Fit the pipelines that model the parts on synthetic examples of growing size and
+    time one part-level question on each.
 
-    :param object_count_centres: The typical numbers of objects per scene to measure.
-    :param scene_count: How many scenes to fit on per size.
-    :param random_seed: Seed of the sampled scenes and the Monte-Carlo grounding.
+    :param comparison: What is compared.
+    :param examples_of_size: How to sample a number of examples with a typical number
+        of parts.
+    :param case: The question to time.
+    :param sizes: The typical numbers of parts per example to measure.
+    :param example_count: How many examples to fit on per size.
+    :param random_seed: Seed of the sampled examples and the Monte-Carlo grounding.
     :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
         model may hold; the pipelines' own default if not given.
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain model
         may hold; the pipelines' own default if not given.
-    :param case: The question to time; the occluded-count question about one object
-        if not given.
     :return: The study.
     """
-    case = case or OccludedObjectsCauseBlockedObject()
     asker = QuestionAsker(random_seed=random_seed, min_region_support=1)
-    report = ScalingReport(scene_count=scene_count)
-    for centre in object_count_centres:
-        model = SceneStructuralCausalModel(object_count_centre=centre)
-        scenes = model.scenes(scene_count, np.random.default_rng(random_seed))
-        for pipeline in configured_pipelines(
-            scenes, min_samples_per_leaf, plain_min_samples_per_leaf
+    report = ScalingReport(example_count=example_count)
+    for size in sizes:
+        examples = examples_of_size(
+            size, example_count, np.random.default_rng(random_seed)
+        )
+        for pipeline in comparison.pipelines(
+            examples, min_samples_per_leaf, plain_min_samples_per_leaf
         ):
             if not pipeline.models_parts:
                 continue
-            fit = pipeline.fit(scenes)
+            fit = pipeline.fit(examples)
             outcome = asker.ask(pipeline, case)
             report.points.append(
                 ScalingPoint(
                     pipeline_name=pipeline.name,
-                    object_count_centre=centre,
+                    size=size,
                     fit=FitReport(
-                        training_scene_count=fit.training_scene_count,
+                        training_example_count=fit.training_example_count,
                         model_count=fit.model_count,
                         training_duration=fit.training_duration,
                         size=fit.size,

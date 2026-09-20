@@ -7,10 +7,11 @@ from __future__ import annotations
 import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO classes
 import pytest
 
-from experiments.causal_reasoning.graspclutter6d.baselines import (
+from experiments.causal_reasoning.comparison.baselines import (
     RegressionAdjustmentBaseline,
 )
-from experiments.causal_reasoning.graspclutter6d.evaluation import Refusal
+from experiments.causal_reasoning.comparison.evaluation import Refusal
+from experiments.causal_reasoning.graspclutter6d.domain import scene_domain
 from experiments.causal_reasoning.graspclutter6d.queries import (
     ground_truth_cases,
     object_level_cases,
@@ -19,7 +20,7 @@ from experiments.causal_reasoning.graspclutter6d.queries import (
 
 @pytest.fixture
 def baseline(synthetic_scenes) -> RegressionAdjustmentBaseline:
-    fitted = RegressionAdjustmentBaseline(min_region_support=1)
+    fitted = RegressionAdjustmentBaseline(domain=scene_domain(), min_region_support=1)
     fitted.fit(synthetic_scenes)
     return fitted
 

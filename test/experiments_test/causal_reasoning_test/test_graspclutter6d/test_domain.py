@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from experiments.causal_reasoning.graspclutter6d.dataset import graspability_summaries
 from experiments.causal_reasoning.graspclutter6d.domain import (
     CameraModel,
     GraspClutterSceneAggregations,
@@ -79,7 +80,7 @@ def test_the_aggregations_are_registered_over_both_part_fields():
 
 def test_shuffling_the_parts_keeps_the_aggregations(synthetic_dataset):
     shuffled = synthetic_dataset.with_shuffled_parts(np.random.default_rng(1))
-    for before, after in zip(synthetic_dataset.scenes, shuffled.scenes):
+    for before, after in zip(synthetic_dataset.examples, shuffled.examples):
         assert (
             GraspClutterSceneAggregations(instance=after).small_object_count()
             == GraspClutterSceneAggregations(instance=before).small_object_count()
@@ -88,16 +89,32 @@ def test_shuffling_the_parts_keeps_the_aggregations(synthetic_dataset):
 
 def test_splitting_keeps_every_scene(synthetic_dataset):
     training, test = synthetic_dataset.split(0.8, np.random.default_rng(0))
-    assert len(training.scenes) + len(test.scenes) == len(synthetic_dataset.scenes)
+    assert len(training.examples) + len(test.examples) == len(
+        synthetic_dataset.examples
+    )
 
 
 def test_the_graspable_rate_by_a_key_sums_to_the_whole(synthetic_dataset):
-    by_catalogue = synthetic_dataset.graspable_rate_by(
+    by_catalogue = synthetic_dataset.effect_rate_by(
         lambda scene: scene.object_catalogue
     )
-    assert sum(rate.scene_count for rate in by_catalogue.values()) == len(
-        synthetic_dataset.scenes
+    assert sum(rate.example_count for rate in by_catalogue.values()) == len(
+        synthetic_dataset.examples
     )
-    assert sum(rate.graspable_count for rate in by_catalogue.values()) == pytest.approx(
-        synthetic_dataset.graspable_rate * len(synthetic_dataset.scenes)
+    assert sum(rate.effect_count for rate in by_catalogue.values()) == pytest.approx(
+        synthetic_dataset.effect_rate * len(synthetic_dataset.examples)
     )
+
+
+def test_the_graspability_summaries_cover_every_scene(synthetic_dataset):
+    summaries = graspability_summaries(synthetic_dataset)
+    assert list(summaries) == [
+        "object catalogue",
+        "small objects",
+        "occluded objects",
+        "objects",
+    ]
+    for rates in summaries.values():
+        assert sum(rate.example_count for rate in rates.values()) == len(
+            synthetic_dataset.examples
+        )

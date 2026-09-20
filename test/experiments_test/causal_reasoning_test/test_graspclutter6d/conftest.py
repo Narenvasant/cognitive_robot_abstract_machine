@@ -17,8 +17,9 @@ from experiments.causal_reasoning.graspclutter6d.annotations import (
     ExtractedScenes,
     SceneAnnotations,
 )
+from experiments.causal_reasoning.comparison.dataset import ExampleDataset
 from experiments.causal_reasoning.graspclutter6d.dataset import (
-    GraspClutterDataset,
+    graspclutter_dataset,
     synthetic_graspclutter_scenes,
 )
 
@@ -61,19 +62,19 @@ def synthetic_scenes():
 
 
 @pytest.fixture
-def synthetic_dataset(synthetic_scenes) -> GraspClutterDataset:
+def synthetic_dataset(synthetic_scenes) -> ExampleDataset:
     """
     The synthetic scenes as a dataset.
     """
-    return GraspClutterDataset(synthetic_scenes)
+    return graspclutter_dataset(synthetic_scenes)
 
 
 @pytest.fixture(scope="module")
-def shared_synthetic_dataset() -> GraspClutterDataset:
+def shared_synthetic_dataset() -> ExampleDataset:
     """
     The same scenes, fitted on once per module by the tests that compare pipelines.
     """
-    return GraspClutterDataset(
+    return graspclutter_dataset(
         synthetic_graspclutter_scenes(
             np.random.default_rng(0), scene_count=SYNTHETIC_SCENE_COUNT
         )

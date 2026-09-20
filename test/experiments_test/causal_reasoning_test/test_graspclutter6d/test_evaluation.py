@@ -9,23 +9,24 @@ import math
 import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO classes
 import pytest
 
-from experiments.causal_reasoning.graspclutter6d.evaluation import (
+from experiments.causal_reasoning.comparison.domain import ExampleView
+from experiments.causal_reasoning.comparison.evaluation import (
     Refusal,
     evaluate,
     learning_curve,
     permutation_study,
     split_study,
 )
-from experiments.causal_reasoning.graspclutter6d.flat_table import (
-    SceneView,
-    TableLayout,
-)
+from experiments.causal_reasoning.comparison.flat_table import TableLayout
+from experiments.causal_reasoning.comparison.report import MarkdownReport
 from experiments.causal_reasoning.graspclutter6d.queries import (
     object_level_cases,
     query_catalogue,
     scene_level_cases,
 )
-from experiments.causal_reasoning.graspclutter6d.report import MarkdownReport
+from experiments.causal_reasoning.graspclutter6d.run_pipeline import (
+    graspclutter_experiment,
+)
 
 LEAF_SHARE = 0.2
 """
@@ -36,12 +37,22 @@ adjustment to sum over.
 
 
 @pytest.fixture(scope="module")
-def comparison(shared_synthetic_dataset):
+def experiment():
+    """
+    What the experiment compares and asks.
+    """
+    return graspclutter_experiment()
+
+
+@pytest.fixture(scope="module")
+def comparison(experiment, shared_synthetic_dataset):
     """
     Every pipeline fitted on the synthetic scenes and asked every question.
     """
     return evaluate(
+        experiment.comparison,
         shared_synthetic_dataset,
+        experiment.cases,
         random_seed=0,
         min_samples_per_leaf=LEAF_SHARE,
         plain_min_samples_per_leaf=LEAF_SHARE,
@@ -49,12 +60,14 @@ def comparison(shared_synthetic_dataset):
 
 
 @pytest.fixture(scope="module")
-def reorderings(shared_synthetic_dataset):
+def reorderings(experiment, shared_synthetic_dataset):
     """
     The questions about one object asked again under three orderings of the parts.
     """
     return permutation_study(
+        experiment.comparison,
         shared_synthetic_dataset,
+        experiment.part_cases,
         ordering_count=3,
         min_samples_per_leaf=LEAF_SHARE,
         plain_min_samples_per_leaf=LEAF_SHARE,
@@ -147,7 +160,7 @@ def test_every_pipeline_is_scored_on_the_views_it_models(comparison):
     distribution and is scored on nothing.
     """
     for pipeline in comparison.pipelines:
-        scored = pipeline.likelihoods[SceneView.SCALARS] is not None
+        scored = pipeline.likelihoods[ExampleView.SCALARS] is not None
         assert scored == (pipeline.name != "regression adjustment")
 
 
@@ -174,21 +187,26 @@ def test_reordering_the_parts_moves_the_unrolled_trees_answers(reorderings):
     )
 
 
-def test_a_split_study_reports_one_comparison_per_seed(shared_synthetic_dataset):
+def test_a_split_study_reports_one_comparison_per_seed(
+    experiment, shared_synthetic_dataset
+):
     study = split_study(
+        experiment.comparison,
         shared_synthetic_dataset,
+        experiment.cases,
         random_seeds=(0, 1),
         min_samples_per_leaf=LEAF_SHARE,
         plain_min_samples_per_leaf=LEAF_SHARE,
     )
     assert [report.random_seed for report in study.reports] == [0, 1]
-    assert len(study.coverage("relational circuit", SceneView.SCALARS)) == 2
+    assert len(study.coverage("relational circuit", ExampleView.SCALARS)) == 2
 
 
 def test_a_learning_curve_measures_every_share_on_every_pipeline(
-    shared_synthetic_dataset,
+    experiment, shared_synthetic_dataset
 ):
     curve = learning_curve(
+        experiment.comparison,
         shared_synthetic_dataset,
         train_fractions=(0.4, 0.8),
         random_seeds=(0,),
@@ -199,8 +217,10 @@ def test_a_learning_curve_measures_every_share_on_every_pipeline(
         assert len(curve.points_of(name, 0.4)) == 1
 
 
-def test_the_report_names_every_pipeline_and_every_question(comparison):
-    rendered = MarkdownReport(comparison).render()
+def test_the_report_names_every_pipeline_and_every_question(experiment, comparison):
+    rendered = MarkdownReport(
+        experiment.comparison.domain, experiment.text, comparison
+    ).render()
     for pipeline in comparison.pipelines:
         assert pipeline.name in rendered
     for case in query_catalogue():
@@ -213,7 +233,7 @@ def test_the_reorderings_are_measured_against_the_datasets_own_order(
     in_dataset_order = reorderings.in_dataset_order("relational circuit")
     assert (
         in_dataset_order
-        == comparison.pipeline("relational circuit").likelihoods[SceneView.WHOLE_SCENE]
+        == comparison.pipeline("relational circuit").likelihoods[ExampleView.WHOLE]
     )
     assert len(reorderings.reordered("relational circuit")) == 3
     assert reorderings.largest_likelihood_drop("relational circuit") == pytest.approx(
@@ -231,7 +251,14 @@ def test_the_relational_circuits_answers_never_move_under_reordering(reorderings
         assert math.isnan(question.argmax_flip_share) or question.argmax_flip_share == 0
 
 
-def test_the_report_renders_the_reordering_distribution(comparison, reorderings):
-    rendered = MarkdownReport(comparison, permutations=reorderings).render()
+def test_the_report_renders_the_reordering_distribution(
+    experiment, comparison, reorderings
+):
+    rendered = MarkdownReport(
+        experiment.comparison.domain,
+        experiment.text,
+        comparison,
+        permutations=reorderings,
+    ).render()
     assert "dataset order, coverage / mean log-likelihood" in rendered
     assert "argmax moved" in rendered

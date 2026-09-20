@@ -13,7 +13,7 @@ counts are kept in an index beside the dataset.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
@@ -25,16 +25,16 @@ from semantic_digital_twin.adapters.grasp_clutter_6d_dataset.loader import (
     GraspClutter6DSplit,
 )
 from typing_extensions import (
-    Callable,
+    Any,
     Dict,
     FrozenSet,
     List,
     Optional,
     Self,
     Sequence,
-    Tuple,
-    TypeVar,
 )
+
+from experiments.causal_reasoning.comparison.dataset import EffectRate, ExampleDataset
 
 from experiments.causal_reasoning.graspclutter6d.annotations import (
     MILLIMETERS_PER_METER,
@@ -46,6 +46,7 @@ from experiments.causal_reasoning.graspclutter6d.domain import (
     CameraModel,
     GraspClutterObject,
     GraspClutterScene,
+    GraspClutterSceneAggregations,
     GraspClutterViewpoint,
     Graspability,
     MeasurementLevels,
@@ -54,14 +55,13 @@ from experiments.causal_reasoning.graspclutter6d.domain import (
     Occlusion,
     Proximity,
     ViewClarity,
+    scene_domain,
 )
 from experiments.causal_reasoning.graspclutter6d.grasp_labels import (
     GraspCountIndex,
     GraspLabels,
 )
 from experiments.causal_reasoning.graspclutter6d.scene_store import SceneStore
-
-T = TypeVar("T")
 
 MODELS_INFO_FILE = "models_info.json"
 """
@@ -531,106 +531,38 @@ def _synthetic_viewpoint(
 # %% a set of scenes
 
 
-@dataclass(frozen=True)
-class GraspableRate:
+def graspclutter_dataset(scenes: Sequence[GraspClutterScene]) -> ExampleDataset:
     """
-    How often a group of scenes leaves every object graspable.
+    :param scenes: The scenes.
+    :return: The scenes as the comparison sees them.
     """
+    return ExampleDataset(scene_domain(), list(scenes))
 
-    scene_count: int
+
+def graspability_summaries(dataset: ExampleDataset) -> Dict[str, Dict[Any, EffectRate]]:
     """
-    How many scenes the group holds.
+    How often the scenes leave every object graspable, by the object catalogue they are
+    built from, by how many of their objects are small, by how many are occluded and by
+    how many objects they hold at all.
+
+    :param dataset: The scenes.
+    :return: The rates per summary's title.
     """
-
-    graspable_count: int
-    """
-    How many of them leave every object graspable.
-    """
-
-    @property
-    def rate(self) -> float:
-        """
-        The share of scenes that do.
-        """
-        return self.graspable_count / self.scene_count
-
-
-@dataclass
-class GraspClutterDataset:
-    """
-    A set of scenes, as read and as the pipelines see them.
-    """
-
-    scenes: List[GraspClutterScene] = field(default_factory=list)
-    """
-    The scenes.
-    """
-
-    @property
-    def graspable_rate(self) -> float:
-        """
-        Share of scenes that leave every object graspable.
-        """
-        return sum(scene.all_objects_graspable for scene in self.scenes) / len(
-            self.scenes
-        )
-
-    def graspable_rate_by(
-        self, key: Callable[[GraspClutterScene], T]
-    ) -> Dict[T, GraspableRate]:
-        """
-        How often the scenes sharing a value leave every object graspable.
-
-        :param key: What to group the scenes by.
-        :return: Each value's rate, by value.
-        """
-        by_value: Dict[T, List[GraspClutterScene]] = {}
-        for scene in self.scenes:
-            by_value.setdefault(key(scene), []).append(scene)
-        return {
-            value: GraspableRate(
-                scene_count=len(scenes),
-                graspable_count=sum(scene.all_objects_graspable for scene in scenes),
-            )
-            for value, scenes in sorted(by_value.items())
-        }
-
-    def with_shuffled_parts(self, random_state: np.random.Generator) -> Self:
-        """
-        The same scenes with their objects and viewpoints in a random order each.
-
-        :param random_state: Source of randomness for the orders.
-        :return: The dataset with reordered parts.
-        """
-        return type(self)(
-            [
-                replace(
-                    scene,
-                    objects=[
-                        scene.objects[index]
-                        for index in random_state.permutation(len(scene.objects))
-                    ],
-                    viewpoints=[
-                        scene.viewpoints[index]
-                        for index in random_state.permutation(len(scene.viewpoints))
-                    ],
-                )
-                for scene in self.scenes
-            ]
-        )
-
-    def split(
-        self, train_fraction: float, random_state: np.random.Generator
-    ) -> Tuple[Self, Self]:
-        """
-        Shuffle the scenes and split them in two.
-
-        :param train_fraction: Share of scenes that go into the first part.
-        :param random_state: Source of randomness for the shuffle.
-        :return: The first and second part.
-        """
-        order = random_state.permutation(len(self.scenes))
-        split_index = int(train_fraction * len(self.scenes))
-        first = [self.scenes[index] for index in order[:split_index]]
-        second = [self.scenes[index] for index in order[split_index:]]
-        return type(self)(first), type(self)(second)
+    return {
+        "object catalogue": dataset.effect_rate_by(
+            lambda scene: scene.object_catalogue
+        ),
+        "small objects": dataset.effect_rate_by(
+            lambda scene: GraspClutterSceneAggregations(
+                instance=scene
+            ).small_object_count()
+        ),
+        "occluded objects": dataset.effect_rate_by(
+            lambda scene: GraspClutterSceneAggregations(
+                instance=scene
+            ).occluded_object_count()
+        ),
+        "objects": dataset.effect_rate_by(
+            lambda scene: GraspClutterSceneAggregations(instance=scene).object_count()
+        ),
+    }

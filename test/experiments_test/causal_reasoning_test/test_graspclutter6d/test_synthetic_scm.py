@@ -9,27 +9,32 @@ import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO clas
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.graspclutter6d.dataset import GraspClutterDataset
+from experiments.causal_reasoning.comparison.evaluation import (
+    GroundTruthReport,
+    ground_truth_study,
+    scaling_study,
+)
 from experiments.causal_reasoning.graspclutter6d.domain import (
     GraspClutterSceneAggregations,
     ObjectCatalogue,
     ObjectSize,
 )
-from experiments.causal_reasoning.graspclutter6d.evaluation import (
-    GroundTruthConfiguration,
-    GroundTruthReport,
-    ground_truth_study,
-)
 from experiments.causal_reasoning.graspclutter6d.queries import (
     ground_truth_cases,
     query_catalogue,
+)
+from experiments.causal_reasoning.graspclutter6d.run_pipeline import (
+    graspclutter_experiment,
 )
 from experiments.causal_reasoning.graspclutter6d.synthetic_scm import (
     Cause,
     CausalQuestion,
     Effect,
     Intervention,
+    ModelSetting,
     SceneStructuralCausalModel,
+    SceneTruth,
+    scenes_of_size,
 )
 
 
@@ -121,9 +126,9 @@ def test_the_crowded_scenes_hold_more_small_objects_at_full_strength():
         model = SceneStructuralCausalModel(
             object_count_centre=10, confounding_strength=strength
         )
-        scenes = GraspClutterDataset(model.scenes(600, np.random.default_rng(0)))
+        scenes = model.scenes(600, np.random.default_rng(0))
         share = {}
-        for scene in scenes.scenes:
+        for scene in scenes:
             count = len(scene.objects)
             small = GraspClutterSceneAggregations(instance=scene).small_object_count()
             share.setdefault(count, []).append(small / count)
@@ -140,17 +145,19 @@ def test_every_question_of_the_catalogue_has_a_reading_in_the_model():
 
 
 def test_the_study_scores_every_pipeline_under_every_setting():
+    setting = ModelSetting(5, 0.3)
     report = ground_truth_study(
-        configurations=[GroundTruthConfiguration(5, 0.3)],
-        scene_count=60,
+        graspclutter_experiment().comparison,
+        SceneTruth(settings=[setting], sample_count=20_000),
+        ground_truth_cases()[3:5],
+        example_count=60,
         ordering_count=1,
         min_samples_per_leaf=0.2,
         plain_min_samples_per_leaf=0.2,
-        cases=ground_truth_cases()[3:5],
         min_region_support=5,
-        truth_sample_count=20_000,
     )
-    assert report.configurations == [GroundTruthConfiguration(5, 0.3)]
+    assert report.configurations == [setting]
+    assert report.descriptions == {setting: SceneTruth().describe(setting)}
     assert len(report.pipeline_names) == 5
     relational = report.of("relational circuit", ordering=0)
     assert [outcome.case.name for outcome in relational] == [
@@ -168,22 +175,24 @@ def test_the_study_scores_every_pipeline_under_every_setting():
 
 
 def test_the_scaling_study_measures_each_part_modelling_pipeline_at_each_size():
-    from experiments.causal_reasoning.graspclutter6d.evaluation import scaling_study
-
+    experiment = graspclutter_experiment()
     report = scaling_study(
-        object_count_centres=(3, 5),
-        scene_count=40,
+        experiment.comparison,
+        scenes_of_size,
+        experiment.scaling.case,
+        sizes=(3, 5),
+        example_count=40,
         min_samples_per_leaf=0.2,
         plain_min_samples_per_leaf=0.2,
     )
-    assert report.object_count_centres == [3, 5]
+    assert report.sizes == [3, 5]
     assert report.pipeline_names == [
         "relational circuit",
         "hybrid circuit",
         "unrolled tree",
     ]
     for name in report.pipeline_names:
-        for centre in report.object_count_centres:
-            point = report.point(name, centre)
+        for size in report.sizes:
+            point = report.point(name, size)
             assert point.fit.size.node_count > 0
             assert point.query_duration > 0
