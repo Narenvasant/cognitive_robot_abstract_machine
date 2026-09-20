@@ -198,6 +198,60 @@ over several random splits is optional (`--splits N`).
   the cause, its population share, the naive conditional probability of the effect,
   and the backdoor-adjusted interventional probability.
 
+## What the results show
+
+Numbers from `results.md`: 300 recorded attempts with nine neighbours each, one
+240/60 split with seed 0, twenty random orderings of the neighbours, a support
+threshold of ten training attempts per cause region.
+
+- **The pick comes up 65% of the time, and the environment decides most of it.** On
+  the table 87% of the targets are lifted, in the bin 46%; the two lowest friction
+  levels hold the carton in 0% and 87% of attempts, everything from 0.375 up in 100%;
+  a target with no adjacent neighbour comes up 87% of the time, with four 25%.
+- **Every circuit gives the same answer to every question it can pose.** The
+  relational circuit, the propositional tree, the unrolled tree and, where it has the
+  column, the scalars-only tree agree to the third decimal: a grasp friction of 0.125
+  never lifts the target and 0.375 always does (contrast 1.00, [0.81, 1.00]); zero
+  adjacent neighbours lift it with probability 0.88 and four with 0.23 (trend -1.00,
+  contrast -0.65, [-0.81, -0.37]). Adjusting the crowding question for the environment
+  changes no region by more than 0.01, so the crowding count is not a stand-in for
+  the environment here. Regression adjustment finds the same best settings but a
+  friction contrast of 0.31 in place of 1.00, and an environment-adjusted crowding
+  contrast of -0.37 against -0.64 unadjusted: a logistic model flattens a step and
+  hands part of the crowding effect to the environment.
+- **Only the models that hold the neighbours can be asked about one.** A neighbour
+  standing along the fingers' closing axis is disturbed with probability 0.18, across
+  it 0.03, read off the relational circuit over the 2,160 neighbours of the training
+  attempts (contrast 0.15, [0.12, 0.17]); the unrolled tree reads 0.22 against 0.03
+  off the 240 first-listed neighbours (0.19, [0.11, 0.28]). The propositional and
+  scalars-only trees and the regression baseline have no column for it. Over twenty
+  reorderings the unrolled tree's answer ranges by 0.20 and the relational circuit's
+  by nothing.
+- **A clutter of another size is a question only the relational circuit can be asked
+  in its own right.** The trees answer the questions about 4 and 12 neighbours with
+  the numbers they have for 9, since nothing in a flat table tells the sizes apart;
+  the relational circuit grounds itself for the queried clutter and, since the
+  recorded mechanism does not depend on the number of neighbours, gives the same
+  numbers too. The question about the twelfth neighbour of a clutter of twelve has no
+  column anywhere: the relational circuit answers it (0.18 against 0.03), every flat
+  estimator refuses.
+- **Only the relational circuit explains whole attempts.** On the held-out attempts
+  both cover, its mean whole-attempt log-likelihood is 154.3 against the unrolled
+  tree's 88.9, and it covers 78% of them against 43%; reordering the neighbours drops
+  the unrolled tree's coverage to 25% and its likelihood by 33 nats, and leaves the
+  relational circuit's unchanged. On the learning curve the relational circuit climbs
+  from 102 nats and 30% coverage at a fifth of the data to 135 nats and 76% at four
+  fifths, while the unrolled tree stays near 90 nats and reaches 43% coverage.
+- **Grounding needs no more than fifty samples**, since the crowding count a query
+  leaves open takes six distinct values and grounding integrates over the distinct
+  values it has drawn: every answer is the same from fifty samples to 32,000.
+- **Cost against the size of the clutter.** From 4 to 25 neighbours the relational
+  circuit grows from 1,808 to 7,148 nodes and 2.1 to 5.2 seconds of fitting; the
+  unrolled tree from 2,769 to 14,709 nodes and 1.2 to 9.0 seconds, one block of
+  columns per position. On the recorded attempts the relational circuit answers in
+  4.3 seconds once fitted, the trees in 0.6 to 0.8, the difference being the
+  grounding.
+
 ## Running it
 
 The `iai_tracy_description` ROS package must be built and sourced for anything that

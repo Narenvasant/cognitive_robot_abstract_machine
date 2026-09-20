@@ -155,54 +155,64 @@ optional (`--splits N`).
 
 ## What the results show
 
-Numbers from `results.md`: one 150/38 split with seed 0 for the questions and
-timings, five splits for the spreads, three random atom orderings.
+Numbers from `results.md`: one 150/38 split with seed 0, twenty random orderings of
+the atoms and bonds, a support threshold of ten training molecules per cause region.
 
-- **Where every pipeline has the columns, every pipeline answers alike.** On the five
-  molecule-level questions the relational circuit, the propositional tree and the
-  unrolled tree agree to the third decimal: mutagenicity rises from 0 at seven
-  branching atoms to 1 at seventeen and above, from 0.24 at six aromatic bonds to 1 at
-  fourteen and above, and the indicator raises it from 0.31 to 0.95 adjusting for
-  `logp` and from 0.37 to 0.94 adjusting for the branching count. This is expected:
-  the relational circuit's class circuit and the propositional tree are the same tree
-  on the same eight columns, and Monte-Carlo grounding with 2000 samples reproduces
-  its regions. The scalars-only tree answers one of the eight questions; without the
-  counts a flat learner cannot even pose the rest. Over five splits the best regions
-  are stable except for the double-bond question, whose top region is a count held by
-  one or two molecules, a caveat on reading "most effective" off tiny regions.
+- **Where every pipeline has the columns, every pipeline answers alike.** On the
+  eleven molecule-level questions the relational circuit and the propositional tree
+  give the same numbers to the third decimal, because on those columns they are the
+  same tree fitted on the same rows, and the unrolled tree is within a few hundredths
+  of them. Mutagenicity rises from 0.13 at ten branching atoms to 1 at seventeen and
+  above (contrast 0.87, interval [0.49, 0.97]), from 0.27 at six aromatic bonds to 1
+  at seventeen and above (0.73, [0.47, 0.86]), and by 0.26 from two to four double
+  bonds ([0.06, 0.40]); the indicator raises it from 0.31 to 0.95 adjusting for `logp`
+  and from 0.42 to 0.94 adjusting for the branching count. The scalars-only tree
+  answers one of the fourteen questions: without the counts a flat learner cannot even
+  pose the rest. Regression adjustment, the estimator that is not a circuit, agrees on
+  which setting is best but flattens every contrast (0.58 against 0.82 for branching
+  atoms adjusting for the indicator, 0.05 against 0.73 for aromatic bonds adjusting
+  for both confounders), which is what a logistic model does to a relation that is a
+  step.
+- **Adjusting changes the answer inside a region, not the trend.** At thirteen
+  branching atoms the naive rate is 0.73, 0.82 adjusting for the indicator, 0.80 for
+  the atom count and 0.70 for both; at eleven aromatic bonds it is 0.33 naive and 0.65
+  adjusting for the indicator. The trend stays between 0.90 and 1.00 and the contrast
+  moves by at most 0.05 under any adjustment, so the backdoor adjustment is doing
+  something, and what it does not do is change what the question is about.
+- **The relational circuit answers every question about an atom, and its answers are
+  the atom counts.** The indicator makes an exchangeable atom carbon with probability
+  0.55 against 0.43 without it; the branching-atom count has no effect on whether an
+  atom is terminal (0.23 to 0.53 across the supported regions, trend -0.05); and the
+  atom's element decides it entirely: hydrogen and chlorine are terminal with
+  probability 1.00, oxygen 0.94, carbon and nitrogen 0.00, which is the valence table.
+  The last question, whose cause and effect both live on one atom, is one the earlier
+  version of this pipeline refused; it is answered now because a cause region is
+  counted once however the support writes it.
 - **The unrolled tree's answers about atoms are answers about the listing order.**
   In the dataset's own order it finds atom 0 carbon with probability 1.00 whether or
-  not the indicator is set (the CTU listing puts a carbon first in every molecule) and
-  cannot find a terminal atom 0 at all. Reordering the atoms at random three times
-  flips its most effective setting on both atom questions and moves its adjusted
-  probabilities by up to 1.00; the relational circuit's answers do not move at all
-  (0.52 against 0.44 carbon, 0.51 against 0.34 terminal, matching the raw atom
-  counts), because an exchangeable atom has no position.
+  not the indicator is set (the CTU listing puts a carbon first in every molecule),
+  and refuses both terminal questions because no molecule's first atom is terminal.
+  Over twenty reorderings its most effective setting moves in 95% of them on the
+  carbon question and its adjusted probabilities range by up to 0.65 there and 1.00
+  on the terminal question; the relational circuit's answers do not move by 1e-9,
+  because an exchangeable atom has no position.
 - **Only the relational circuit explains whole molecules.** On the held-out molecules
-  both cover, its mean whole-molecule log-likelihood is 15.4 against the unrolled
-  tree's -132.7, about 150 nats per molecule, and it covers more of them (60.5%
-  against 55.3%); reordering the atoms drops the unrolled tree's coverage to 10 to
-  18% and its likelihood by a further 20 nats, and leaves the relational circuit's
-  unchanged. The learning curve shows why: the relational circuit pools every atom of
-  every training molecule into one template, so its whole-molecule likelihood climbs
-  from -17 at a fifth of the data to +4 at four fifths, while the unrolled tree, with
-  one row per molecule over about 200 columns, stays between -183 and -132.
-- **Extra columns do not buy the flat trees anything on the shared columns.** The
-  unrolled tree's marginal on the scalars and counts is worse than the propositional
-  tree's (-8.55 against -8.24; -8.67 against -8.34 over five splits), and the
-  scalars-only tree is marginally the best on the scalars alone (-3.08 against -3.15
-  over five splits). It is also the most expensive model here: 15,541 nodes and 66
-  seconds of fitting against the relational circuit's 7,507 nodes and 27 seconds.
-- **The atom-level cause is refused by all.** The relational circuit, grounding with
-  the counts left open, mixes one copy of the atom template per sampled count, and
-  those copies overlap on the element without being identical (a copy for a molecule
-  with no chlorine has no chlorine atom, a copy for one with some has), so the
-  grounded circuit is not support-deterministic over the element and verification
-  rejects it. The propositional and scalars-only trees have no column for it. The
-  unrolled tree has the column but, in the dataset's order, no terminal atom 0 to
-  read an effect off; under random orderings it answers, and the answer moves.
-- **Cost.** Once fitted, the trees answer in 0.04 to 0.4 seconds and the relational
-  circuit in 2.3, the difference being the Monte-Carlo grounding.
+  both cover, its mean whole-molecule log-likelihood is -40.8 against the unrolled
+  tree's -91.3, and it covers more of them (73.7% against 44.7%); reordering the atoms
+  drops the unrolled tree's coverage to 5% and its likelihood by 56 nats, and leaves
+  the relational circuit's unchanged. The learning curve shows why: the relational
+  circuit pools every atom of every training molecule into one template, so at a
+  fifth of the data it already covers 30% of the held-out molecules at -54 nats,
+  where the unrolled tree, with one row per molecule over about 200 columns, covers
+  10% at -69 and, as it covers more, scores worse.
+- **Grounding needs no more than fifty samples.** The counts a query leaves open take
+  few distinct values, and grounding integrates over the distinct values it has
+  drawn, so from fifty samples on every answer is the same to the third decimal.
+- **Cost.** The relational circuit is 4,663 nodes and 44 seconds of fitting, the
+  propositional tree 3,009 and 10 seconds, the unrolled tree 72,243 and 83 seconds.
+  Once fitted, the trees and the circuit take about the same time per question (7 to
+  9 seconds), most of it in the backdoor adjustment over the atom count's many
+  regions; the scalars-only tree answers in 0.1 seconds, and answers almost nothing.
 
 What the comparison does not show: that the relational circuit gives better causal
 answers on molecule-level questions than a flat tree given the same counts. It cannot,

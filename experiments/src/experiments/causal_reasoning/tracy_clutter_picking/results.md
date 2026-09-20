@@ -55,7 +55,7 @@ One row per question, one column per pipeline. An answered cell says, in words, 
 |---|---|---|---|---|---|
 | In a clutter of 9 neighbours, which grasp friction coefficient causes the target to be lifted, adjusting for the environment? | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.75, the target is lifted with probability 0.90, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.59. |
 | In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for the environment? | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | refused: the fitted table has no column for the queried variables. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.80, the highest of any setting; with 4 adjacent neighbours it is only 0.43. |
-| In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for ? | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | refused: the fitted table has no column for the queried variables. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.87, the highest of any setting; with 4 adjacent neighbours it is only 0.23. |
+| In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, with nothing adjusted for? | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | refused: the fitted table has no column for the queried variables. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.87, the highest of any setting; with 4 adjacent neighbours it is only 0.23. |
 | In a clutter of 9 neighbours, does neighbour 0 standing along the fingers' closing axis cause it to be disturbed by the pick? | answered: with neighbour 0 standing along the closing axis, neighbour 0 is disturbed with probability 0.18, the highest of any setting; with neighbour 0 standing across the closing axis it is only 0.03. | refused: the fitted table has no column for the queried variables. | answered: with neighbour 0 standing along the closing axis, neighbour 0 is disturbed with probability 0.22, the highest of any setting; with neighbour 0 standing across the closing axis it is only 0.03. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. |
 | In a clutter of 4 neighbours, which grasp friction coefficient causes the target to be lifted, adjusting for the environment? | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.375, the target is lifted with probability 1.00, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.00. | answered: with a grasp friction coefficient of 0.75, the target is lifted with probability 0.90, the highest of any setting; with a grasp friction coefficient of 0.125 it is only 0.59. |
 | In a clutter of 12 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for the environment? | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.88, the highest of any setting; with 4 adjacent neighbours it is only 0.23. | refused: the fitted table has no column for the queried variables. | answered: with 0 adjacent neighbours, the target is lifted with probability 0.80, the highest of any setting; with 4 adjacent neighbours it is only 0.43. |
@@ -71,7 +71,7 @@ The most effective setting is an argmax over up to twenty sparse regions and mov
 |---|---|---|---|---|---|---|---|---|---|---|
 | friction_causes_lift_9_neighbours | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 1.00 | 0.31 [0.06, 0.46] (0.125 → 0.75) |
 | crowding_causes_lift_9_neighbours_adjusting_environment | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | - | - | -1.00 | -0.37 [-0.60, -0.10] (0 → 4) |
-| crowding_causes_lift_9_neighbours_adjusting_ | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | - | - | -1.00 | -0.64 [-0.80, -0.36] (0 → 4) |
+| crowding_causes_lift_9_neighbours_unadjusted | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | - | - | -1.00 | -0.64 [-0.80, -0.36] (0 → 4) |
 | closing_axis_side_causes_disturbance_of_neighbour_0_of_9 | - | 0.15 [0.12, 0.17] (across → along) | - | - | - | 0.19 [0.11, 0.28] (across → along) | - | - | - | - |
 | friction_causes_lift_4_neighbours | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 0.84 | 1.00 [0.81, 1.00] (0.125 → 0.75) | 1.00 | 0.31 [0.06, 0.46] (0.125 → 0.75) |
 | crowding_causes_lift_12_neighbours_adjusting_environment | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | -1.00 | -0.65 [-0.81, -0.37] (0 → 4) | - | - | -1.00 | -0.37 [-0.60, -0.10] (0 → 4) |
@@ -83,14 +83,14 @@ The same count question under each set of confounders it was asked with, read of
 
 ### crowding_count
 
-| cause region | n | naive | adjusted for the environment | unadjusted | adjusted for the environment |
-|---|---|---|---|---|---|
-| 0 | 101 | 0.881 | 0.881 | 0.881 | 0.881 |
-| 1 | 24 | 0.875 | 0.868 | 0.875 | 0.868 |
-| 2 | 56 | 0.446 | 0.446 | 0.446 | 0.446 |
-| 3 | 41 | 0.415 | 0.415 | 0.415 | 0.415 |
-| 4 | 13 | 0.231 | 0.231 | 0.231 | 0.231 |
-| 5 † | 5 | 0.400 | 0.400 | 0.400 | 0.400 |
+| cause region | n | naive | adjusted for the environment | unadjusted |
+|---|---|---|---|---|
+| 0 | 101 | 0.881 | 0.881 | 0.881 |
+| 1 | 24 | 0.875 | 0.868 | 0.875 |
+| 2 | 56 | 0.446 | 0.446 | 0.446 |
+| 3 | 41 | 0.415 | 0.415 | 0.415 |
+| 4 | 13 | 0.231 | 0.231 | 0.231 |
+| 5 † | 5 | 0.400 | 0.400 | 0.400 |
 
 
 ## Fit and likelihood
@@ -99,13 +99,13 @@ What each pipeline cost. *Models fitted* counts the plain model plus one support
 
 | pipeline | models fitted | training seconds | nodes | edges |
 |---|---|---|---|---|
-| relational circuit | 5 | 8.66 | 7266 | 7256 |
-| propositional tree | 3 | 0.93 | 2003 | 2000 |
-| unrolled tree | 4 | 5.09 | 24312 | 24308 |
-| scalars-only tree | 2 | 0.08 | 1022 | 1020 |
-| regression adjustment | 6 | 0.23 | 0 | 0 |
+| relational circuit | 5 | 7.88 | 7266 | 7256 |
+| propositional tree | 3 | 0.90 | 2003 | 2000 |
+| unrolled tree | 4 | 5.04 | 24312 | 24308 |
+| scalars-only tree | 2 | 0.09 | 1022 | 1020 |
+| regression adjustment | 6 | 0.24 | 0 | 0 |
 
-How well each explains attempts it never saw, on three views of a attempt: its own scalars, which every pipeline models; its scalars and counts; and the whole attempt, parts included, which only the pipelines that model the parts can score. The relational circuit scores a whole attempt as its class circuit over the scalars and counts times each part template over one part given the counts; the unrolled tree scores it as one row. *Held-out coverage* is the share of held-out attempts that lie inside the plain model's support at all, since a tree's leaves span only the value ranges they were fitted on, and a whole attempt is covered only if every one of its parts is. The *mean log-likelihood* is over the covered attempts only; the last column restricts it to the attempts every pipeline in the table covers, so the numbers are over the same rows.
+How well each explains attempts it never saw, on three views of one attempt: its own scalars, which every pipeline models; its scalars and counts; and the whole attempt, parts included, which only the pipelines that model the parts can score. The relational circuit scores a whole attempt as its class circuit over the scalars and counts times each part template over one part given the counts; the unrolled tree scores it as one row. *Held-out coverage* is the share of held-out attempts that lie inside the plain model's support at all, since a tree's leaves span only the value ranges they were fitted on, and a whole attempt is covered only if every one of its parts is. The *mean log-likelihood* is over the covered attempts only; the last column restricts it to the attempts every pipeline in the table covers, so the numbers are over the same rows.
 
 ### scalars
 
@@ -137,33 +137,115 @@ Wall-clock time from asking to the answer or the refusal. The *first ask* of a c
 
 | question | relational circuit, first ask | relational circuit, asked again | propositional tree, first ask | propositional tree, asked again | unrolled tree, first ask | unrolled tree, asked again | scalars-only tree, first ask | scalars-only tree, asked again | regression adjustment, first ask | regression adjustment, asked again |
 |---|---|---|---|---|---|---|---|---|---|---|
-| friction_causes_lift_9_neighbours | 5.05 | 4.04 | 1.00 | 0.59 | 3.22 | 0.97 | 0.69 | 1.09 | 0.05 | - |
-| crowding_causes_lift_9_neighbours_adjusting_environment | 4.90 | 4.23 | 0.95 | 1.10 | 2.97 | 1.30 | 0.03 | 0.03 | 0.07 | - |
-| crowding_causes_lift_9_neighbours_adjusting_ | 3.42 | 3.59 | 0.32 | 0.32 | 0.57 | 0.60 | 0.03 | 0.03 | 0.06 | - |
-| closing_axis_side_causes_disturbance_of_neighbour_0_of_9 | 5.13 | 4.76 | 0.03 | 0.03 | 1.64 | 0.25 | 0.03 | 0.03 | 0.03 | - |
-| friction_causes_lift_4_neighbours | 1.79 | 2.44 | 0.61 | 0.60 | 0.96 | 0.95 | 0.59 | 0.59 | 0.03 | - |
-| crowding_causes_lift_12_neighbours_adjusting_environment | 4.97 | 5.01 | 0.59 | 0.57 | 1.35 | 1.42 | 0.04 | 0.05 | 0.10 | - |
-| closing_axis_side_causes_disturbance_of_neighbour_11_of_12 | 7.45 | 6.58 | 0.05 | 0.06 | 0.05 | 0.05 | 0.04 | 0.04 | 0.07 | - |
+| friction_causes_lift_9_neighbours | 5.05 | 4.38 | 0.93 | 0.59 | 3.25 | 0.98 | 1.25 | 0.61 | 0.05 | - |
+| crowding_causes_lift_9_neighbours_adjusting_environment | 4.93 | 3.74 | 0.90 | 0.96 | 2.98 | 0.81 | 0.03 | 0.03 | 0.07 | - |
+| crowding_causes_lift_9_neighbours_unadjusted | 3.36 | 3.94 | 0.32 | 0.31 | 0.59 | 1.07 | 0.03 | 0.03 | 0.07 | - |
+| closing_axis_side_causes_disturbance_of_neighbour_0_of_9 | 5.56 | 4.07 | 0.03 | 0.03 | 1.17 | 0.29 | 0.03 | 0.03 | 0.03 | - |
+| friction_causes_lift_4_neighbours | 1.74 | 2.27 | 1.21 | 0.57 | 0.94 | 0.99 | 0.58 | 1.06 | 0.03 | - |
+| crowding_causes_lift_12_neighbours_adjusting_environment | 4.93 | 4.94 | 0.57 | 0.58 | 1.31 | 0.81 | 0.04 | 0.04 | 0.09 | - |
+| closing_axis_side_causes_disturbance_of_neighbour_11_of_12 | 7.15 | 6.39 | 0.04 | 0.04 | 0.05 | 0.05 | 0.05 | 0.05 | 0.05 | - |
+
+## Does the order of the parts matter?
+
+Every attempt's parts were put in a random order, 20 times over, and each time the pipelines that model the parts were refitted on the same split and asked the questions about parts again; the parts in the order the dataset lists them is the baseline every reordering is measured against. A relational circuit treats the neighbours as exchangeable, so nothing about it can depend on the order; an unrolled table's column `neighbours[0]` holds a different neighbour of every attempt after each reordering. Per question and pipeline: how many reorderings were answered; over the cause regions every answered ordering distinguishes, the mean standard deviation and the widest range of the adjusted probability; the share of reorderings whose most effective region is not the dataset-order one; and the share whose trend changed sign.
+
+| question | pipeline | reorderings answered | mean sd of adjusted P(effect) | widest range | argmax moved | trend sign flipped |
+|---|---|---|---|---|---|---|
+| closing_axis_side_causes_disturbance_of_neighbour_0_of_9 | relational circuit | 20 of 20 | 0.000 | 0.00 | 0.0% | - |
+| closing_axis_side_causes_disturbance_of_neighbour_0_of_9 | unrolled tree | 20 of 20 | 0.024 | 0.20 | 0.0% | - |
+
+The whole-attempt likelihood of the same held-out attempts with the parts in the order the dataset lists them, and over the reorderings. The recording's order is the order the layout sampler drew the neighbours in, which carries nothing about where they stand. *Largest drop* is how far below the dataset-order likelihood the worst reordering took each pipeline.
+
+| pipeline | dataset order, coverage / mean log-likelihood | reorderings, coverage / mean log-likelihood (mean ± sd) | largest drop |
+|---|---|---|---|
+| relational circuit | 78.3% / 141.63 | 0.783 ± 0.000 / 141.63 ± 0.00 | 0.00 |
+| unrolled tree | 43.3% / 91.00 | 0.248 ± 0.066 / 61.80 ± 2.72 | 33.34 |
+
+## How much training data it takes
+
+Every pipeline's plain model fitted on a growing share of the attempts and scored on the same held-out fifth, over 3 splits, mean ± standard deviation of the held-out coverage and of the mean log-likelihood over the covered attempts. The relational circuit's templates pool every part of every training attempt, where the unrolled tree sees one row per attempt. Every neighbour of every training attempt goes into the template.
+
+### scalars and counts
+
+| training share | relational circuit, coverage | relational circuit, mean log-likelihood | propositional tree, coverage | propositional tree, mean log-likelihood | unrolled tree, coverage | unrolled tree, mean log-likelihood |
+|---|---|---|---|---|---|---|
+| 20.0% | 0.611 ± 0.083 | 8.03 ± 1.01 | 0.611 ± 0.083 | 8.03 ± 1.01 | 0.483 ± 0.083 | 2.63 ± 0.59 |
+| 40.0% | 0.739 ± 0.067 | 9.54 ± 1.17 | 0.739 ± 0.067 | 9.54 ± 1.17 | 0.778 ± 0.075 | 2.87 ± 0.43 |
+| 60.0% | 0.817 ± 0.014 | 10.00 ± 1.98 | 0.817 ± 0.014 | 10.00 ± 1.98 | 0.806 ± 0.070 | 3.38 ± 0.26 |
+| 80.0% | 0.850 ± 0.000 | 9.91 ± 2.00 | 0.850 ± 0.000 | 9.91 ± 2.00 | 0.883 ± 0.047 | 3.51 ± 0.12 |
+
+### whole attempt
+
+| training share | relational circuit, coverage | relational circuit, mean log-likelihood | unrolled tree, coverage | unrolled tree, mean log-likelihood |
+|---|---|---|---|---|
+| 20.0% | 0.300 ± 0.076 | 102.05 ± 4.47 | 0.022 ± 0.031 | 98.09 ± 0.00 |
+| 40.0% | 0.544 ± 0.087 | 119.82 ± 4.00 | 0.206 ± 0.075 | 92.56 ± 1.90 |
+| 60.0% | 0.667 ± 0.036 | 125.32 ± 7.05 | 0.283 ± 0.085 | 87.69 ± 4.08 |
+| 80.0% | 0.761 ± 0.021 | 134.67 ± 6.98 | 0.433 ± 0.054 | 89.09 ± 2.82 |
+
+## How many grounding samples it takes
+
+Inference on a grounded circuit is exact; grounding itself draws Monte-Carlo samples for every count the query leaves open and mixes one copy of the part templates per sampled value, so marginalising the open counts is a consistent estimate, not an exact sum. The relational circuit was fitted once and asked the same two questions with grounding drawing more and more samples; *deviation* is the largest difference, over the cause regions, from the answer at 32,000 samples, and *settled from* is the smallest number of samples from which every larger one stays within 0.01 of it.
+
+### crowding_causes_lift_9_neighbours_adjusting_environment
+
+Settled from 50 samples.
+
+| samples | answered | deviation from reference | seconds |
+|---|---|---|---|
+| 50 | answered | 0.000 | 4.9 |
+| 200 | answered | 0.000 | 4.3 |
+| 1,000 | answered | 0.000 | 3.8 |
+| 2,000 | answered | 0.000 | 3.5 |
+| 8,000 | answered | 0.000 | 4.3 |
+| 32,000 | answered | 0.000 | 4.3 |
+
+### closing_axis_side_causes_disturbance_of_neighbour_0_of_9
+
+Settled from 50 samples.
+
+| samples | answered | deviation from reference | seconds |
+|---|---|---|---|
+| 50 | answered | 0.000 | 5.7 |
+| 200 | answered | 0.000 | 4.8 |
+| 1,000 | answered | 0.000 | 4.9 |
+| 2,000 | answered | 0.000 | 4.4 |
+| 8,000 | answered | 0.000 | 4.8 |
+| 32,000 | answered | 0.000 | 4.8 |
+
+
+## Cost against the number of objects
+
+The pipelines that model the parts, fitted on synthetic attempts of growing size (400 attempts each) and asked one question about a part. The relational circuit's part templates pool every part of every attempt into one circuit, so their size follows the number of distinct part attributes, not the number of parts; the unrolled table carries one block of columns per position, so its tree grows with the widest attempt. *First ask* includes fitting the cause-specific model, *asked again* is grounding and adjustment alone. The synthetic attempts come from the same layout sampler as the recorded ones, with a random outcome in place of the simulator.
+
+| parts per attempt | relational circuit, fit seconds | relational circuit, nodes | relational circuit, first ask | relational circuit, asked again | unrolled tree, fit seconds | unrolled tree, nodes | unrolled tree, first ask | unrolled tree, asked again |
+|---|---|---|---|---|---|---|---|---|
+| 4 | 2.1 | 1808 | 1.4 | 0.8 | 1.2 | 2769 | 0.8 | 0.1 |
+| 9 | 2.7 | 3103 | 2.7 | 1.4 | 2.0 | 5779 | 1.4 | 0.2 |
+| 16 | 3.9 | 4870 | 3.3 | 1.5 | 4.0 | 9815 | 2.9 | 0.3 |
+| 25 | 5.2 | 7148 | 4.7 | 2.3 | 9.0 | 14709 | 6.3 | 1.0 |
 
 ## What the results show
 
 - The relational circuit answered 7 of 7 questions.
 - The propositional tree answered 5 of 7 questions, refusing `closing_axis_side_causes_disturbance_of_neighbour_0_of_9` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_11_of_12` because the fitted table has no column for the queried variables.
 - The unrolled tree answered 6 of 7 questions, refusing `closing_axis_side_causes_disturbance_of_neighbour_11_of_12` because the fitted table has no column for the queried variables.
-- The scalars-only tree answered 2 of 7 questions, refusing `crowding_causes_lift_9_neighbours_adjusting_environment` because the fitted table has no column for the queried variables; `crowding_causes_lift_9_neighbours_adjusting_` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_0_of_9` because the fitted table has no column for the queried variables; `crowding_causes_lift_12_neighbours_adjusting_environment` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_11_of_12` because the fitted table has no column for the queried variables.
+- The scalars-only tree answered 2 of 7 questions, refusing `crowding_causes_lift_9_neighbours_adjusting_environment` because the fitted table has no column for the queried variables; `crowding_causes_lift_9_neighbours_unadjusted` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_0_of_9` because the fitted table has no column for the queried variables; `crowding_causes_lift_12_neighbours_adjusting_environment` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_11_of_12` because the fitted table has no column for the queried variables.
 - The regression adjustment answered 5 of 7 questions, refusing `closing_axis_side_causes_disturbance_of_neighbour_0_of_9` because the fitted table has no column for the queried variables; `closing_axis_side_causes_disturbance_of_neighbour_11_of_12` because the fitted table has no column for the queried variables.
 - On `friction_causes_lift_9_neighbours`, the pipelines disagree on the most effective setting: the relational circuit says a grasp friction coefficient of 0.375 (1.00); the propositional tree says a grasp friction coefficient of 0.375 (1.00); the unrolled tree says a grasp friction coefficient of 0.375 (1.00); the scalars-only tree says a grasp friction coefficient of 0.375 (1.00); the regression adjustment says a grasp friction coefficient of 0.75 (0.90).
 - On `crowding_causes_lift_9_neighbours_adjusting_environment`, every pipeline that answered finds 0 adjacent neighbours the most effective setting (adjusted probabilities: relational circuit 0.88, propositional tree 0.88, unrolled tree 0.88, regression adjustment 0.80).
-- On `crowding_causes_lift_9_neighbours_adjusting_`, every pipeline that answered finds 0 adjacent neighbours the most effective setting (adjusted probabilities: relational circuit 0.88, propositional tree 0.88, unrolled tree 0.88, regression adjustment 0.87).
+- On `crowding_causes_lift_9_neighbours_unadjusted`, every pipeline that answered finds 0 adjacent neighbours the most effective setting (adjusted probabilities: relational circuit 0.88, propositional tree 0.88, unrolled tree 0.88, regression adjustment 0.87).
 - On `closing_axis_side_causes_disturbance_of_neighbour_0_of_9`, every pipeline that answered finds neighbour 0 standing along the closing axis the most effective setting (adjusted probabilities: relational circuit 0.18, unrolled tree 0.22).
 - On `friction_causes_lift_4_neighbours`, the pipelines disagree on the most effective setting: the relational circuit says a grasp friction coefficient of 0.375 (1.00); the propositional tree says a grasp friction coefficient of 0.375 (1.00); the unrolled tree says a grasp friction coefficient of 0.375 (1.00); the scalars-only tree says a grasp friction coefficient of 0.375 (1.00); the regression adjustment says a grasp friction coefficient of 0.75 (0.90).
 - On `crowding_causes_lift_12_neighbours_adjusting_environment`, every pipeline that answered finds 0 adjacent neighbours the most effective setting (adjusted probabilities: relational circuit 0.88, propositional tree 0.88, unrolled tree 0.88, regression adjustment 0.80).
 - On the scalars, the relational circuit assigns the highest mean log-likelihood (15.37, against propositional tree 15.37, unrolled tree 4.84, scalars-only tree 9.27) to the held-out attempts every pipeline covers; coverage: relational circuit 88.3%, propositional tree 88.3%, unrolled tree 95.0%, scalars-only tree 90.0%.
 - On the scalars and counts, the propositional tree assigns the highest mean log-likelihood (12.86, against relational circuit 12.86, unrolled tree 3.63) to the held-out attempts every pipeline covers; coverage: relational circuit 85.0%, propositional tree 85.0%, unrolled tree 95.0%.
 - On the whole attempt, the relational circuit assigns the highest mean log-likelihood (154.33, against unrolled tree 88.87) to the held-out attempts every pipeline covers; coverage: relational circuit 78.3%, unrolled tree 43.3%.
-- The relational circuit takes 4.38 seconds per answered question on average once its models are fitted.
-- The propositional tree takes 0.64 seconds per answered question on average once its models are fitted.
-- The unrolled tree takes 0.91 seconds per answered question on average once its models are fitted.
+- Over 20 reorderings, the relational circuit's adjusted effect probabilities ranged by up to 0.00 and its most effective region moved in 0.0% of the reorderings; its whole-attempt mean log-likelihood fell by up to 0.00 from the dataset's own order.
+- Over 20 reorderings, the unrolled tree's adjusted effect probabilities ranged by up to 0.20 and its most effective region moved in 0.0% of the reorderings; its whole-attempt mean log-likelihood fell by up to 33.34 from the dataset's own order.
+- The relational circuit takes 4.25 seconds per answered question on average once its models are fitted.
+- The propositional tree takes 0.60 seconds per answered question on average once its models are fitted.
+- The unrolled tree takes 0.83 seconds per answered question on average once its models are fitted.
 - The scalars-only tree takes 0.84 seconds per answered question on average once its models are fitted.
 - The regression adjustment takes - seconds per answered question on average once its models are fitted.
 
@@ -298,7 +380,7 @@ Refused: the fitted table has no column for the queried variables.
 EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.80).
 
 
-## In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, adjusting for ?
+## In a clutter of 9 neighbours, how many of them standing adjacent to the target causes it to be lifted, with nothing adjusted for?
 
 One row per region of the cause the model distinguishes. *n* is how many training rows the region holds, and † marks a region below the support threshold; *P(region)* is how much of the fitted population it holds; *naive P(effect)* is the effect's probability simply conditioned on the region; *adjusted* is the interventional probability after summing out the question's confounders, which is what the question asks for, and the *interval* is its Wilson interval over the region's n. Where naive and adjusted agree, the confounders carried no further information within that region.
 
