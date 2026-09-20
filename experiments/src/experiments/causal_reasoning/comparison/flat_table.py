@@ -1,21 +1,20 @@
 """
-Flattening molecules into one table, named the way EQL names the same attributes, so a
+Flattening examples into one table, named the way EQL names the same attributes, so a
 query built for the relational pipeline reads the flat table's columns unchanged.
 
-A molecule has anywhere from 14 to 40 atoms and no canonical atom order, so a flat table
-has to choose what to do with the parts. The three layouts are the choices a flat
-learner has: keep only the molecule's own scalars, add the aggregation counts the
+An example has some number of exchangeable parts and no canonical order over them, so a
+flat table has to choose what to do with the parts. The three layouts are the choices a
+flat learner has: keep only the example's own scalars, add the aggregation counts the
 relational model derives from the parts, or unroll the parts into one block of columns
-per position and pad the positions a molecule does not fill. Values are kept as they
+per position and pad the positions an example does not fill. Values are kept as they
 are, an enum member stays a member, which is also how a fitted tree's leaves and a
 query's conditions read them.
 """
 
 from __future__ import annotations
 
-import enum
 import re
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 import pandas as pd
@@ -30,27 +29,26 @@ from typing_extensions import (
     Sequence,
     Tuple,
     Type,
-    get_args,
-    get_type_hints,
 )
 
-from experiments.causal_reasoning.mutagenesis.domain import (
-    MutagenesisMolecule,
-    MutagenesisMoleculeAggregations,
+from experiments.causal_reasoning.comparison.domain import (
+    ExampleView,
+    PartPadding,
+    RelationalDomain,
 )
-from experiments.causal_reasoning.mutagenesis.exceptions import (
+from experiments.causal_reasoning.comparison.exceptions import (
     FlatTableSchemaMismatchError,
 )
 
 
 class TableLayout(StrEnum):
     """
-    What a flat table holds of a molecule besides its own scalars.
+    What a flat table holds of an example besides its own scalars.
     """
 
     SCALARS = "scalars-only"
     """
-    The molecule's own scalars and nothing of its parts.
+    The example's own scalars and nothing of its parts.
     """
 
     PROPOSITIONAL = "propositional"
@@ -62,7 +60,7 @@ class TableLayout(StrEnum):
     UNROLLED = "unrolled"
     """
     The scalars, the counts, and every part's attributes under the part's position,
-    padded where a molecule has fewer parts than the widest one.
+    padded where an example has fewer parts than the widest one.
     """
 
     @property
@@ -80,80 +78,15 @@ class TableLayout(StrEnum):
         return self is TableLayout.UNROLLED
 
 
-class MoleculeView(StrEnum):
-    """
-    How much of a molecule a likelihood is taken over.
-    """
-
-    SCALARS = "scalars"
-    """
-    The molecule's own scalars.
-    """
-
-    SCALARS_AND_COUNTS = "scalars and counts"
-    """
-    The scalars and the aggregation counts over the parts.
-    """
-
-    WHOLE_MOLECULE = "whole molecule"
-    """
-    The scalars, the counts, and every atom and bond.
-    """
-
-
-class AbsentPart(StrEnum):
-    """
-    The symbol an unrolled column holds where a molecule has no part at that position.
-    """
-
-    ABSENT = "absent"
-
-
-@dataclass(frozen=True)
-class PartPadding:
-    """
-    What an unrolled column holds at a position the molecule has no part for, per kind
-    of attribute.
-    """
-
-    symbol: AbsentPart = AbsentPart.ABSENT
-    """
-    For an enum attribute: a symbol of its own next to the enum's members.
-    """
-
-    integer: int = 0
-    """
-    For an integer attribute: a value no real part shows (every atom has at least one
-    bond and an atom-type code of at least one).
-    """
-
-    real: float = 10.0
-    """
-    For a continuous attribute: a value outside every real one (partial charges lie
-    within one unit of zero).
-    """
-
-    def value_for(self, attribute_type: Type) -> Any:
-        """
-        :param attribute_type: The attribute's type.
-        :return: The padding value of that kind.
-        """
-        if issubclass(attribute_type, enum.Enum):
-            return self.symbol
-        if issubclass(attribute_type, float):
-            return self.real
-        return self.integer
-
-
 @dataclass(frozen=True)
 class PartAttribute:
     """
-    One attribute of one of a molecule's exchangeable parts, as a query names it.
+    One attribute of one of an example's exchangeable parts, as a query names it.
     """
 
     part_field: str
     """
-    The exchangeable-part field of the molecule, ``atoms`` or ``bonds``.
+    The exchangeable-part field of the example, ``objects`` or ``viewpoints``.
     """
 
     index: int
@@ -168,37 +101,37 @@ class PartAttribute:
 
 
 @dataclass(frozen=True)
-class MoleculeSchema:
+class Schema:
     """
-    The attributes of a molecule as EQL names them: the molecule's own scalars, its
-    aggregation counts, and each atom's or bond's attributes under the part's index.
+    The attributes of an example as EQL names them: the example's own scalars, its
+    aggregation counts, and each part's attributes under the part's index.
+    """
+
+    domain: RelationalDomain
+    """
+    The example and its parts.
     """
 
     @property
     def part_fields(self) -> Tuple[str, ...]:
         """
-        The exchangeable-part fields of
-        :class:`~experiments.causal_reasoning.mutagenesis.domain.MutagenesisMolecule`,
-        which are the fields
-        :class:`~experiments.causal_reasoning.mutagenesis.domain.MutagenesisMoleculeAggregations`
-        aggregates over.
+        The exchangeable-part fields of the example.
         """
-        return tuple(MutagenesisMoleculeAggregations.aggregation_registry)
+        return self.domain.part_fields
 
     def part_class(self, part_field: str) -> Type:
         """
         :param part_field: An exchangeable-part field.
         :return: The class of that field's parts.
         """
-        [part_class] = get_args(get_type_hints(MutagenesisMolecule)[part_field])
-        return part_class
+        return self.domain.part_class(part_field)
 
     def part_attribute_types(self, part_field: str) -> Dict[str, Type]:
         """
         :param part_field: An exchangeable-part field.
         :return: The attributes of that field's parts and their types.
         """
-        return get_type_hints(self.part_class(part_field))
+        return self.domain.part_attribute_types(part_field)
 
     @property
     def aggregation_statistics(self) -> Tuple[Callable[..., Any], ...]:
@@ -210,7 +143,7 @@ class MoleculeSchema:
         return tuple(
             statistic
             for part_field in self.part_fields
-            for statistic in MutagenesisMoleculeAggregations.aggregation_registry[
+            for statistic in self.domain.aggregation_class.aggregation_registry[
                 part_field
             ]
         )
@@ -218,20 +151,18 @@ class MoleculeSchema:
     @property
     def scalar_fields(self) -> Tuple[str, ...]:
         """
-        The molecule's own scalar attributes.
+        The example's own scalar attributes.
         """
-        return tuple(
-            molecule_field.name
-            for molecule_field in fields(MutagenesisMolecule)
-            if molecule_field.name not in self.part_fields
-        )
+        return self.domain.scalar_fields
 
     def scalar_column(self, field_name: str) -> str:
         """
-        :param field_name: A molecule scalar field.
+        :param field_name: An example scalar field.
         :return: The column, and EQL variable, name of that field.
         """
-        return get_class_and_attribute_name(MutagenesisMolecule.__name__, field_name)
+        return get_class_and_attribute_name(
+            self.domain.example_class.__name__, field_name
+        )
 
     @property
     def scalar_columns(self) -> Tuple[str, ...]:
@@ -250,11 +181,11 @@ class MoleculeSchema:
     def part_attribute(self, variable_name: str) -> Optional[PartAttribute]:
         """
         :param variable_name: A variable name, as EQL names it.
-        :return: The part attribute it names, or ``None`` if it names a molecule-level
+        :return: The part attribute it names, or ``None`` if it names an example-level
             variable.
         """
         pattern = re.compile(
-            rf"^{re.escape(MutagenesisMolecule.__name__)}\."
+            rf"^{re.escape(self.domain.example_class.__name__)}\."
             rf"({'|'.join(map(re.escape, self.part_fields))})\[(\d+)\]\.(\w+)$"
         )
         match = pattern.match(variable_name)
@@ -269,7 +200,7 @@ class MoleculeSchema:
             names by its class and its call.
         """
         return get_class_and_attribute_name(
-            MutagenesisMoleculeAggregations.__name__, f"{statistic_name}()"
+            self.domain.aggregation_class.__name__, f"{statistic_name}()"
         )
 
     @property
@@ -286,51 +217,70 @@ class MoleculeSchema:
 @dataclass
 class FlatTable:
     """
-    Molecules as one row each, holding what the layout says of them.
+    Examples as one row each, holding what the layout says of them.
     """
 
-    layout: TableLayout = TableLayout.PROPOSITIONAL
-    """
-    What the rows hold besides the molecule's own scalars.
-    """
-
-    part_widths: Dict[str, int] = field(default_factory=dict)
-    """
-    Per part field, how many positions an unrolled row has; a molecule with more parts
-    than that cannot be a row, one with fewer is padded.
-    """
-
-    padding: PartPadding = PartPadding()
-    """
-    What a position without a part holds.
-    """
-
-    schema: MoleculeSchema = field(default_factory=MoleculeSchema)
+    schema: Schema
     """
     How the columns are named.
     """
 
+    layout: TableLayout = TableLayout.PROPOSITIONAL
+    """
+    What the rows hold besides the example's own scalars.
+    """
+
+    part_widths: Dict[str, int] = field(default_factory=dict)
+    """
+    Per unrolled part field, how many positions a row has; an example with more parts of
+    that kind cannot be a row, one with fewer is padded.
+
+    A part field left out is not unrolled at all, which is how a table holds an
+    example's viewpoints by position and leaves its objects to a model that treats them
+    as exchangeable.
+    """
+
+    @property
+    def padding(self) -> PartPadding:
+        """
+        What a position without a part holds.
+        """
+        return self.schema.domain.padding
+
     @classmethod
     def unrolled_for(
         cls,
-        molecules: Sequence[MutagenesisMolecule],
-        schema: MoleculeSchema = MoleculeSchema(),
+        schema: Schema,
+        examples: Sequence[Any],
+        part_fields: Optional[Sequence[str]] = None,
     ) -> FlatTable:
         """
-        :param molecules: The molecules the table has to hold.
         :param schema: How the columns are named.
+        :param examples: The examples the table has to hold.
+        :param part_fields: The part fields to unroll; every one if not given.
         :return: An unrolled table wide enough for the largest of them.
         """
         return cls(
+            schema=schema,
             layout=TableLayout.UNROLLED,
             part_widths={
-                part_field: max(
-                    len(vars(molecule)[part_field]) for molecule in molecules
-                )
-                for part_field in schema.part_fields
+                part_field: max(len(vars(example)[part_field]) for example in examples)
+                for part_field in (part_fields or schema.part_fields)
             },
-            schema=schema,
         )
+
+    @property
+    def unrolled_fields(self) -> List[str]:
+        """
+        The part fields the table holds by position, in the schema's order.
+        """
+        if not self.layout.has_parts:
+            return []
+        return [
+            part_field
+            for part_field in self.schema.part_fields
+            if part_field in self.part_widths
+        ]
 
     @property
     def part_columns(self) -> List[str]:
@@ -339,8 +289,8 @@ class FlatTable:
         """
         return [
             self.schema.part_column(PartAttribute(part_field, index, attribute))
-            for part_field in self.schema.part_fields
-            for index in range(self.part_widths.get(part_field, 0))
+            for part_field in self.unrolled_fields
+            for index in range(self.part_widths[part_field])
             for attribute in self.schema.part_attribute_types(part_field)
         ]
 
@@ -356,61 +306,59 @@ class FlatTable:
             columns += self.part_columns
         return columns
 
-    def columns_of(self, view: MoleculeView) -> Optional[List[str]]:
+    def columns_of(self, view: ExampleView) -> Optional[List[str]]:
         """
-        :param view: How much of a molecule to look at.
+        :param view: How much of an example to look at.
         :return: The columns holding that much, or ``None`` if the layout holds less.
         """
-        if view is MoleculeView.SCALARS:
+        if view is ExampleView.SCALARS:
             return list(self.schema.scalar_columns)
-        if view is MoleculeView.SCALARS_AND_COUNTS and self.layout.has_counts:
+        if view is ExampleView.SCALARS_AND_COUNTS and self.layout.has_counts:
             return list(self.schema.scalar_columns) + list(
                 self.schema.aggregation_columns
             )
-        if view is MoleculeView.WHOLE_MOLECULE and self.layout.has_parts:
+        if view is ExampleView.WHOLE and self.layout.has_parts:
             return self.columns
         return None
 
-    def fits(self, molecule: MutagenesisMolecule) -> bool:
+    def fits(self, example: Any) -> bool:
         """
-        :param molecule: A molecule.
+        :param example: An example.
         :return: Whether the table has a position for every one of its parts.
         """
-        return not self._overflowing_columns(molecule)
+        return not self._overflowing_columns(example)
 
-    def _overflowing_columns(self, molecule: MutagenesisMolecule) -> List[str]:
+    def _overflowing_columns(self, example: Any) -> List[str]:
         """
-        :param molecule: A molecule.
+        :param example: An example.
         :return: The columns its parts past the table's width would need.
         """
-        if not self.layout.has_parts:
-            return []
         return [
             self.schema.part_column(PartAttribute(part_field, index, attribute))
-            for part_field in self.schema.part_fields
+            for part_field in self.unrolled_fields
             for index in range(
-                self.part_widths[part_field], len(vars(molecule)[part_field])
+                self.part_widths[part_field], len(vars(example)[part_field])
             )
             for attribute in self.schema.part_attribute_types(part_field)
         ]
 
-    def row(self, molecule: MutagenesisMolecule) -> Dict[str, Any]:
+    def row(self, example: Any) -> Dict[str, Any]:
         """
-        :param molecule: The molecule to flatten.
-        :return: The molecule's values, keyed by column.
-        :raises FlatTableSchemaMismatchError: If the molecule has more parts than the
-            table has positions.
+        :param example: The example to flatten.
+        :return: The example's values, keyed by column.
+        :raises FlatTableSchemaMismatchError: If the example has more parts than the table
+            has positions.
         """
-        overflowing = self._overflowing_columns(molecule)
+        overflowing = self._overflowing_columns(example)
         if overflowing:
             raise FlatTableSchemaMismatchError(overflowing)
-        molecule_values = vars(molecule)
+        example_values = vars(example)
         row = {
-            self.schema.scalar_column(name): molecule_values[name]
+            self.schema.scalar_column(name): example_values[name]
             for name in self.schema.scalar_fields
         }
         if self.layout.has_counts:
-            aggregations = MutagenesisMoleculeAggregations(instance=molecule)
+            aggregations = self.schema.domain.aggregation_class(instance=example)
             row.update(
                 {
                     self.schema.aggregation_column(statistic.__name__): statistic(
@@ -419,15 +367,14 @@ class FlatTable:
                     for statistic in self.schema.aggregation_statistics
                 }
             )
-        if self.layout.has_parts:
-            for part_field in self.schema.part_fields:
-                row.update(self._part_values(part_field, molecule_values[part_field]))
+        for part_field in self.unrolled_fields:
+            row.update(self._part_values(part_field, example_values[part_field]))
         return row
 
     def _part_values(self, part_field: str, parts: Sequence[Any]) -> Dict[str, Any]:
         """
         :param part_field: The exchangeable-part field the parts belong to.
-        :param parts: The molecule's parts of that kind, in the molecule's order.
+        :param parts: The example's parts of that kind, in the example's order.
         :return: Every position's attribute values, padded past the last part.
         """
         attribute_types = self.schema.part_attribute_types(part_field)
@@ -445,11 +392,11 @@ class FlatTable:
                 )
         return values
 
-    def dataframe(self, molecules: Iterable[MutagenesisMolecule]) -> pd.DataFrame:
+    def dataframe(self, examples: Iterable[Any]) -> pd.DataFrame:
         """
-        :param molecules: The molecules to flatten.
-        :return: One row per molecule, columns in :attr:`columns` order.
+        :param examples: The examples to flatten.
+        :return: One row per example, columns in :attr:`columns` order.
         """
         return pd.DataFrame(
-            [self.row(molecule) for molecule in molecules], columns=self.columns
+            [self.row(example) for example in examples], columns=self.columns
         )

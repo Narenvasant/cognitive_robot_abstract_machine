@@ -18,6 +18,8 @@ from krrood.parametrization.feature_extraction.aggregations import (
 )
 from typing_extensions import List, Tuple
 
+from experiments.causal_reasoning.comparison.domain import RelationalDomain
+
 # %% vocabulary
 
 
@@ -302,6 +304,33 @@ class ClutterPickSceneAggregations(AggregationStatistic[ClutterPickScene]):
             entity(count_range(band)).where(band == DistanceBand.ADJACENT).tolist()
         )
         return result
+
+
+# %% the attempt as a relational example
+
+
+class PartField(StrEnum):
+    """
+    The attempt's exchangeable-part fields.
+    """
+
+    NEIGHBOURS = "neighbours"
+
+
+def attempt_domain() -> RelationalDomain:
+    """
+    :return: The attempt as the comparison sees it: its neighbours as exchangeable
+        parts, whether the target was lifted as the effect.
+    """
+    return RelationalDomain(
+        example_class=ClutterPickScene,
+        aggregation_class=ClutterPickSceneAggregations,
+        effect_field="lifted",
+        noun="attempt",
+        plural="attempts",
+        effect_phrase="the target is lifted",
+        part_nouns={PartField.NEIGHBOURS: "neighbour"},
+    )
 
 
 # %% layouts: the input side of an attempt

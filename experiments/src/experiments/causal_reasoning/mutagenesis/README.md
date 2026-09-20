@@ -17,7 +17,7 @@ that where the pipelines agree, disagree and refuse is itself the result.
   circuit over the queried molecule, atoms and bonds and registers that circuit as a
   `CausalCircuit`.
 - The **propositional tree** is a joint probability tree (JPT) on the molecule's own
-  attributes and the same four counts, the classic propositional summary of a
+  attributes and the same five counts, the classic propositional summary of a
   relational example.
 - The **unrolled tree** is a JPT on a table that also carries every atom's and bond's
   attributes under the part's position, padded with an absent marker past a molecule's
@@ -26,8 +26,11 @@ that where the pipelines agree, disagree and refuse is itself the result.
   learner sees without the relational feature extraction.
 
 All three trees are registered as a `CausalCircuit` the same way the relational circuit
-is. `results.md` holds the comparison; `causal_query_results.md` is the earlier,
-single-model run of the branching-atom question on the relational circuit alone.
+is, and a **regression adjustment** on the propositional table, the textbook backdoor
+estimator with a logistic regression in place of a circuit, stands beside them as a
+reference that is not a circuit at all. `results.md` holds the comparison;
+`causal_query_results.md` is the earlier, single-model run of the branching-atom
+question on the relational circuit alone.
 
 ## The domain
 
@@ -38,12 +41,15 @@ single-model run of the branching-atom question on the relational circuit alone.
 | `MutagenesisMolecule` | one molecule: the `ind1` structural indicator, `logp`, `lumo`, whether it is `mutagenic`, and its `atoms` and `bonds` |
 | `MutagenesisAtom` | one atom as an exchangeable part: its element, atom-type code, partial charge and how many bonds it takes part in |
 | `MutagenesisBond` | one bond as an exchangeable part: its type |
-| `MutagenesisMoleculeAggregations` | the counts the relational model derives over the parts: chlorine atoms and branching atoms over the atoms, double bonds and aromatic bonds over the bonds |
+| `MutagenesisMoleculeAggregations` | the counts the relational model derives over the parts: all atoms, chlorine atoms and branching atoms over the atoms, double bonds and aromatic bonds over the bonds |
 
-`dataset.py` fetches the molecules from the CTU database, holds them as a
-`MutagenesisDataset` with a train/test split and mutagenic rates grouped by any key,
-and generates synthetic molecules of the same shape for tests that must run without
-network access.
+`dataset.py` fetches the molecules from the CTU database, hands them to the shared
+comparison as an `ExampleDataset`, summarises how often they are mutagenic by the
+indicator, the branching-atom count, the aromatic-bond count and the atom count, and
+generates synthetic molecules of the same shape for tests that must run without
+network access. `domain.py` also describes the molecule to the shared comparison as a
+`RelationalDomain`: which class is the example, which fields are its exchangeable
+parts, and which attribute is the effect.
 
 ## Why three flat tables
 
@@ -68,15 +74,33 @@ confounder or effect.
 
 ## The pipelines
 
+The pipelines, the studies and the report are not this experiment's own: they live in
+the shared `experiments.causal_reasoning.comparison` package and work on any relational
+example a `RelationalDomain` describes, so that every dataset compared this way is
+compared the same way. This package supplies the domain, the data, the questions and
+the words.
+
 | file | what it holds |
 |---|---|
-| `flat_table.py` | `MoleculeSchema`, how EQL names every attribute; `FlatTable`, the molecules as one row each in one of the three `TableLayout`s; `MoleculeView`, how much of a molecule a likelihood is taken over |
-| `pipelines.py` | `CausalQueryPipeline` and its two implementations, `RelationalPipeline` and `FlatTablePipeline`, the latter once per layout |
+| `domain.py` | the molecule, its parts and their aggregation counts, and `molecule_domain()`, the molecule as the shared comparison sees it |
+| `dataset.py` | fetching the molecules, the synthetic generator, and the mutagenicity summaries the report opens with |
 | `queries.py` | the question catalogue, each question one EQL query that reads the same for every pipeline |
-| `evaluation.py` | asking every question to every pipeline and recording what came of it (`evaluate`), then the three studies: `permutation_study` reorders every molecule's atoms and bonds and asks the atom questions again, `split_study` repeats the comparison over several random splits, `learning_curve` fits on growing shares of the molecules |
-| `report.py` | rendering the comparison and the studies as Markdown |
-| `run_pipeline.py` | the whole comparison end to end |
+| `run_pipeline.py` | the whole comparison end to end: the `Experiment` handed to the shared runner, and the report's prose |
 | `causal_query.py` | the earlier single-model run of the branching-atom question |
+
+And in the shared package:
+
+| file | what it holds |
+|---|---|
+| `domain.py` | `RelationalDomain`, what an example and its exchangeable parts are; `ExampleView`, how much of an example a likelihood is taken over |
+| `flat_table.py` | `Schema`, how EQL names every attribute; `FlatTable`, the examples as one row each in one of the three `TableLayout`s |
+| `pipelines.py` | `CausalQueryPipeline` and its three implementations: `RelationalPipeline`, `HybridPipeline`, and `FlatTablePipeline` once per layout |
+| `baselines.py` | regression adjustment on the propositional table |
+| `queries.py` | what every question is made of: `CausalQueryCase`, `Confounder`, and the open-part queries |
+| `dataset.py` | `ExampleDataset`: splitting, reordering the parts, and the effect's rate |
+| `evaluation.py` | asking every question to every pipeline and recording what came of it (`evaluate`), then the studies: `permutation_study` reorders every example's parts and asks the part questions again, `split_study` repeats the comparison over several random splits, `learning_curve` fits on growing shares of the examples, `ground_truth_study` scores every pipeline against a `KnownTruth`, `monte_carlo_study` follows the relational circuit's answers as grounding draws more samples, `scaling_study` measures cost against the number of parts |
+| `report.py` | rendering the comparison and the studies as Markdown, around the `ReportText` an experiment writes |
+| `run.py` | `Experiment`, `RunSettings` and `run`, the studies in order with the report written after each |
 
 **One model per cause.** Backdoor adjustment needs the circuit to be
 support-deterministic over the cause: no sum unit may mix branches that overlap on it.
@@ -89,9 +113,12 @@ the other tables have no column for it.
 
 **The questions.**
 
-1. *Branching atoms, aromatic bonds and double bonds cause mutagenicity*, each
-   adjusting for the `ind1` indicator, which marks the fused-ring molecules that are
-   both large and mostly mutagenic. The cause is a count over the exchangeable parts.
+1. *Branching atoms, aromatic bonds and double bonds cause mutagenicity*, each asked
+   three times: adjusting for the `ind1` indicator, which marks the fused-ring
+   molecules that are both large and mostly mutagenic; adjusting for the number of
+   atoms, which a larger molecule has more of along with more of every other kind of
+   atom and bond; and adjusting for both. The cause is a count over the exchangeable
+   parts, and what adjusting changes is a result in itself.
 2. *The indicator causes mutagenicity*, once adjusting for `logp`, which every
    pipeline has, and once for the branching-atom count, which the scalars-only tree
    does not. The cause is an attribute of the molecule itself.
@@ -102,19 +129,29 @@ the other tables have no column for it.
    atom.
 
 Every pipeline that has the columns answers 1 and 2 identically. The relational
-circuit and the unrolled tree answer 3, about different atoms: an exchangeable one and
-whichever the molecule lists first. Only the unrolled tree answers 4; the relational
-circuit refuses it, see below.
+circuit and the unrolled tree answer 3 and 4, about different atoms: an exchangeable
+one and whichever the molecule lists at that position.
 
-**The studies.** A single split cannot tell the pipelines apart, so three things are
-measured around it. Reordering every molecule's atoms and bonds at random and asking
-the atom questions again shows what an answer about "atom 0" is worth: nothing about
-a relational circuit can depend on the order, while an unrolled table's column holds a
-different atom of every molecule afterwards. Repeating the comparison over several
-random splits gives the spread of every number. Fitting on a growing share of the
-molecules shows how much data each pipeline needs to explain a whole molecule, atoms
-and bonds included, which only the relational circuit and the unrolled tree can score
-at all.
+Every answer is read per region of the cause with the number of training molecules
+the region holds, a Wilson interval on the adjusted probability, and two summaries
+that do not depend on an argmax over sparse regions: the *trend*, Spearman's rank
+correlation between a numeric cause and the adjusted probability over the supported
+regions, and the *contrast*, the adjusted probability at the highest supported region
+minus at the lowest, with Newcombe's interval. A region holding fewer molecules than
+the support threshold is marked and left out of every summary.
+
+**The studies.** A single split cannot tell the pipelines apart, so several things are
+measured around it. Reordering every molecule's atoms and bonds at random, twenty times
+over, and asking the atom questions again shows what an answer about "atom 0" is
+worth: nothing about a relational circuit can depend on the order, while an unrolled
+table's column holds a different atom of every molecule afterwards; the dataset's own
+order is the baseline every reordering is measured against. Following the relational
+circuit's answers as grounding draws more and more Monte-Carlo samples shows how many
+it takes for them to settle. Fitting on a growing share of the molecules shows how much
+data each pipeline needs to explain a whole molecule, atoms and bonds included, which
+only the relational circuit and the unrolled tree can score at all. Repeating the
+comparison over several random splits gives the spread of every number, and is
+optional (`--splits N`).
 
 ## What the results show
 
@@ -177,15 +214,18 @@ not.
 ## Running it
 
 ```bash
-# fit, score and question every pipeline, reorder the atoms three times, repeat over
-# five splits and measure the learning curve; needs network access to the CTU
-# database and the experiments ORM interface, and takes about half an hour
+# fit, score and question every pipeline, reorder the atoms twenty times, follow the
+# grounding samples and measure the learning curve; needs network access to the CTU
+# database and the experiments ORM interface
 python scripts/regenerate_all_orm.py
 python -m experiments.causal_reasoning.mutagenesis.run_pipeline
 
-# a quicker look: one ordering, two splits
-python -m experiments.causal_reasoning.mutagenesis.run_pipeline --orderings 1 --splits 2
+# a quicker look: three orderings; add splits with --splits N
+python -m experiments.causal_reasoning.mutagenesis.run_pipeline --orderings 3
 ```
+
+The report is written out again after every study, so a run stopped part-way leaves
+what it has finished in `results.md`.
 
 The tests under `test/experiments_test/causal_reasoning_test/test_mutagenesis` run the pipelines and the
 studies on the synthetic molecules, so they need no network access.

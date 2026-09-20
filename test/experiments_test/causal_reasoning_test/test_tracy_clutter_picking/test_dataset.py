@@ -17,7 +17,11 @@ from ....pytest_environment import runs_in_continuous_integration
 
 from experiments.causal_reasoning.tracy_clutter_picking.dataset import (
     ClutterPickDataset,
+    lift_summaries,
     HostedDataset,
+)
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
+    UnevenClutterError,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterEnvironment,
@@ -107,35 +111,49 @@ def test_dataset_round_trips_through_json(tmp_path, scenes):
 
 
 def test_dataset_split_keeps_every_scene_once(scenes):
-    dataset = ClutterPickDataset(scenes)
+    dataset = ClutterPickDataset(scenes).examples()
 
     first, second = dataset.split(0.8, np.random.default_rng(0))
 
-    assert len(first.scenes) == 24
-    assert len(second.scenes) == 6
-    assert sorted(map(id, first.scenes + second.scenes)) == sorted(map(id, scenes))
+    assert len(first.examples) == 24
+    assert len(second.examples) == 6
+    assert sorted(map(id, first.examples + second.examples)) == sorted(map(id, scenes))
 
 
-def test_success_rate_is_the_share_of_lifted_scenes(scenes):
+def test_the_recorded_neighbour_count_is_the_one_every_attempt_has(scenes):
     dataset = ClutterPickDataset(scenes)
-    assert dataset.success_rate == pytest.approx(
+    assert dataset.recorded_neighbour_count == len(scenes[0].neighbours)
+    uneven = ClutterPickDataset(
+        scenes + [replace(scenes[0], neighbours=scenes[0].neighbours[:1])]
+    )
+    with pytest.raises(UnevenClutterError):
+        uneven.recorded_neighbour_count
+
+
+def test_effect_rate_is_the_share_of_lifted_scenes(scenes):
+    dataset = ClutterPickDataset(scenes).examples()
+    assert dataset.effect_rate == pytest.approx(
         sum(scene.lifted for scene in scenes) / len(scenes)
     )
 
 
-def test_success_rate_by_environment_counts_every_scene_once(scenes):
-    dataset = ClutterPickDataset(scenes)
+def test_lift_summaries_count_every_scene_once(scenes):
+    summaries = lift_summaries(ClutterPickDataset(scenes).examples())
 
-    rates = dataset.success_rate_by(lambda scene: scene.environment)
-
-    assert sum(rate.attempt_count for rate in rates.values()) == len(scenes)
-    assert sum(rate.lifted_count for rate in rates.values()) == sum(
+    assert list(summaries) == [
+        "environment",
+        "friction coefficient",
+        "adjacent neighbours",
+    ]
+    rates = summaries["environment"]
+    assert sum(rate.example_count for rate in rates.values()) == len(scenes)
+    assert sum(rate.effect_count for rate in rates.values()) == sum(
         scene.lifted for scene in scenes
     )
     for environment, rate in rates.items():
         assert rate.rate == pytest.approx(
             sum(scene.lifted for scene in scenes if scene.environment == environment)
-            / rate.attempt_count
+            / rate.example_count
         )
 
 

@@ -8,31 +8,37 @@ import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO clas
 import numpy as np
 import pytest
 
-from experiments.causal_reasoning.mutagenesis.dataset import (
-    synthetic_mutagenesis_molecules,
-)
-from experiments.causal_reasoning.mutagenesis.domain import MutagenesisElement
-from experiments.causal_reasoning.mutagenesis.evaluation import (
-    QuestionAsker,
-    Refusal,
-)
-from experiments.causal_reasoning.mutagenesis.exceptions import (
+from krrood.entity_query_language.backends import ProbabilisticBackend
+from krrood.entity_query_language.factories import cause
+
+from experiments.causal_reasoning.comparison.domain import AbsentPart, ExampleView
+from experiments.causal_reasoning.comparison.evaluation import QuestionAsker, Refusal
+from experiments.causal_reasoning.comparison.exceptions import (
     FlatTableSchemaMismatchError,
     OneCausePerQueryError,
     PipelineNotFittedError,
 )
-from experiments.causal_reasoning.mutagenesis.flat_table import (
-    AbsentPart,
+from experiments.causal_reasoning.comparison.flat_table import (
     FlatTable,
-    MoleculeSchema,
-    MoleculeView,
     PartAttribute,
+    Schema,
     TableLayout,
 )
-from experiments.causal_reasoning.mutagenesis.pipelines import (
+from experiments.causal_reasoning.comparison.pipelines import (
     CauseStratification,
     FlatTablePipeline,
     RelationalPipeline,
+)
+from experiments.causal_reasoning.comparison.queries import example_query, part_query
+from experiments.causal_reasoning.mutagenesis.dataset import (
+    synthetic_mutagenesis_molecules,
+)
+from experiments.causal_reasoning.mutagenesis.domain import (
+    MutagenesisAtom,
+    MutagenesisBond,
+    MutagenesisElement,
+    PartField,
+    molecule_domain,
 )
 from experiments.causal_reasoning.mutagenesis.queries import (
     BranchingAtomsCauseTerminalAtom,
@@ -40,12 +46,13 @@ from experiments.causal_reasoning.mutagenesis.queries import (
     ElementCausesTerminalAtom,
     IndicatorCausesElement,
     IndicatorCausesMutagenicity,
-    atom_query,
-    bond_query,
-    molecule_query,
 )
-from krrood.entity_query_language.backends import ProbabilisticBackend
-from krrood.entity_query_language.factories import cause
+
+LEAF_SHARE = 0.125
+"""
+The share of its training rows a leaf may hold in these tests: fifteen of the hundred
+and twenty molecules fitted on.
+"""
 
 
 @pytest.fixture(scope="module")
@@ -67,23 +74,35 @@ def molecules(atom_count):
 
 
 @pytest.fixture(scope="module")
+def schema():
+    return Schema(molecule_domain())
+
+
+@pytest.fixture(scope="module")
 def relational_pipeline(molecules):
-    pipeline = RelationalPipeline(min_samples_per_leaf=15)
+    pipeline = RelationalPipeline(
+        domain=molecule_domain(), min_samples_per_leaf=LEAF_SHARE
+    )
     pipeline.fit(molecules[:120])
     return pipeline
 
 
 @pytest.fixture(scope="module")
 def flat_table_pipeline(molecules):
-    pipeline = FlatTablePipeline(min_samples_per_leaf=15)
+    pipeline = FlatTablePipeline(
+        domain=molecule_domain(), min_samples_per_leaf=LEAF_SHARE
+    )
     pipeline.fit(molecules[:120])
     return pipeline
 
 
 @pytest.fixture(scope="module")
-def unrolled_pipeline(molecules):
+def unrolled_pipeline(molecules, schema):
     pipeline = FlatTablePipeline(
-        flat_table=FlatTable.unrolled_for(molecules[:120]), min_samples_per_leaf=15
+        domain=molecule_domain(),
+        layout=TableLayout.UNROLLED,
+        part_widths=FlatTable.unrolled_for(schema, molecules[:120]).part_widths,
+        min_samples_per_leaf=LEAF_SHARE,
     )
     pipeline.fit(molecules[:120])
     return pipeline
@@ -92,18 +111,15 @@ def unrolled_pipeline(molecules):
 @pytest.fixture(scope="module")
 def scalars_only_pipeline(molecules):
     pipeline = FlatTablePipeline(
-        flat_table=FlatTable(TableLayout.SCALARS), min_samples_per_leaf=15
+        domain=molecule_domain(),
+        layout=TableLayout.SCALARS,
+        min_samples_per_leaf=LEAF_SHARE,
     )
     pipeline.fit(molecules[:120])
     return pipeline
 
 
 # %% flat table
-
-
-@pytest.fixture(scope="module")
-def schema():
-    return MoleculeSchema()
 
 
 def test_flat_table_columns_are_named_like_eql_variables(schema):
@@ -113,6 +129,7 @@ def test_flat_table_columns_are_named_like_eql_variables(schema):
         == "MutagenesisMolecule.atoms[2].element"
     )
     assert schema.aggregation_columns == (
+        "MutagenesisMoleculeAggregations.atom_count()",
         "MutagenesisMoleculeAggregations.chlorine_count()",
         "MutagenesisMoleculeAggregations.branching_atom_count()",
         "MutagenesisMoleculeAggregations.double_bond_count()",
@@ -122,20 +139,20 @@ def test_flat_table_columns_are_named_like_eql_variables(schema):
 
 def test_propositional_row_holds_scalars_and_counts_only(molecules, schema, atom_count):
     molecule = molecules[0]
-    row = FlatTable().row(molecule)
+    row = FlatTable(schema).row(molecule)
     assert row[schema.scalar_column("logp")] == molecule.logp
     assert row[schema.aggregation_column("chlorine_count")] == atom_count
-    assert set(row) == set(FlatTable().columns)
+    assert set(row) == set(FlatTable(schema).columns)
     assert not any(schema.part_attribute(column) for column in row)
 
 
 def test_scalars_only_row_holds_no_counts(molecules, schema):
-    row = FlatTable(TableLayout.SCALARS).row(molecules[0])
+    row = FlatTable(schema, TableLayout.SCALARS).row(molecules[0])
     assert set(row) == set(schema.scalar_columns)
 
 
 def test_unrolled_row_lists_every_part_by_position(molecules, schema, atom_count):
-    table = FlatTable.unrolled_for(molecules)
+    table = FlatTable.unrolled_for(schema, molecules)
     molecule = molecules[0]
     row = table.row(molecule)
     assert table.part_widths == {"atoms": atom_count, "bonds": 4}
@@ -155,7 +172,7 @@ def test_unrolled_row_pads_the_positions_a_molecule_does_not_fill(schema):
         np.random.default_rng(3), molecule_count=2, atom_count=2, bond_count=2
     )
     large.atoms.append(large.atoms[0])
-    table = FlatTable.unrolled_for([small, large])
+    table = FlatTable.unrolled_for(schema, [small, large])
     row = table.row(small)
     assert table.fits(small) and table.fits(large)
     assert row[schema.part_column(PartAttribute("atoms", 2, "element"))] == (
@@ -169,8 +186,8 @@ def test_unrolled_row_pads_the_positions_a_molecule_does_not_fill(schema):
     )
 
 
-def test_unrolled_table_rejects_a_molecule_wider_than_itself(molecules):
-    table = FlatTable.unrolled_for(molecules)
+def test_unrolled_table_rejects_a_molecule_wider_than_itself(molecules, schema):
+    table = FlatTable.unrolled_for(schema, molecules)
     wider = synthetic_mutagenesis_molecules(
         np.random.default_rng(4), molecule_count=1, atom_count=5, bond_count=4
     )[0]
@@ -179,14 +196,16 @@ def test_unrolled_table_rejects_a_molecule_wider_than_itself(molecules):
         table.row(wider)
 
 
-def test_each_layout_offers_the_views_it_holds(molecules):
+def test_each_layout_offers_the_views_it_holds(molecules, schema):
     assert (
-        FlatTable(TableLayout.SCALARS).columns_of(MoleculeView.SCALARS_AND_COUNTS)
+        FlatTable(schema, TableLayout.SCALARS).columns_of(
+            ExampleView.SCALARS_AND_COUNTS
+        )
         is None
     )
-    assert FlatTable().columns_of(MoleculeView.WHOLE_MOLECULE) is None
-    unrolled = FlatTable.unrolled_for(molecules)
-    assert unrolled.columns_of(MoleculeView.WHOLE_MOLECULE) == unrolled.columns
+    assert FlatTable(schema).columns_of(ExampleView.WHOLE) is None
+    unrolled = FlatTable.unrolled_for(schema, molecules)
+    assert unrolled.columns_of(ExampleView.WHOLE) == unrolled.columns
 
 
 def test_schema_tells_a_part_attribute_from_a_molecule_variable(schema):
@@ -202,7 +221,7 @@ def test_schema_tells_a_part_attribute_from_a_molecule_variable(schema):
 
 def test_a_molecule_level_cause_stratifies_the_class_circuit(schema):
     stratification = CauseStratification.for_variable(
-        schema.aggregation_column("branching_atom_count")
+        schema.aggregation_column("branching_atom_count"), schema
     )
     assert stratification.class_columns == [
         schema.aggregation_column("branching_atom_count")
@@ -212,7 +231,7 @@ def test_a_molecule_level_cause_stratifies_the_class_circuit(schema):
 
 def test_an_atom_cause_stratifies_the_atom_template(schema):
     stratification = CauseStratification.for_variable(
-        schema.part_column(PartAttribute("atoms", 1, "element"))
+        schema.part_column(PartAttribute("atoms", 1, "element")), schema
     )
     assert stratification.class_columns is None
     assert stratification.part_attributes == {"atoms": ["element"]}
@@ -220,12 +239,18 @@ def test_an_atom_cause_stratifies_the_atom_template(schema):
 
 def test_unfitted_pipeline_refuses_to_serve_a_model():
     with pytest.raises(PipelineNotFittedError):
-        RelationalPipeline().registry_for(None)
+        RelationalPipeline(domain=molecule_domain()).registry_for(None)
 
 
 def test_two_causes_in_one_query_are_rejected(relational_pipeline):
-    query = molecule_query(
-        [atom_query()], [bond_query()], indicator_1=cause, chlorine_count=cause
+    query = example_query(
+        molecule_domain(),
+        {
+            PartField.ATOMS: [part_query(MutagenesisAtom)],
+            PartField.BONDS: [part_query(MutagenesisBond)],
+        },
+        indicator_1=cause,
+        chlorine_count=cause,
     )
     query.causes_effect(query.variable.mutagenic == True)
     with pytest.raises(OneCausePerQueryError):
@@ -248,7 +273,7 @@ def test_flat_table_pipeline_cannot_fit_a_model_for_an_atom_cause(
 
 @pytest.fixture(scope="module")
 def asker():
-    return QuestionAsker(random_seed=0)
+    return QuestionAsker(random_seed=0, min_region_support=1)
 
 
 @pytest.fixture(scope="module")
@@ -412,9 +437,9 @@ def test_each_cause_gets_its_own_model(
 )
 def test_every_pipeline_scores_the_scalars(request, molecules, pipeline_name):
     pipeline = request.getfixturevalue(pipeline_name)
-    report = pipeline.log_likelihood(molecules[120:], MoleculeView.SCALARS)
-    assert report.molecule_count == 30
-    assert 0 < report.covered_molecule_count <= report.molecule_count
+    report = pipeline.log_likelihood(molecules[120:], ExampleView.SCALARS)
+    assert report.example_count == 30
+    assert 0 < report.covered_example_count <= report.example_count
     assert np.isfinite(report.mean_log_likelihood)
 
 
@@ -427,10 +452,10 @@ def test_plain_models_on_the_same_columns_are_the_same_tree(
     the scalars and counts.
     """
     relational = relational_pipeline.log_likelihood(
-        molecules[120:], MoleculeView.SCALARS_AND_COUNTS
+        molecules[120:], ExampleView.SCALARS_AND_COUNTS
     )
     flat = flat_table_pipeline.log_likelihood(
-        molecules[120:], MoleculeView.SCALARS_AND_COUNTS
+        molecules[120:], ExampleView.SCALARS_AND_COUNTS
     )
     assert np.allclose(relational.log_likelihoods, flat.log_likelihoods)
 
@@ -443,19 +468,16 @@ def test_only_the_pipelines_modelling_parts_score_whole_molecules(
     molecules,
 ):
     held_out = molecules[120:]
+    assert flat_table_pipeline.log_likelihood(held_out, ExampleView.WHOLE) is None
     assert (
-        flat_table_pipeline.log_likelihood(held_out, MoleculeView.WHOLE_MOLECULE)
-        is None
-    )
-    assert (
-        scalars_only_pipeline.log_likelihood(held_out, MoleculeView.SCALARS_AND_COUNTS)
+        scalars_only_pipeline.log_likelihood(held_out, ExampleView.SCALARS_AND_COUNTS)
         is None
     )
     for pipeline in (relational_pipeline, unrolled_pipeline):
         assert pipeline.models_parts
-        whole = pipeline.log_likelihood(held_out, MoleculeView.WHOLE_MOLECULE)
-        assert whole.molecule_count == 30
-        assert 0 < whole.covered_molecule_count
+        whole = pipeline.log_likelihood(held_out, ExampleView.WHOLE)
+        assert whole.example_count == 30
+        assert 0 < whole.covered_example_count
         assert np.isfinite(whole.mean_log_likelihood)
 
 
@@ -465,5 +487,5 @@ def test_unrolled_pipeline_cannot_score_a_molecule_wider_than_its_table(
     wider = synthetic_mutagenesis_molecules(
         np.random.default_rng(4), molecule_count=3, atom_count=5, bond_count=4
     )
-    report = unrolled_pipeline.log_likelihood(wider, MoleculeView.WHOLE_MOLECULE)
-    assert report.covered_molecule_count == 0
+    report = unrolled_pipeline.log_likelihood(wider, ExampleView.WHOLE)
+    assert report.covered_example_count == 0

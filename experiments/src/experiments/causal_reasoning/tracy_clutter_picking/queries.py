@@ -5,111 +5,72 @@ EQL query that reads the same for either pipeline.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 
-from krrood.entity_query_language.factories import a, cause, confounder
+from krrood.entity_query_language.factories import cause, confounder
 from krrood.entity_query_language.query.match import Match
-from typing_extensions import Any, List
+from typing_extensions import Any, List, Tuple
 
+from experiments.causal_reasoning.comparison.domain import RelationalDomain
+from experiments.causal_reasoning.comparison.queries import (
+    AdjustedCountCase,
+    CausalQueryCase,
+    Confounder,
+    part_query,
+)
 from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutteredObject,
-    ClutterPickScene,
+    PartField,
+    attempt_domain,
 )
-from experiments.causal_reasoning.tracy_clutter_picking.flat_table import SceneSchema
 
 # %% building blocks
 
 
-def neighbour_query(schema: SceneSchema = SceneSchema(), **specified: Any) -> Match:
+@dataclass(frozen=True, kw_only=True)
+class AttemptQueryCase(CausalQueryCase, ABC):
     """
-    A query for one neighbour with every attribute left open but the given ones.
-
-    :param schema: How the attempt's attributes are named.
-    :param specified: Attribute markers or values to set instead of leaving open.
-    :return: The query.
-    """
-    return a(ClutteredObject)(
-        **{name: specified.get(name, ...) for name in schema.neighbour_fields}
-    )
-
-
-def scene_query(
-    neighbours: List[Match], schema: SceneSchema = SceneSchema(), **specified: Any
-) -> Match:
-    """
-    A query for an attempt with the given neighbours and every scalar attribute left
-    open but the given ones.
-
-    :param neighbours: One query per neighbour.
-    :param schema: How the attempt's attributes are named.
-    :param specified: Scalar attribute markers or values to set instead of leaving open;
-        an aggregation statistic's name is accepted too.
-    :return: The query.
-    """
-    scalar_fields = schema.scene_scalar_fields
-    return a(ClutterPickScene)(
-        **{name: specified.get(name, ...) for name in scalar_fields},
-        **{
-            name: value
-            for name, value in specified.items()
-            if name not in scalar_fields
-        },
-        neighbours=neighbours,
-    )
-
-
-# %% the questions
-
-
-@dataclass(frozen=True)
-class CausalQueryCase(ABC):
-    """
-    One causal question, with the query that asks it.
-    """
-
-    neighbour_count: int
-    """
-    How many neighbours the queried attempt has.
+    One question about an attempt, asked of a clutter with a chosen number of
+    neighbours.
     """
 
     @property
-    @abstractmethod
-    def name(self) -> str:
-        """
-        A short identifier of the question.
-        """
+    def domain(self) -> RelationalDomain:
+        return attempt_domain()
 
     @property
-    @abstractmethod
-    def question(self) -> str:
+    def neighbour_count(self) -> int:
         """
-        The question in plain words.
+        How many neighbours the queried attempt has.
         """
+        return self.open_part_count
 
-    @abstractmethod
-    def build(self) -> Match:
+    def _open_neighbours(self) -> List[Match]:
         """
-        :return: The query asking the question, freshly built.
+        :return: One fully open query per neighbour.
         """
+        return self.open_parts()[PartField.NEIGHBOURS]
 
-    @abstractmethod
-    def describe_cause(self, region: str) -> str:
+    def _attempt_query(self, neighbours: List[Match], **specified: Any) -> Match:
         """
-        :param region: A region of the cause, written out.
-        :return: The intervention setting the cause to that region, in plain words.
+        :param neighbours: One query per neighbour.
+        :param specified: Attempt attribute markers or values to set instead of
+            leaving open.
+        :return: The query for the attempt.
         """
-
-    @property
-    @abstractmethod
-    def effect(self) -> str:
-        """
-        The effect the question asks about, in plain words.
-        """
+        return self.example_query({PartField.NEIGHBOURS: neighbours}, **specified)
 
 
-@dataclass(frozen=True)
-class FrictionCausesLift(CausalQueryCase):
+ENVIRONMENT = Confounder(name="environment", noun="the environment")
+"""
+Adjusting for the environment, which decides both how slippery and how crowded an
+attempt is.
+"""
+
+
+@dataclass(frozen=True, kw_only=True)
+class FrictionCausesLift(AttemptQueryCase):
     """
     Which grasp friction makes the target come up, once the environment -- which decides
     both how slippery and how crowded an attempt is -- is adjusted for?
@@ -127,10 +88,8 @@ class FrictionCausesLift(CausalQueryCase):
         )
 
     def build(self) -> Match:
-        query = scene_query(
-            [neighbour_query() for _ in range(self.neighbour_count)],
-            friction_coefficient=cause,
-            environment=confounder,
+        query = self._attempt_query(
+            self._open_neighbours(), friction_coefficient=cause, environment=confounder
         )
         query.causes_effect(query.variable.lifted == True)
         return query
@@ -143,32 +102,47 @@ class FrictionCausesLift(CausalQueryCase):
         return "the target is lifted"
 
 
-@dataclass(frozen=True)
-class CrowdingCausesLift(CausalQueryCase):
+@dataclass(frozen=True, kw_only=True)
+class CrowdingCausesLift(AttemptQueryCase, AdjustedCountCase):
     """
-    How many adjacent neighbours can the target have and still come up, once the
-    environment is adjusted for?
+    How many adjacent neighbours can the target have and still come up, once the given
+    confounders are adjusted for?
 
     The cause is a count over the exchangeable parts.
     """
 
+    statistic_name: str = "crowding_count"
+    """
+    The count of neighbours standing adjacent to the target.
+    """
+
+    confounders: Tuple[Confounder, ...] = (ENVIRONMENT,)
+    """
+    What to adjust for: the environment unless asked otherwise.
+    """
+
     @property
     def name(self) -> str:
-        return f"crowding_causes_lift_{self.neighbour_count}_neighbours"
+        adjusting = "_and_".join(confounder.name for confounder in self.confounders)
+        return (
+            f"crowding_causes_lift_{self.neighbour_count}_neighbours"
+            f"_adjusting_{adjusting}"
+        )
 
     @property
     def question(self) -> str:
+        adjusting = " and ".join(confounder.noun for confounder in self.confounders)
         return (
             f"In a clutter of {self.neighbour_count} neighbours, how many of them "
-            "standing adjacent to the target causes it to be lifted, adjusting for the "
-            "environment?"
+            "standing adjacent to the target causes it to be lifted, adjusting for "
+            f"{adjusting}?"
         )
 
     def build(self) -> Match:
-        query = scene_query(
-            [neighbour_query() for _ in range(self.neighbour_count)],
-            crowding_count=cause,
-            environment=confounder,
+        query = self._attempt_query(
+            self._open_neighbours(),
+            **{self.statistic_name: cause},
+            **{adjusted.name: confounder for adjusted in self.confounders},
         )
         query.causes_effect(query.variable.lifted == True)
         return query
@@ -181,8 +155,8 @@ class CrowdingCausesLift(CausalQueryCase):
         return "the target is lifted"
 
 
-@dataclass(frozen=True)
-class ClosingAxisSideCausesDisturbance(CausalQueryCase):
+@dataclass(frozen=True, kw_only=True)
+class ClosingAxisSideCausesDisturbance(AttemptQueryCase):
     """
     Does one neighbour standing where the fingers close cause that neighbour to be
     shoved aside?
@@ -211,9 +185,11 @@ class ClosingAxisSideCausesDisturbance(CausalQueryCase):
         )
 
     def build(self) -> Match:
-        neighbours = [neighbour_query() for _ in range(self.neighbour_count)]
-        neighbours[self.neighbour_index] = neighbour_query(closing_axis_side=cause)
-        query = scene_query(neighbours)
+        neighbours = self._open_neighbours()
+        neighbours[self.neighbour_index] = part_query(
+            ClutteredObject, closing_axis_side=cause
+        )
+        query = self._attempt_query(neighbours)
         query.causes_effect(
             query.variable.neighbours[self.neighbour_index].disturbed == True
         )
@@ -225,6 +201,32 @@ class ClosingAxisSideCausesDisturbance(CausalQueryCase):
     @property
     def effect(self) -> str:
         return f"neighbour {self.neighbour_index} is disturbed"
+
+
+def attempt_level_cases(neighbour_count: int) -> List[CausalQueryCase]:
+    """
+    :param neighbour_count: How many neighbours the queried attempt has.
+    :return: The questions whose cause and effect are both attempt attributes or
+        counts, about a clutter of that size.
+    """
+    return [
+        FrictionCausesLift(open_part_count=neighbour_count),
+        CrowdingCausesLift(open_part_count=neighbour_count),
+        CrowdingCausesLift(open_part_count=neighbour_count, confounders=()),
+    ]
+
+
+def neighbour_level_cases(neighbour_count: int) -> List[CausalQueryCase]:
+    """
+    :param neighbour_count: How many neighbours the queried attempt has.
+    :return: The questions whose cause or effect lives on one neighbour, about a
+        clutter of that size.
+    """
+    return [
+        ClosingAxisSideCausesDisturbance(
+            open_part_count=neighbour_count, neighbour_index=0
+        )
+    ]
 
 
 def query_catalogue(
@@ -243,13 +245,32 @@ def query_catalogue(
         clutter than recorded.
     :return: The questions, in the order they are asked.
     """
+    return (
+        attempt_level_cases(recorded_neighbour_count)
+        + neighbour_level_cases(recorded_neighbour_count)
+        + [
+            FrictionCausesLift(open_part_count=smaller_neighbour_count),
+            CrowdingCausesLift(open_part_count=larger_neighbour_count),
+            ClosingAxisSideCausesDisturbance(
+                open_part_count=larger_neighbour_count,
+                neighbour_index=larger_neighbour_count - 1,
+            ),
+        ]
+    )
+
+
+def monte_carlo_cases(recorded_neighbour_count: int) -> List[CausalQueryCase]:
+    """
+    The questions whose answers are followed as grounding draws more samples: the
+    crowding question and the one whose cause and effect live on a neighbour, both of
+    which leave the crowding count open.
+
+    :param recorded_neighbour_count: How many neighbours the recorded attempts have.
+    :return: The two questions.
+    """
     return [
-        FrictionCausesLift(recorded_neighbour_count),
-        CrowdingCausesLift(recorded_neighbour_count),
-        ClosingAxisSideCausesDisturbance(recorded_neighbour_count, neighbour_index=0),
-        FrictionCausesLift(smaller_neighbour_count),
-        CrowdingCausesLift(larger_neighbour_count),
+        CrowdingCausesLift(open_part_count=recorded_neighbour_count),
         ClosingAxisSideCausesDisturbance(
-            larger_neighbour_count, neighbour_index=larger_neighbour_count - 1
+            open_part_count=recorded_neighbour_count, neighbour_index=0
         ),
     ]

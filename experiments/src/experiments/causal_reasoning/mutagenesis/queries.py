@@ -10,164 +10,86 @@ nothing about.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, fields
+from abc import ABC
+from dataclasses import dataclass
 
-from krrood.entity_query_language.factories import a, cause, confounder
+from krrood.entity_query_language.factories import cause, confounder
 from krrood.entity_query_language.query.match import Match
-from typing_extensions import Any, List
+from typing_extensions import Any, List, Tuple
 
+from experiments.causal_reasoning.comparison.domain import RelationalDomain
+from experiments.causal_reasoning.comparison.queries import (
+    AdjustedCountCase,
+    CausalQueryCase,
+    Confounder,
+    part_query,
+)
 from experiments.causal_reasoning.mutagenesis.domain import (
     MutagenesisAtom,
-    MutagenesisBond,
     MutagenesisElement,
-    MutagenesisMolecule,
+    PartField,
+    molecule_domain,
 )
-from experiments.causal_reasoning.mutagenesis.flat_table import MoleculeSchema
 
 # %% building blocks
 
 
-def atom_query(**specified: Any) -> Match:
-    """
-    A query for one atom with every attribute left open but the given ones.
-
-    :param specified: Attribute markers or values to set instead of leaving open.
-    :return: The query.
-    """
-    return a(MutagenesisAtom)(
-        **{
-            atom_field.name: specified.get(atom_field.name, ...)
-            for atom_field in fields(MutagenesisAtom)
-        }
-    )
-
-
-def bond_query(**specified: Any) -> Match:
-    """
-    A query for one bond with every attribute left open but the given ones.
-
-    :param specified: Attribute markers or values to set instead of leaving open.
-    :return: The query.
-    """
-    return a(MutagenesisBond)(
-        **{
-            bond_field.name: specified.get(bond_field.name, ...)
-            for bond_field in fields(MutagenesisBond)
-        }
-    )
-
-
-def molecule_query(
-    atoms: List[Match],
-    bonds: List[Match],
-    schema: MoleculeSchema = MoleculeSchema(),
-    **specified: Any,
-) -> Match:
-    """
-    A query for a molecule with the given atoms and bonds and every scalar attribute
-    left open but the given ones.
-
-    :param atoms: One query per atom.
-    :param bonds: One query per bond.
-    :param schema: How the molecule's attributes are named.
-    :param specified: Scalar attribute markers or values to set instead of leaving open;
-        an aggregation count's name is accepted too.
-    :return: The query.
-    """
-    scalar_fields = schema.scalar_fields
-    return a(MutagenesisMolecule)(
-        **{name: specified.get(name, ...) for name in scalar_fields},
-        **{
-            name: value
-            for name, value in specified.items()
-            if name not in scalar_fields
-        },
-        atoms=atoms,
-        bonds=bonds,
-    )
-
-
-# %% the questions
-
-
 @dataclass(frozen=True, kw_only=True)
-class CausalQueryCase(ABC):
+class MoleculeQueryCase(CausalQueryCase, ABC):
     """
-    One question, as a query and as words.
-    """
-
-    atom_count: int = 1
-    """
-    How many atoms the query lists with every attribute open.
-    """
-
-    bond_count: int = 1
-    """
-    How many bonds the query lists with every attribute open.
+    One question about a molecule.
     """
 
     @property
-    @abstractmethod
-    def name(self) -> str:
-        """
-        A short identifier for tables.
-        """
-
-    @property
-    @abstractmethod
-    def question(self) -> str:
-        """
-        The question in words.
-        """
-
-    @abstractmethod
-    def build(self) -> Match:
-        """
-        :return: The query, freshly built, with its cause, confounders and effect
-            marked.
-        """
-
-    @abstractmethod
-    def describe_cause(self, region: str) -> str:
-        """
-        :param region: A region of the cause, written out.
-        :return: The cause set to that region, in words.
-        """
-
-    @property
-    @abstractmethod
-    def effect(self) -> str:
-        """
-        The effect in words.
-        """
+    def domain(self) -> RelationalDomain:
+        return molecule_domain()
 
     def _open_atoms(self) -> List[Match]:
         """
         :return: One fully open query per listed atom.
         """
-        return [atom_query() for _ in range(self.atom_count)]
+        return self.open_parts()[PartField.ATOMS]
 
     def _open_bonds(self) -> List[Match]:
         """
         :return: One fully open query per listed bond.
         """
-        return [bond_query() for _ in range(self.bond_count)]
+        return self.open_parts()[PartField.BONDS]
+
+    def _molecule_query(
+        self, atoms: List[Match], bonds: List[Match], **specified: Any
+    ) -> Match:
+        """
+        :param atoms: One query per listed atom.
+        :param bonds: One query per listed bond.
+        :param specified: Molecule attribute markers or values to set instead of
+            leaving open.
+        :return: The query for the molecule.
+        """
+        return self.example_query(
+            {PartField.ATOMS: atoms, PartField.BONDS: bonds}, **specified
+        )
+
+
+INDICATOR = Confounder(name="indicator_1", noun="the ind1 indicator")
+"""
+Adjusting for the ``ind1`` structural indicator, which marks the fused-ring molecules
+that are both large and mostly mutagenic.
+"""
+
+ATOM_COUNT = Confounder(name="atom_count", noun="the number of atoms")
+"""
+Adjusting for the size of the molecule.
+"""
 
 
 @dataclass(frozen=True, kw_only=True)
-class CountCausesMutagenicity(CausalQueryCase):
+class CountCausesMutagenicity(MoleculeQueryCase, AdjustedCountCase):
     """
     Does one of the molecule's aggregation counts cause it to be mutagenic, once the
-    ``ind1`` structural indicator, which marks the fused-ring molecules that are both
-    large and mostly mutagenic, is adjusted for?
-    """
+    given confounders are adjusted for?
 
-    statistic_name: str
-    """
-    The aggregation statistic of
-    :class:`~experiments.causal_reasoning.mutagenesis.domain.MutagenesisMoleculeAggregations`
-    that is the cause.
+    A flat table without a column for one of them refuses the question.
     """
 
     count_noun: str
@@ -175,23 +97,30 @@ class CountCausesMutagenicity(CausalQueryCase):
     What the count counts, in words, such as ``branching atoms``.
     """
 
+    confounders: Tuple[Confounder, ...] = (INDICATOR,)
+    """
+    What to adjust for: the ``ind1`` indicator unless asked otherwise.
+    """
+
     @property
     def name(self) -> str:
-        return f"{self.statistic_name}_causes_mutagenicity"
+        adjusting = "_and_".join(confounder.name for confounder in self.confounders)
+        return f"{self.statistic_name}_causes_mutagenicity_adjusting_{adjusting}"
 
     @property
     def question(self) -> str:
+        adjusting = " and ".join(confounder.noun for confounder in self.confounders)
         return (
             f"How many {self.count_noun} cause a molecule to be mutagenic, adjusting "
-            "for the ind1 indicator?"
+            f"for {adjusting}?"
         )
 
     def build(self) -> Match:
-        query = molecule_query(
+        query = self._molecule_query(
             self._open_atoms(),
             self._open_bonds(),
-            indicator_1=confounder,
             **{self.statistic_name: cause},
+            **{adjusted.name: confounder for adjusted in self.confounders},
         )
         query.causes_effect(query.variable.mutagenic == True)
         return query
@@ -205,7 +134,7 @@ class CountCausesMutagenicity(CausalQueryCase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class IndicatorCausesMutagenicity(CausalQueryCase):
+class IndicatorCausesMutagenicity(MoleculeQueryCase):
     """
     Does the ``ind1`` structural indicator cause mutagenicity, once one other attribute
     of the molecule is adjusted for?
@@ -233,7 +162,7 @@ class IndicatorCausesMutagenicity(CausalQueryCase):
         )
 
     def build(self) -> Match:
-        query = molecule_query(
+        query = self._molecule_query(
             self._open_atoms(),
             self._open_bonds(),
             indicator_1=cause,
@@ -251,7 +180,7 @@ class IndicatorCausesMutagenicity(CausalQueryCase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class IndicatorCausesElement(CausalQueryCase):
+class IndicatorCausesElement(MoleculeQueryCase):
     """
     Does the ``ind1`` structural indicator cause one of the molecule's atoms to be of a
     given element?
@@ -281,7 +210,7 @@ class IndicatorCausesElement(CausalQueryCase):
         )
 
     def build(self) -> Match:
-        query = molecule_query(
+        query = self._molecule_query(
             self._open_atoms(), self._open_bonds(), indicator_1=cause
         )
         query.causes_effect(
@@ -298,7 +227,7 @@ class IndicatorCausesElement(CausalQueryCase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class BranchingAtomsCauseTerminalAtom(CausalQueryCase):
+class BranchingAtomsCauseTerminalAtom(MoleculeQueryCase):
     """
     Does the number of branching atoms in a molecule cause one of its atoms to be a
     terminal atom, one with a single bond?
@@ -323,7 +252,7 @@ class BranchingAtomsCauseTerminalAtom(CausalQueryCase):
         )
 
     def build(self) -> Match:
-        query = molecule_query(
+        query = self._molecule_query(
             self._open_atoms(), self._open_bonds(), branching_atom_count=cause
         )
         query.causes_effect(query.variable.atoms[self.atom_index].bond_count == 1)
@@ -338,7 +267,7 @@ class BranchingAtomsCauseTerminalAtom(CausalQueryCase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class ElementCausesTerminalAtom(CausalQueryCase):
+class ElementCausesTerminalAtom(MoleculeQueryCase):
     """
     Does an atom's element cause it to be a terminal atom, one with a single bond?
 
@@ -363,8 +292,8 @@ class ElementCausesTerminalAtom(CausalQueryCase):
 
     def build(self) -> Match:
         atoms = self._open_atoms()
-        atoms[self.atom_index] = atom_query(element=cause)
-        query = molecule_query(atoms, self._open_bonds())
+        atoms[self.atom_index] = part_query(MutagenesisAtom, element=cause)
+        query = self._molecule_query(atoms, self._open_bonds())
         query.causes_effect(query.variable.atoms[self.atom_index].bond_count == 1)
         return query
 
@@ -381,16 +310,21 @@ def molecule_level_cases() -> List[CausalQueryCase]:
     :return: The questions whose cause and effect are both molecule attributes or
         counts, in the order they are asked.
     """
+    counts = (
+        ("branching_atom_count", "branching atoms"),
+        ("aromatic_bond_count", "aromatic bonds"),
+        ("double_bond_count", "double bonds"),
+    )
+    adjustments = ((INDICATOR,), (ATOM_COUNT,), (INDICATOR, ATOM_COUNT))
     return [
         CountCausesMutagenicity(
-            statistic_name="branching_atom_count", count_noun="branching atoms"
-        ),
-        CountCausesMutagenicity(
-            statistic_name="aromatic_bond_count", count_noun="aromatic bonds"
-        ),
-        CountCausesMutagenicity(
-            statistic_name="double_bond_count", count_noun="double bonds"
-        ),
+            statistic_name=statistic_name,
+            count_noun=count_noun,
+            confounders=confounders,
+        )
+        for statistic_name, count_noun in counts
+        for confounders in adjustments
+    ] + [
         IndicatorCausesMutagenicity(
             confounder_name="logp", confounder_noun="hydrophobicity (logp)"
         ),
@@ -421,3 +355,21 @@ def query_catalogue() -> List[CausalQueryCase]:
     :return: The questions, in the order they are asked.
     """
     return molecule_level_cases() + atom_level_cases()
+
+
+def monte_carlo_cases() -> List[CausalQueryCase]:
+    """
+    The questions whose answers are followed as grounding draws more samples: one
+    molecule-level count question and one whose effect lives on an atom, both of which
+    leave every count open.
+
+    :return: The two questions.
+    """
+    return [
+        CountCausesMutagenicity(
+            statistic_name="branching_atom_count",
+            count_noun="branching atoms",
+            confounders=(ATOM_COUNT,),
+        ),
+        BranchingAtomsCauseTerminalAtom(),
+    ]

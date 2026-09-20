@@ -10,39 +10,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-import numpy as np
 import requests
 from krrood.adapters.json_serializer import from_json, to_json
 from platformdirs import user_cache_dir
-from typing_extensions import Callable, Dict, List, Self, Tuple, TypeVar
+from typing_extensions import Any, Dict, List, Self
 
-from experiments.causal_reasoning.tracy_clutter_picking.domain import ClutterPickScene
-
-T = TypeVar("T")
-
-
-@dataclass(frozen=True)
-class SuccessRate:
-    """
-    How often a group of attempts lifted its target.
-    """
-
-    attempt_count: int
-    """
-    How many attempts the group holds.
-    """
-
-    lifted_count: int
-    """
-    How many of them lifted the target.
-    """
-
-    @property
-    def rate(self) -> float:
-        """
-        The lifted share.
-        """
-        return self.lifted_count / self.attempt_count
+from experiments.causal_reasoning.comparison.dataset import EffectRate, ExampleDataset
+from experiments.causal_reasoning.tracy_clutter_picking.domain import (
+    ClutterPickScene,
+    ClutterPickSceneAggregations,
+    attempt_domain,
+)
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
+    UnevenClutterError,
+)
 
 
 @dataclass
@@ -75,48 +56,44 @@ class ClutterPickDataset:
         """
         return cls(scenes=from_json(json.loads(path.read_text())))
 
+    def examples(self) -> ExampleDataset:
+        """
+        :return: The attempts as the comparison sees them.
+        """
+        return ExampleDataset(attempt_domain(), list(self.scenes))
+
     @property
-    def success_rate(self) -> float:
+    def recorded_neighbour_count(self) -> int:
         """
-        Share of attempts whose target was lifted.
-        """
-        return sum(scene.lifted for scene in self.scenes) / len(self.scenes)
+        How many neighbours every recorded attempt has.
 
-    def success_rate_by(
-        self, key: Callable[[ClutterPickScene], T]
-    ) -> Dict[T, SuccessRate]:
+        :raises UnevenClutterError: If the attempts do not all have the same number.
         """
-        The share of lifted targets among the attempts sharing a value.
+        counts = {len(scene.neighbours) for scene in self.scenes}
+        if len(counts) != 1:
+            raise UnevenClutterError(sorted(counts))
+        [count] = counts
+        return count
 
-        :param key: What to group the attempts by.
-        :return: Each value's success rate, by value.
-        """
-        by_value: Dict[T, List[ClutterPickScene]] = {}
-        for scene in self.scenes:
-            by_value.setdefault(key(scene), []).append(scene)
-        return {
-            value: SuccessRate(
-                attempt_count=len(scenes),
-                lifted_count=sum(scene.lifted for scene in scenes),
-            )
-            for value, scenes in sorted(by_value.items())
-        }
 
-    def split(
-        self, train_fraction: float, random_state: np.random.Generator
-    ) -> Tuple[Self, Self]:
-        """
-        Shuffle the attempts and split them in two.
+def lift_summaries(dataset: ExampleDataset) -> Dict[str, Dict[Any, EffectRate]]:
+    """
+    How often the target was lifted, by the environment the clutter stood in, by the
+    grasp's friction coefficient, and by how many neighbours stood adjacent to the
+    target.
 
-        :param train_fraction: Share of attempts that go into the first part.
-        :param random_state: Source of randomness for the shuffle.
-        :return: The first and second part.
-        """
-        order = random_state.permutation(len(self.scenes))
-        split_index = int(train_fraction * len(self.scenes))
-        first = [self.scenes[index] for index in order[:split_index]]
-        second = [self.scenes[index] for index in order[split_index:]]
-        return type(self)(first), type(self)(second)
+    :param dataset: The attempts.
+    :return: The rates per summary's title.
+    """
+    return {
+        "environment": dataset.effect_rate_by(lambda scene: scene.environment),
+        "friction coefficient": dataset.effect_rate_by(
+            lambda scene: scene.friction_coefficient
+        ),
+        "adjacent neighbours": dataset.effect_rate_by(
+            lambda scene: ClutterPickSceneAggregations(instance=scene).crowding_count()
+        ),
+    }
 
 
 # %% hosted dataset

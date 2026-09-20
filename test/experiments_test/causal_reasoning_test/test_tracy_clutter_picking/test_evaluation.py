@@ -8,30 +8,34 @@ import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO clas
 import numpy as np
 import pytest
 
+from experiments.causal_reasoning.comparison.evaluation import (
+    Refusal,
+    evaluate,
+    scaling_study,
+)
+from experiments.causal_reasoning.comparison.report import MarkdownReport, Verdict
 from experiments.causal_reasoning.tracy_clutter_picking.dataset import (
     ClutterPickDataset,
 )
-from experiments.causal_reasoning.tracy_clutter_picking.evaluation import (
-    Refusal,
-    describe_region,
-    evaluate,
-)
 from experiments.causal_reasoning.tracy_clutter_picking.queries import (
+    ENVIRONMENT,
+    ClosingAxisSideCausesDisturbance,
     CrowdingCausesLift,
     FrictionCausesLift,
     query_catalogue,
 )
-from experiments.causal_reasoning.tracy_clutter_picking.report import (
-    MarkdownReport,
-    Verdict,
+from experiments.causal_reasoning.tracy_clutter_picking.run_pipeline import (
+    attempts_of_size,
+    tracy_experiment,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.synthetic import (
     synthetic_clutter_pick_scenes,
 )
-from random_events.interval import closed
-from random_events.product_algebra import SimpleEvent
-from random_events.set import Set
-from random_events.variable import Continuous, Symbolic
+
+LEAF_SHARE = 0.15
+"""
+The share of its training rows a leaf may hold in these tests.
+"""
 
 
 @pytest.fixture(scope="module")
@@ -43,46 +47,44 @@ def recorded_neighbour_count() -> int:
 
 
 @pytest.fixture(scope="module")
+def experiment(recorded_neighbour_count):
+    return tracy_experiment(recorded_neighbour_count)
+
+
+@pytest.fixture(scope="module")
 def cases(recorded_neighbour_count):
     return [
-        FrictionCausesLift(recorded_neighbour_count),
-        CrowdingCausesLift(recorded_neighbour_count + 2),
+        FrictionCausesLift(open_part_count=recorded_neighbour_count),
+        FrictionCausesLift(open_part_count=recorded_neighbour_count + 2),
+        ClosingAxisSideCausesDisturbance(
+            open_part_count=recorded_neighbour_count + 2,
+            neighbour_index=recorded_neighbour_count + 1,
+        ),
     ]
 
 
 @pytest.fixture(scope="module")
-def report(cases, recorded_neighbour_count):
+def report(experiment, cases, recorded_neighbour_count):
     dataset = ClutterPickDataset(
         synthetic_clutter_pick_scenes(
             np.random.default_rng(0),
             scene_count=120,
             object_count=recorded_neighbour_count + 1,
         )
+    ).examples()
+    return evaluate(
+        experiment.comparison,
+        dataset,
+        cases,
+        min_samples_per_leaf=LEAF_SHARE,
+        min_region_support=1,
     )
-    return evaluate(dataset, min_samples_per_leaf=15, cases=cases)
 
 
-# %% describing regions
-
-
-def test_describe_region_writes_a_point_as_its_value():
-    variable = Continuous("x")
-    event = SimpleEvent.from_data({variable: closed(0.5, 0.5)}).as_composite_set()
-    assert describe_region(event, variable) == "0.5"
-
-
-def test_describe_region_writes_a_range_as_its_bounds():
-    variable = Continuous("x")
-    event = SimpleEvent.from_data({variable: closed(0.5, 1.5)}).as_composite_set()
-    assert describe_region(event, variable) == "[0.5, 1.5]"
-
-
-def test_describe_region_writes_symbols_by_name():
-    variable = Symbolic("side", domain=Set.from_iterable(["along", "across"]))
-    event = SimpleEvent.from_data(
-        {variable: Set.from_iterable(["along"])}
-    ).as_composite_set()
-    assert describe_region(event, variable) == "along"
+def _adjusted_by_region(outcome):
+    return {
+        effect.cause_region: effect.adjusted_probability for effect in outcome.effects
+    }
 
 
 # %% the comparison
@@ -93,42 +95,99 @@ def test_catalogue_asks_each_kind_of_cause_at_the_recorded_size_and_at_others(
 ):
     catalogue = query_catalogue(recorded_neighbour_count)
     counts = [case.neighbour_count for case in catalogue]
-    assert counts.count(recorded_neighbour_count) == 3
+    assert counts.count(recorded_neighbour_count) == 4
     assert len(set(counts)) == 3
+    assert len({case.name for case in catalogue}) == len(catalogue)
 
 
-def test_report_splits_the_dataset(report, recorded_neighbour_count):
-    assert report.training_scene_count == 96
-    assert report.test_scene_count == 24
-    assert report.recorded_neighbour_count == recorded_neighbour_count
+def test_the_crowding_question_is_asked_adjusted_and_unadjusted(
+    recorded_neighbour_count,
+):
+    adjustments = [
+        case.confounders
+        for case in query_catalogue(recorded_neighbour_count)
+        if isinstance(case, CrowdingCausesLift)
+        and case.neighbour_count == recorded_neighbour_count
+    ]
+    assert adjustments == [(ENVIRONMENT,), ()]
+
+
+def test_report_splits_the_dataset(report):
+    assert report.training_example_count == 96
+    assert report.test_example_count == 24
 
 
 def test_report_records_every_question_for_every_pipeline(report, cases):
     assert [pipeline.name for pipeline in report.pipelines] == [
         "relational circuit",
-        "flat-table tree",
+        "propositional tree",
+        "unrolled tree",
+        "scalars-only tree",
+        "regression adjustment",
     ]
     for pipeline in report.pipelines:
         assert [outcome.case for outcome in pipeline.outcomes] == cases
 
 
-def test_only_the_relational_pipeline_answers_about_another_clutter_size(report):
-    relational, flat = report.pipelines
+def test_the_flat_tables_cannot_tell_clutter_sizes_apart(report):
+    """
+    A flat table ignores the parts a query leaves open, so it answers a question about
+    a larger clutter with the numbers it has for the recorded one; the relational
+    circuit grounds itself for the queried clutter.
+    """
+    relational, *flat = report.pipelines
     assert relational.outcomes[1].answered
-    assert flat.outcomes[1].refusal == Refusal.SCHEMA_MISMATCH
+    for pipeline in flat:
+        recorded, larger = pipeline.outcomes[:2]
+        assert larger.answered
+        assert _adjusted_by_region(larger) == pytest.approx(
+            _adjusted_by_region(recorded)
+        )
 
 
-def test_shared_coverage_likelihood_is_reported_per_pipeline(report):
-    assert set(report.shared_coverage_log_likelihoods) == {
-        pipeline.name for pipeline in report.pipelines
-    }
+def test_only_the_relational_circuit_answers_about_a_neighbour_beyond_the_table(
+    report,
+):
+    relational, *flat = report.pipelines
+    assert relational.outcomes[2].answered
+    for pipeline in flat:
+        assert pipeline.outcomes[2].refusal == Refusal.SCHEMA_MISMATCH
+
+
+def test_every_circuit_answers_about_friction_at_the_recorded_size(report):
+    for pipeline in report.pipelines:
+        assert pipeline.outcomes[0].answered
+
+
+# %% the scaling study
+
+
+def test_the_scaling_study_measures_the_part_modelling_pipelines(experiment):
+    study = scaling_study(
+        experiment.comparison,
+        attempts_of_size,
+        experiment.scaling.case,
+        sizes=(2, 4),
+        example_count=40,
+        min_samples_per_leaf=LEAF_SHARE,
+        plain_min_samples_per_leaf=LEAF_SHARE,
+    )
+    assert study.sizes == [2, 4]
+    assert study.pipeline_names == ["relational circuit", "unrolled tree"]
+    for name in study.pipeline_names:
+        for size in study.sizes:
+            assert study.point(name, size).fit.size.node_count > 0
 
 
 # %% rendering
 
 
-def test_markdown_report_names_every_question_and_marks_the_verdicts(report, cases):
-    markdown = MarkdownReport(report).render()
+def test_markdown_report_names_every_question_and_marks_the_verdicts(
+    experiment, report, cases
+):
+    markdown = MarkdownReport(
+        experiment.comparison.domain, experiment.text, report
+    ).render()
     for case in cases:
         assert case.question in markdown
     assert Verdict.ANSWERED in markdown
@@ -137,14 +196,10 @@ def test_markdown_report_names_every_question_and_marks_the_verdicts(report, cas
         assert pipeline.name in markdown
 
 
-def test_every_outcome_is_timed_asked_again(report):
-    for pipeline in report.pipelines:
-        for outcome in pipeline.outcomes:
-            assert outcome.repeat_duration >= 0
-
-
-def test_markdown_report_puts_an_answer_into_words(report):
-    markdown = MarkdownReport(report).render()
+def test_markdown_report_puts_an_answer_into_words(experiment, report):
+    markdown = MarkdownReport(
+        experiment.comparison.domain, experiment.text, report
+    ).render()
     relational_answer = report.pipelines[0].outcomes[0]
     assert (
         relational_answer.case.describe_cause(

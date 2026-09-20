@@ -8,26 +8,27 @@ live-dataset tests.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
-from typing_extensions import Callable, Dict, List, Self, Tuple, TypeVar
+from typing_extensions import Any, Dict, List, Sequence
 
+from experiments.causal_reasoning.comparison.dataset import EffectRate, ExampleDataset
 from experiments.causal_reasoning.mutagenesis.domain import (
     MutagenesisAtom,
     MutagenesisBond,
     MutagenesisBondType,
     MutagenesisElement,
     MutagenesisMolecule,
+    MutagenesisMoleculeAggregations,
+    molecule_domain,
 )
 from experiments.causal_reasoning.mutagenesis.exceptions import (
     MutagenesisDatasetUnavailableError,
 )
-
-T = TypeVar("T")
 
 # %% the CTU database
 
@@ -218,106 +219,40 @@ def synthetic_mutagenesis_molecules(
 # %% a set of molecules
 
 
-@dataclass(frozen=True)
-class MutagenicRate:
+def mutagenesis_dataset(molecules: Sequence[MutagenesisMolecule]) -> ExampleDataset:
     """
-    How often a group of molecules is mutagenic.
+    :param molecules: The molecules.
+    :return: The molecules as the comparison sees them.
     """
+    return ExampleDataset(molecule_domain(), list(molecules))
 
-    molecule_count: int
+
+def mutagenicity_summaries(
+    dataset: ExampleDataset,
+) -> Dict[str, Dict[Any, EffectRate]]:
     """
-    How many molecules the group holds.
+    How often the molecules are mutagenic, by the ``ind1`` indicator, by how many
+    branching atoms they have, by how many of their bonds are aromatic and by how many
+    atoms they hold at all.
+
+    :param dataset: The molecules.
+    :return: The rates per summary's title.
     """
-
-    mutagenic_count: int
-    """
-    How many of them are mutagenic.
-    """
-
-    @property
-    def rate(self) -> float:
-        """
-        The mutagenic share.
-        """
-        return self.mutagenic_count / self.molecule_count
-
-
-@dataclass
-class MutagenesisDataset:
-    """
-    A set of molecules, as fetched and as read by the pipelines.
-    """
-
-    molecules: List[MutagenesisMolecule] = field(default_factory=list)
-    """
-    The molecules.
-    """
-
-    @property
-    def mutagenic_rate(self) -> float:
-        """
-        Share of molecules that are mutagenic.
-        """
-        return sum(molecule.mutagenic for molecule in self.molecules) / len(
-            self.molecules
-        )
-
-    def mutagenic_rate_by(
-        self, key: Callable[[MutagenesisMolecule], T]
-    ) -> Dict[T, MutagenicRate]:
-        """
-        The mutagenic share among the molecules sharing a value.
-
-        :param key: What to group the molecules by.
-        :return: Each value's mutagenic rate, by value.
-        """
-        by_value: Dict[T, List[MutagenesisMolecule]] = {}
-        for molecule in self.molecules:
-            by_value.setdefault(key(molecule), []).append(molecule)
-        return {
-            value: MutagenicRate(
-                molecule_count=len(molecules),
-                mutagenic_count=sum(molecule.mutagenic for molecule in molecules),
-            )
-            for value, molecules in sorted(by_value.items())
-        }
-
-    def with_shuffled_parts(self, random_state: np.random.Generator) -> Self:
-        """
-        The same molecules with their atoms and bonds in a random order each.
-
-        :param random_state: Source of randomness for the orders.
-        :return: The dataset with reordered parts.
-        """
-        return type(self)(
-            [
-                replace(
-                    molecule,
-                    atoms=[
-                        molecule.atoms[index]
-                        for index in random_state.permutation(len(molecule.atoms))
-                    ],
-                    bonds=[
-                        molecule.bonds[index]
-                        for index in random_state.permutation(len(molecule.bonds))
-                    ],
-                )
-                for molecule in self.molecules
-            ]
-        )
-
-    def split(
-        self, train_fraction: float, random_state: np.random.Generator
-    ) -> Tuple[Self, Self]:
-        """
-        Shuffle the molecules and split them in two.
-
-        :param train_fraction: Share of molecules that go into the first part.
-        :param random_state: Source of randomness for the shuffle.
-        :return: The first and second part.
-        """
-        order = random_state.permutation(len(self.molecules))
-        split_index = int(train_fraction * len(self.molecules))
-        first = [self.molecules[index] for index in order[:split_index]]
-        second = [self.molecules[index] for index in order[split_index:]]
-        return type(self)(first), type(self)(second)
+    return {
+        "ind1": dataset.effect_rate_by(lambda molecule: molecule.indicator_1),
+        "branching atoms": dataset.effect_rate_by(
+            lambda molecule: MutagenesisMoleculeAggregations(
+                instance=molecule
+            ).branching_atom_count()
+        ),
+        "aromatic bonds": dataset.effect_rate_by(
+            lambda molecule: MutagenesisMoleculeAggregations(
+                instance=molecule
+            ).aromatic_bond_count()
+        ),
+        "atoms": dataset.effect_rate_by(
+            lambda molecule: MutagenesisMoleculeAggregations(
+                instance=molecule
+            ).atom_count()
+        ),
+    }

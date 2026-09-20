@@ -1,7 +1,7 @@
 """
-The two causal-query pipelines under comparison, behind one interface: fit on molecules,
+The causal-query pipelines under comparison, behind one interface: fit on examples,
 serve ``cause``/``causes_effect`` EQL queries through a model registry, and report what
-the fits cost and how well they explain held-out molecules.
+the fits cost and how well they explain held-out examples.
 
 Backdoor adjustment needs the circuit it runs on to be support-deterministic over the
 cause variable, which a fit guarantees by stratifying its training rows on that
@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from enum import Enum
 
 import numpy as np
 import pandas as pd
@@ -47,16 +48,16 @@ from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import (
 from probabilistic_model.probabilistic_model import ProbabilisticModel
 from typing_extensions import Any, Dict, List, Optional, Sequence, Set
 
-from experiments.causal_reasoning.mutagenesis.domain import MutagenesisMolecule
-from experiments.causal_reasoning.mutagenesis.exceptions import (
+from experiments.causal_reasoning.comparison.domain import ExampleView, RelationalDomain
+from experiments.causal_reasoning.comparison.exceptions import (
     FlatTableSchemaMismatchError,
     OneCausePerQueryError,
     PipelineNotFittedError,
 )
-from experiments.causal_reasoning.mutagenesis.flat_table import (
+from experiments.causal_reasoning.comparison.flat_table import (
     FlatTable,
-    MoleculeSchema,
-    MoleculeView,
+    PartAttribute,
+    Schema,
     TableLayout,
 )
 
@@ -100,9 +101,9 @@ class FitReport:
     specific model fitted on demand.
     """
 
-    training_molecule_count: int
+    training_example_count: int
     """
-    How many molecules the pipeline was fitted on.
+    How many examples the pipeline was fitted on.
     """
 
     model_count: int = 0
@@ -135,48 +136,48 @@ class FitReport:
 @dataclass(frozen=True)
 class LikelihoodReport:
     """
-    How well a fitted pipeline explains held-out molecules.
+    How well a fitted pipeline explains held-out examples.
     """
 
-    molecule_count: int
+    example_count: int
     """
-    How many molecules were scored.
+    How many examples were scored.
     """
 
-    covered_molecule_count: int
+    covered_example_count: int
     """
     How many of them lie inside the model's support at all.
     """
 
     mean_log_likelihood: float
     """
-    Mean log-likelihood over the covered molecules; ``nan`` if none is covered.
+    Mean log-likelihood over the covered examples; ``nan`` if none is covered.
     """
 
     log_likelihoods: np.ndarray = field(compare=False, repr=False)
     """
-    One log-likelihood per scored molecule, in the molecules' order, ``-inf`` for a
-    molecule outside the support.
+    One log-likelihood per scored example, in the examples' order, ``-inf`` for an
+    example outside the support.
     """
 
     @property
     def coverage(self) -> float:
         """
-        Share of molecules inside the model's support.
+        Share of examples inside the model's support.
         """
-        return self.covered_molecule_count / self.molecule_count
+        return self.covered_example_count / self.example_count
 
     @classmethod
     def from_log_likelihoods(cls, log_likelihoods: np.ndarray) -> LikelihoodReport:
         """
-        :param log_likelihoods: One log-likelihood per scored molecule, ``-inf`` for a
-            molecule outside the support.
+        :param log_likelihoods: One log-likelihood per scored example, ``-inf`` for a
+            example outside the support.
         :return: The report.
         """
         finite = log_likelihoods[np.isfinite(log_likelihoods)]
         return cls(
-            molecule_count=len(log_likelihoods),
-            covered_molecule_count=len(finite),
+            example_count=len(log_likelihoods),
+            covered_example_count=len(finite),
             mean_log_likelihood=float(finite.mean()) if len(finite) else float("nan"),
             log_likelihoods=log_likelihoods,
         )
@@ -193,7 +194,7 @@ class CauseStratification:
 
     class_columns: Optional[List[str]]
     """
-    The molecule-level columns to stratify the class circuit by, or ``None`` to leave it
+    The example-level columns to stratify the class circuit by, or ``None`` to leave it
     to the plain fit.
     """
 
@@ -204,12 +205,10 @@ class CauseStratification:
     """
 
     @classmethod
-    def for_variable(
-        cls, variable_name: str, schema: MoleculeSchema = MoleculeSchema()
-    ) -> CauseStratification:
+    def for_variable(cls, variable_name: str, schema: Schema) -> CauseStratification:
         """
         :param variable_name: The cause variable's name, as EQL names it.
-        :param schema: How the molecule's attributes are named.
+        :param schema: How the example's attributes are named.
         :return: The stratification that makes a fit support-deterministic over it.
         """
         part = schema.part_attribute(variable_name)
@@ -223,8 +222,8 @@ class CauseStratification:
 def cause_variable_name(parameters: ModelQueryParameters) -> Optional[str]:
     """
     :param parameters: The parameters extracted from a queried statement.
-    :return: The name of the one variable the query marks as its cause, or ``None`` if
-        it marks none.
+    :return: The name of the one variable the query marks as its cause, or ``None`` if it
+        marks none.
     :raises OneCausePerQueryError: If the query marks more than one cause.
     """
     if not isinstance(parameters, UnderspecifiedParameters):
@@ -240,8 +239,8 @@ def cause_variable_name(parameters: ModelQueryParameters) -> Optional[str]:
 def constrained_variable_names(parameters: ModelQueryParameters) -> Set[str]:
     """
     :param parameters: The parameters extracted from a queried statement.
-    :return: The names of the variables the query says something about: a value it
-        sets, a condition it truncates to, or a cause, confounder or effect it marks. A
+    :return: The names of the variables the query says something about: a value it sets,
+        a condition it truncates to, or a cause, confounder or effect it marks. A
         variable the query merely lists and leaves open is not among them.
     """
     if not isinstance(parameters, UnderspecifiedParameters):
@@ -269,35 +268,40 @@ def constrained_variable_names(parameters: ModelQueryParameters) -> Set[str]:
 @dataclass
 class CausalQueryPipeline(ABC):
     """
-    One way of turning molecules into models that answer causal EQL queries.
+    One way of turning examples into models that answer causal EQL queries.
     """
 
-    min_samples_per_leaf: float = 15
+    min_samples_per_leaf: float = 0.05
     """
-    The fewest training rows a leaf of a cause-specific tree may hold: enough for a
-    continuous attribute's leaf to span a range rather than pin the single value it saw,
-    few enough for a stratum to still split on what else drives the effect.
+    The fewest training rows a leaf of a cause-specific model may hold, as a share of the
+    rows it is fitted on: enough for a continuous attribute's leaf to span a range rather
+    than pin the values it saw, few enough for a stratum of one cause value to still
+    split on what else drives the effect.
 
     See
-    :attr:`~probabilistic_model.learning.jpt.jpt.JointProbabilityTree.min_samples_per_leaf`.
+    :attr:`~probabilistic_model.learning.jpt.jpt.JointProbabilityTree.min_samples_per_leaf`,
+    which reads a share below one as a share of its training rows, so the same setting
+    holds for a class circuit over a thousand examples and for a part template over their
+    tens of thousands of parts.
     """
 
-    plain_min_samples_per_leaf: float = 50
+    plain_min_samples_per_leaf: float = 0.15
     """
-    The fewest training rows a leaf of the plain tree may hold.
+    The fewest training rows a leaf of the plain model may hold, as a share of the rows
+    it is fitted on.
 
-    The plain model scores held-out molecules, and a leaf spans only the ranges it saw,
+    The plain model scores held-out examples, and a leaf spans only the ranges it saw,
     so wider leaves cover more of them.
     """
 
-    schema: MoleculeSchema = field(default_factory=MoleculeSchema)
+    domain: RelationalDomain = field(kw_only=True)
     """
-    How the molecule's attributes are named.
+    The example and its parts.
     """
 
-    training_molecules: List[MutagenesisMolecule] = field(default_factory=list)
+    training_examples: List[Any] = field(default_factory=list)
     """
-    The molecules :meth:`fit` was given, kept for the cause-specific fits.
+    The examples :meth:`fit` was given, kept for the cause-specific fits.
     """
 
     fit_report: Optional[FitReport] = None
@@ -313,6 +317,13 @@ class CausalQueryPipeline(ABC):
         """
 
     @property
+    def schema(self) -> Schema:
+        """
+        How the example's attributes are named.
+        """
+        return Schema(self.domain)
+
+    @property
     def registry(self) -> ModelRegistry:
         """
         The registry a
@@ -325,26 +336,34 @@ class CausalQueryPipeline(ABC):
     @abstractmethod
     def table(self) -> FlatTable:
         """
-        The molecules as rows of what the pipeline's plain model is fitted on.
+        The examples as rows of what the pipeline's plain model is fitted on.
         """
 
     @property
     @abstractmethod
     def models_parts(self) -> bool:
         """
-        Whether the pipeline models the atoms and bonds themselves, so that the order a
-        molecule lists them in can matter to it.
+        Whether the pipeline models the objects and viewpoints themselves, so that the
+        order an example lists them in can matter to it.
         """
 
-    def fit(self, molecules: Sequence[MutagenesisMolecule]) -> FitReport:
+    @property
+    @abstractmethod
+    def order_invariant(self) -> bool:
         """
-        Fit the plain model, and keep the molecules for the cause-specific fits.
+        Whether fitting on the same examples with their parts in another order gives the
+        same model, so that a study over reorderings need fit it once.
+        """
 
-        :param molecules: The molecules to fit on.
+    def fit(self, examples: Sequence[Any]) -> FitReport:
+        """
+        Fit the plain model, and keep the examples for the cause-specific fits.
+
+        :param examples: The examples to fit on.
         :return: The report the later fits keep adding to.
         """
-        self.training_molecules = list(molecules)
-        self.fit_report = FitReport(training_molecule_count=len(molecules))
+        self.training_examples = list(examples)
+        self.fit_report = FitReport(training_example_count=len(examples))
         started = time.perf_counter()
         size = self._fit_plain_model()
         self.fit_report.record(time.perf_counter() - started, size)
@@ -354,7 +373,7 @@ class CausalQueryPipeline(ABC):
     def _fit_plain_model(self) -> CircuitSize:
         """
         Fit the model that serves every query without a cause, on
-        :attr:`training_molecules`.
+        :attr:`training_examples`.
 
         :return: The size of the fitted circuit.
         """
@@ -363,7 +382,7 @@ class CausalQueryPipeline(ABC):
     def _fit_cause_model(self, cause_name: str) -> CircuitSize:
         """
         Fit the model that serves queries marking the named variable as their cause, on
-        :attr:`training_molecules`.
+        :attr:`training_examples`.
 
         :param cause_name: The cause variable's name, as EQL names it.
         :return: The size of the fitted circuit.
@@ -400,39 +419,65 @@ class CausalQueryPipeline(ABC):
             self.fit_report.record(time.perf_counter() - started, size)
         return self._registry_for(cause_name)
 
-    @abstractmethod
-    def plain_circuit_of(self, view: MoleculeView) -> Optional[ProbabilisticCircuit]:
+    def training_values_of(self, variable_name: str) -> List[Any]:
         """
-        The plain model's joint over as much of a molecule as the view asks for.
+        The values the training examples hold for a variable, one per row the variable
+        is fitted on: one per example for an example attribute or count, one per part for a
+        part's own attribute.
 
-        :param view: How much of a molecule to look at.
+        :param variable_name: The variable's name, as EQL names it.
+        :return: The values.
+        :raises FlatTableSchemaMismatchError: If the pipeline's table has no column for
+            the variable.
+        """
+        part = self.schema.part_attribute(variable_name)
+        if part is not None and self.models_parts:
+            return self._part_training_values(part)
+        if variable_name not in self.table.columns:
+            raise FlatTableSchemaMismatchError([variable_name])
+        return [
+            self.table.row(example)[variable_name] for example in self.training_examples
+        ]
+
+    @abstractmethod
+    def _part_training_values(self, part: PartAttribute) -> List[Any]:
+        """
+        :param part: One part's attribute, as a query names it.
+        :return: The values the training examples hold for it, one per row the part
+            template or column is fitted on.
+        """
+
+    @abstractmethod
+    def plain_circuit_of(self, view: ExampleView) -> Optional[ProbabilisticCircuit]:
+        """
+        The plain model's joint over as much of an example as the view asks for.
+
+        :param view: How much of an example to look at.
         :return: The circuit, or ``None`` if the pipeline models less than that.
         :raises PipelineNotFittedError: If :meth:`fit` never ran.
         """
 
     def log_likelihood(
-        self, molecules: Sequence[MutagenesisMolecule], view: MoleculeView
+        self, examples: Sequence[Any], view: ExampleView
     ) -> Optional[LikelihoodReport]:
         """
-        Score held-out molecules under the plain model, on as much of them as the view
+        Score held-out examples under the plain model, on as much of them as the view
         asks for.
 
-        :param molecules: The molecules to score.
-        :param view: How much of a molecule to look at.
+        :param examples: The examples to score.
+        :param view: How much of an example to look at.
         :return: The report, or ``None`` if the pipeline models less than the view; a
-            molecule the pipeline's table has no row for counts as outside the support.
+            example the pipeline's table has no row for counts as outside the support.
         """
         circuit = self.plain_circuit_of(view)
         if circuit is None:
             return None
-        log_likelihoods = np.full(len(molecules), -np.inf)
+        log_likelihoods = np.full(len(examples), -np.inf)
         fitting = [
-            index
-            for index, molecule in enumerate(molecules)
-            if self.table.fits(molecule)
+            index for index, example in enumerate(examples) if self.table.fits(example)
         ]
         if fitting:
-            rows = [self.table.row(molecules[index]) for index in fitting]
+            rows = [self.table.row(examples[index]) for index in fitting]
             log_likelihoods[fitting] = log_likelihoods_of_rows(circuit, rows)
         return LikelihoodReport.from_log_likelihoods(log_likelihoods)
 
@@ -442,8 +487,7 @@ def log_likelihoods_of_rows(
 ) -> np.ndarray:
     """
     :param circuit: The circuit to score under.
-    :param rows: One value per variable of the circuit, keyed by variable name, per
-        row.
+    :param rows: One value per variable of the circuit, keyed by variable name, per row.
     :return: One log-likelihood per row, ``-inf`` outside the support.
     """
     events = np.array(
@@ -476,15 +520,14 @@ class PipelineRegistry(ModelRegistry):
 @dataclass
 class RelationalPipeline(CausalQueryPipeline):
     """
-    A relational probabilistic circuit fitted on the molecules' relational structure and
+    A relational probabilistic circuit fitted on the examples' relational structure and
     grounded per query into a
     :class:`~probabilistic_model.probabilistic_circuit.causal.causal_circuit.CausalCircuit`.
     """
 
     monte_carlo_sample_count: int = 2000
     """
-    How many samples grounding draws for an aggregation count a query leaves open;
-    enough to reach every branching-atom count the 188 molecules show.
+    How many samples grounding draws for an aggregation count a query leaves open.
     """
 
     plain_model: Optional[RelationalProbabilisticCircuit] = None
@@ -524,13 +567,13 @@ class RelationalPipeline(CausalQueryPipeline):
         stratification: CauseStratification = CauseStratification(None, {}),
     ) -> RelationalProbabilisticCircuit:
         """
-        :param min_samples_per_leaf: The fewest training rows a leaf of the class
-            circuit and of every part template may hold.
+        :param min_samples_per_leaf: The fewest training rows a leaf of the class circuit
+            and of every part template may hold.
         :param stratification: What the fit is stratified by; nothing by default.
         :return: The model, not yet fitted.
         """
         return RelationalProbabilisticCircuit(
-            MutagenesisMolecule,
+            self.domain.example_class,
             monte_carlo_sample_count=self.monte_carlo_sample_count,
             learning_method=self._learning_method(
                 min_samples_per_leaf, stratification.class_columns
@@ -557,15 +600,45 @@ class RelationalPipeline(CausalQueryPipeline):
             )
         return size
 
+    def _training_rows(self) -> List[Any]:
+        """
+        The training examples as data access objects, each with its parts in a canonical
+        order, so that the fit is the same whatever order the examples list their parts
+        in. The tree learner the templates are fitted with breaks ties by row order, and
+        the parts of every example are pooled into its rows.
+
+        :return: One data access object per training example.
+        """
+        return [to_dao(self._canonical(example)) for example in self.training_examples]
+
+    def _canonical(self, example: Any) -> Any:
+        """
+        :param example: An example.
+        :return: The example with every part list sorted by the parts' attribute values.
+        """
+        return replace(
+            example,
+            **{
+                part_field: sorted(
+                    vars(example)[part_field],
+                    key=lambda part: tuple(
+                        str(value) if isinstance(value, Enum) else value
+                        for value in vars(part).values()
+                    ),
+                )
+                for part_field in self.schema.part_fields
+            },
+        )
+
     def _fit_plain_model(self) -> CircuitSize:
         self.plain_model = self._new_model(self.plain_min_samples_per_leaf)
-        self.plain_model.fit([to_dao(molecule) for molecule in self.training_molecules])
+        self.plain_model.fit(self._training_rows())
         return self._size_of(self.plain_model)
 
     def _fit_cause_model(self, cause_name: str) -> CircuitSize:
         stratification = CauseStratification.for_variable(cause_name, self.schema)
         model = self._new_model(self.min_samples_per_leaf, stratification)
-        model.fit([to_dao(molecule) for molecule in self.training_molecules])
+        model.fit(self._training_rows())
         self.cause_models[cause_name] = model
         return self._size_of(model)
 
@@ -578,19 +651,42 @@ class RelationalPipeline(CausalQueryPipeline):
         )
         return RelationalCircuitRegistry(relational_probabilistic_circuit=model)
 
+    def set_monte_carlo_sample_count(self, sample_count: int) -> None:
+        """
+        Change how many samples grounding draws, on every model fitted so far and on
+        every one fitted from now on.
+
+        :param sample_count: The number of samples.
+        """
+        self.monte_carlo_sample_count = sample_count
+        for model in [self.plain_model, *self.cause_models.values()]:
+            if model is not None:
+                model.monte_carlo_sample_count = sample_count
+
     @property
     def table(self) -> FlatTable:
-        return FlatTable(TableLayout.PROPOSITIONAL, schema=self.schema)
+        return FlatTable(self.schema, TableLayout.PROPOSITIONAL)
 
     @property
     def models_parts(self) -> bool:
         return True
 
-    def plain_circuit_of(self, view: MoleculeView) -> Optional[ProbabilisticCircuit]:
+    @property
+    def order_invariant(self) -> bool:
+        return True
+
+    def _part_training_values(self, part: PartAttribute) -> List[Any]:
+        return [
+            vars(one)[part.attribute]
+            for example in self.training_examples
+            for one in vars(example)[part.part_field]
+        ]
+
+    def plain_circuit_of(self, view: ExampleView) -> Optional[ProbabilisticCircuit]:
         if self.plain_model is None:
             raise PipelineNotFittedError(self.name)
         class_circuit = self.plain_model.class_probabilistic_circuit
-        if view is MoleculeView.SCALARS:
+        if view is ExampleView.SCALARS:
             scalar_columns = set(self.schema.scalar_columns)
             return class_circuit.marginal(
                 [
@@ -602,51 +698,71 @@ class RelationalPipeline(CausalQueryPipeline):
         return class_circuit
 
     def log_likelihood(
-        self, molecules: Sequence[MutagenesisMolecule], view: MoleculeView
+        self, examples: Sequence[Any], view: ExampleView
     ) -> Optional[LikelihoodReport]:
         """
-        Score held-out molecules under the plain model, on as much of them as the view
-        asks for. A whole molecule is scored the way the relational circuit factorizes
-        it: the class circuit over its scalars and counts, times each part template
-        over one atom or bond given those counts.
+        Score held-out examples under the plain model, on as much of them as the view
+        asks for. A whole example is scored the way the relational circuit factorizes
+        it: the class circuit over its scalars and counts, times each part template over
+        one object or viewpoint given those counts, the parts taken in canonical order
+        so that the sum does not depend on the order the example lists them in.
 
-        :param molecules: The molecules to score.
-        :param view: How much of a molecule to look at.
+        :param examples: The examples to score.
+        :param view: How much of an example to look at.
         :return: The report.
         """
-        if view is not MoleculeView.WHOLE_MOLECULE:
-            return super().log_likelihood(molecules, view)
+        if view is not ExampleView.WHOLE:
+            return super().log_likelihood(examples, view)
         log_likelihoods = (
             super()
-            .log_likelihood(molecules, MoleculeView.SCALARS_AND_COUNTS)
+            .log_likelihood(examples, ExampleView.SCALARS_AND_COUNTS)
             .log_likelihoods.copy()
         )
-        for (
-            part_field,
-            template,
-        ) in self.plain_model.exchangeable_distribution_templates.items():
-            for index, molecule in enumerate(molecules):
-                log_likelihoods[index] += self._part_log_likelihood(
-                    template, molecule, vars(molecule)[part_field]
-                )
+        for part_field in self.plain_model.exchangeable_distribution_templates:
+            log_likelihoods += self.part_log_likelihoods(examples, part_field)
         return LikelihoodReport.from_log_likelihoods(log_likelihoods)
+
+    def part_log_likelihoods(
+        self, examples: Sequence[Any], part_field: str
+    ) -> np.ndarray:
+        """
+        Score one kind of part of held-out examples under its plain template, given each
+        example's counts.
+
+        :param examples: The examples to score.
+        :param part_field: The exchangeable-part field.
+        :return: One summed log-likelihood per example over its parts of that kind,
+            ``-inf`` outside the support.
+        :raises PipelineNotFittedError: If :meth:`fit` never ran.
+        """
+        if self.plain_model is None:
+            raise PipelineNotFittedError(self.name)
+        template = self.plain_model.exchangeable_distribution_templates[part_field]
+        return np.array(
+            [
+                self._part_log_likelihood(
+                    template, example, vars(self._canonical(example))[part_field]
+                )
+                for example in examples
+            ]
+        )
 
     def _part_log_likelihood(
         self,
         template: ExchangeableDistributionTemplate,
-        molecule: MutagenesisMolecule,
+        example: Any,
         parts: Sequence[Any],
     ) -> float:
         """
         :param template: The fitted template of one exchangeable part.
-        :param molecule: The molecule the parts belong to.
-        :param parts: The molecule's parts of that kind.
-        :return: The summed log-likelihood of every part given the molecule's counts.
+        :param example: The example the parts belong to.
+        :param parts: The example's parts of that kind.
+        :return: The summed log-likelihood of every part given the example's counts.
         """
         circuit = template.template_distribution.class_probabilistic_circuit
         latents = template.latent_variables
         counts = {
-            variable.name: self.table.row(molecule)[variable.name]
+            variable.name: self.table.row(example)[variable.name]
             for variable in latents
         }
         if not parts:
@@ -668,8 +784,9 @@ class FlatTableRegistry(ModelRegistry):
     Serves a circuit fitted on the flat table for queries over that table's columns,
     wrapped as a causal circuit when the query marks a cause.
 
-    A query may list a molecule's atoms and bonds, which the table has no columns for,
-    as long as it says nothing about them; the served circuit then simply lacks them.
+    A query may list an example's objects and viewpoints, which the table has no columns
+    for, as long as it says nothing about them; the served circuit then simply lacks
+    them.
     """
 
     circuit: ProbabilisticCircuit
@@ -711,14 +828,20 @@ class FlatTableRegistry(ModelRegistry):
 @dataclass
 class FlatTablePipeline(CausalQueryPipeline):
     """
-    Joint probability trees fitted on the molecules flattened into one table, each
-    wrapped as a
+    Joint probability trees fitted on the examples flattened into one table, each wrapped
+    as a
     :class:`~probabilistic_model.probabilistic_circuit.causal.causal_circuit.CausalCircuit`.
     """
 
-    flat_table: FlatTable = field(default_factory=FlatTable)
+    layout: TableLayout = TableLayout.PROPOSITIONAL
     """
-    The table the molecules are flattened into.
+    What the table the examples are flattened into holds besides their scalars.
+    """
+
+    part_widths: Dict[str, int] = field(default_factory=dict)
+    """
+    Per unrolled part field, how many positions the table has; empty unless the layout
+    unrolls the parts.
     """
 
     plain_circuit: Optional[ProbabilisticCircuit] = None
@@ -733,18 +856,26 @@ class FlatTablePipeline(CausalQueryPipeline):
 
     @property
     def name(self) -> str:
-        return f"{self.flat_table.layout} tree"
+        return f"{self.layout} tree"
 
     @property
     def table(self) -> FlatTable:
-        return self.flat_table
+        return FlatTable(self.schema, self.layout, part_widths=self.part_widths)
 
     @property
     def models_parts(self) -> bool:
-        return self.flat_table.layout.has_parts
+        return self.layout.has_parts
+
+    @property
+    def order_invariant(self) -> bool:
+        return not self.layout.has_parts
+
+    def _part_training_values(self, part: PartAttribute) -> List[Any]:
+        column = self.schema.part_column(part)
+        return [self.table.row(example)[column] for example in self.training_examples]
 
     def _training_dataframe(self) -> pd.DataFrame:
-        return self.table.dataframe(self.training_molecules)
+        return self.table.dataframe(self.training_examples)
 
     def _fit_plain_model(self) -> CircuitSize:
         dataframe = self._training_dataframe()
@@ -774,7 +905,7 @@ class FlatTablePipeline(CausalQueryPipeline):
         )
         return FlatTableRegistry(circuit=circuit)
 
-    def plain_circuit_of(self, view: MoleculeView) -> Optional[ProbabilisticCircuit]:
+    def plain_circuit_of(self, view: ExampleView) -> Optional[ProbabilisticCircuit]:
         if self.plain_circuit is None:
             raise PipelineNotFittedError(self.name)
         columns = self.table.columns_of(view)
@@ -790,16 +921,203 @@ class FlatTablePipeline(CausalQueryPipeline):
         )
 
 
-def pipelines(molecules: Sequence[MutagenesisMolecule]) -> List[CausalQueryPipeline]:
+# %% hybrid pipeline
+
+
+@dataclass
+class HybridRegistry(ModelRegistry):
     """
-    :param molecules: The molecules the pipelines will be fitted on, which size the
+    Routes a query to the model of the part it constrains: the relational circuit for a
+    query about an exchangeable part, the positional tree for everything else.
+    """
+
+    pipeline: HybridPipeline
+    """
+    The pipeline whose models are served.
+    """
+
+    def get_model(self, parameters: ModelQueryParameters) -> ProbabilisticModel:
+        cause_name = cause_variable_name(parameters)
+        constrained = constrained_variable_names(parameters)
+        about_an_exchangeable_part = any(
+            (part := self.pipeline.schema.part_attribute(name)) is not None
+            and part.part_field in self.pipeline.exchangeable_fields
+            for name in constrained
+        )
+        member = (
+            self.pipeline.exchangeable
+            if about_an_exchangeable_part
+            else self.pipeline.positional
+        )
+        return member.registry_for(cause_name).get_model(parameters)
+
+
+@dataclass
+class HybridPipeline(CausalQueryPipeline):
+    """
+    Some parts exchangeable, the rest positional: a relational circuit over the
+    exchangeable parts and a tree over the example's scalars, its counts and the
+    positional parts by position, for a relation where a position genuinely means the
+    same thing in every example.
+
+    A whole example is scored as the tree over scalars, counts and positional parts
+    times each exchangeable part's template over the parts given the counts. A question
+    about an exchangeable part goes to the relational circuit, whose answers cannot
+    depend on the order the parts are listed in; every other question goes to the tree.
+    """
+
+    positional_fields: Sequence[str] = ()
+    """
+    The exchangeable-part fields held by position.
+    """
+
+    exchangeable: Optional[RelationalPipeline] = None
+    """
+    The relational circuit, whose templates over the exchangeable parts are used; built
+    at :meth:`fit`.
+    """
+
+    positional: Optional[FlatTablePipeline] = None
+    """
+    The tree over the scalars, the counts and the positional parts, sized to the
+    training examples at :meth:`fit`.
+    """
+
+    @property
+    def name(self) -> str:
+        return "hybrid circuit"
+
+    @property
+    def exchangeable_fields(self) -> List[str]:
+        """
+        The exchangeable-part fields the relational circuit keeps as templates.
+        """
+        return [
+            part_field
+            for part_field in self.domain.part_fields
+            if part_field not in self.positional_fields
+        ]
+
+    @property
+    def registry(self) -> ModelRegistry:
+        return HybridRegistry(pipeline=self)
+
+    @property
+    def table(self) -> FlatTable:
+        if self.positional is None:
+            raise PipelineNotFittedError(self.name)
+        return self.positional.table
+
+    @property
+    def models_parts(self) -> bool:
+        return True
+
+    @property
+    def order_invariant(self) -> bool:
+        return False
+
+    def fit(self, examples: Sequence[Any]) -> FitReport:
+        self.training_examples = list(examples)
+        self.positional = FlatTablePipeline(
+            domain=self.domain,
+            layout=TableLayout.UNROLLED,
+            part_widths=FlatTable.unrolled_for(
+                self.schema, examples, part_fields=self.positional_fields
+            ).part_widths,
+            min_samples_per_leaf=self.min_samples_per_leaf,
+            plain_min_samples_per_leaf=self.plain_min_samples_per_leaf,
+        )
+        self.exchangeable = RelationalPipeline(
+            domain=self.domain,
+            min_samples_per_leaf=self.min_samples_per_leaf,
+            plain_min_samples_per_leaf=self.plain_min_samples_per_leaf,
+        )
+        started = time.perf_counter()
+        size = self._fit_plain_model()
+        self.fit_report = FitReport(training_example_count=len(examples))
+        self.fit_report.record(time.perf_counter() - started, size)
+        return self.fit_report
+
+    def _fit_plain_model(self) -> CircuitSize:
+        self.positional.fit(self.training_examples)
+        self.exchangeable.fit(self.training_examples)
+        return self.positional.fit_report.size + self.exchangeable.fit_report.size
+
+    def _fit_cause_model(self, cause_name: str) -> CircuitSize:
+        raise NotImplementedError("The members fit their own cause models.")
+
+    def _has_cause_model(self, cause_name: str) -> bool:
+        raise NotImplementedError("The members keep their own cause models.")
+
+    def _registry_for(self, cause_name: Optional[str]) -> ModelRegistry:
+        raise NotImplementedError("The registry routes by what the query constrains.")
+
+    def registry_for(self, cause_name: Optional[str]) -> ModelRegistry:
+        return self.registry
+
+    def _part_training_values(self, part: PartAttribute) -> List[Any]:
+        member = (
+            self.exchangeable
+            if part.part_field in self.exchangeable_fields
+            else self.positional
+        )
+        return member.training_values_of(self.schema.part_column(part))
+
+    def plain_circuit_of(self, view: ExampleView) -> Optional[ProbabilisticCircuit]:
+        return self.positional.plain_circuit_of(view)
+
+    def log_likelihood(
+        self, examples: Sequence[Any], view: ExampleView
+    ) -> Optional[LikelihoodReport]:
+        """
+        Score held-out examples, on as much of them as the view asks for: a whole
+        example as the tree over its scalars, counts and positional parts times each
+        exchangeable part's template over the parts given the counts.
+
+        :param examples: The examples to score.
+        :param view: How much of an example to look at.
+        :return: The report.
+        """
+        if view is not ExampleView.WHOLE:
+            return self.positional.log_likelihood(examples, view)
+        log_likelihoods = self.positional.log_likelihood(
+            examples, view
+        ).log_likelihoods.copy()
+        for part_field in self.exchangeable_fields:
+            log_likelihoods += self.exchangeable.part_log_likelihoods(
+                examples, part_field
+            )
+        return LikelihoodReport.from_log_likelihoods(log_likelihoods)
+
+
+def pipelines(
+    domain: RelationalDomain,
+    examples: Sequence[Any],
+    positional_fields: Sequence[str] = (),
+) -> List[CausalQueryPipeline]:
+    """
+    :param domain: The example and its parts.
+    :param examples: The examples the pipelines will be fitted on, which size the
         unrolled table.
-    :return: Every pipeline, unfitted: the relational circuit and one flat-table tree
-        per layout.
+    :param positional_fields: The part fields a position means the same thing in for
+        every example; a hybrid circuit holding them by position is compared too when
+        there are any.
+    :return: Every pipeline, unfitted: the relational circuit, the hybrid circuit if
+        asked for, and one flat-table tree per layout.
     """
-    return [
-        RelationalPipeline(),
-        FlatTablePipeline(flat_table=FlatTable(TableLayout.PROPOSITIONAL)),
-        FlatTablePipeline(flat_table=FlatTable.unrolled_for(molecules)),
-        FlatTablePipeline(flat_table=FlatTable(TableLayout.SCALARS)),
+    schema = Schema(domain)
+    compared: List[CausalQueryPipeline] = [RelationalPipeline(domain=domain)]
+    if positional_fields:
+        compared.append(
+            HybridPipeline(domain=domain, positional_fields=tuple(positional_fields))
+        )
+    compared += [
+        FlatTablePipeline(domain=domain, layout=TableLayout.PROPOSITIONAL),
+        FlatTablePipeline(
+            domain=domain,
+            layout=TableLayout.UNROLLED,
+            part_widths=FlatTable.unrolled_for(schema, examples).part_widths,
+        ),
+        FlatTablePipeline(domain=domain, layout=TableLayout.SCALARS),
     ]
+    return compared

@@ -9,22 +9,26 @@ import coraplex.orm.ormatic_interface
 from krrood.ormatic.ormatic import ORMatic
 from krrood.ormatic.utils import classes_of_module
 import experiments.control_loop_experiments.control_loop_profiler
+from experiments.causal_reasoning.comparison import (
+    baselines as comparison_baselines,
+    dataset as comparison_dataset,
+    domain as comparison_domain,
+    evaluation as comparison_evaluation,
+    exceptions as comparison_exceptions,
+    flat_table as comparison_flat_table,
+    pipelines as comparison_pipelines,
+    queries as comparison_queries,
+    report as comparison_report,
+    run as comparison_run,
+)
 from experiments.causal_reasoning.mutagenesis import (
-    evaluation as mutagenesis_evaluation,
     exceptions as mutagenesis_exceptions,
-    flat_table as mutagenesis_flat_table,
-    pipelines as mutagenesis_pipelines,
     queries as mutagenesis_queries,
-    report as mutagenesis_report,
     run_pipeline as mutagenesis_run_pipeline,
 )
 from experiments.causal_reasoning.tracy_clutter_picking import (
-    evaluation as tracy_evaluation,
     exceptions as tracy_exceptions,
-    flat_table as tracy_flat_table,
-    pipelines as tracy_pipelines,
     queries as tracy_queries,
-    report as tracy_report,
     run_pipeline as tracy_run_pipeline,
 )
 
@@ -37,23 +41,24 @@ ignored_classes |= set(
     classes_of_module(experiments.control_loop_experiments.control_loop_profiler)
 )
 
-# the causal-query comparisons fit and measure models over their domains instead of
-# describing the domains; both experiments name their pipelines, outcomes and
-# reports alike, which one interface cannot map twice
+# the causal-query comparison fits and measures models over the experiments' domains
+# instead of describing the domains
 for comparison_module in (
-    mutagenesis_evaluation,
+    comparison_baselines,
+    comparison_dataset,
+    comparison_domain,
+    comparison_evaluation,
+    comparison_exceptions,
+    comparison_flat_table,
+    comparison_pipelines,
+    comparison_queries,
+    comparison_report,
+    comparison_run,
     mutagenesis_exceptions,
-    mutagenesis_flat_table,
-    mutagenesis_pipelines,
     mutagenesis_queries,
-    mutagenesis_report,
     mutagenesis_run_pipeline,
-    tracy_evaluation,
     tracy_exceptions,
-    tracy_flat_table,
-    tracy_pipelines,
     tracy_queries,
-    tracy_report,
     tracy_run_pipeline,
 ):
     ignored_classes |= set(classes_of_module(comparison_module))
