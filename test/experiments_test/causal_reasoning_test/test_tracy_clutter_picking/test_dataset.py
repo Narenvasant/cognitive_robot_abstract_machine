@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from requests import HTTPError
 
-from ...pytest_environment import runs_in_continuous_integration
+from ....pytest_environment import runs_in_continuous_integration
 
 from experiments.causal_reasoning.tracy_clutter_picking.dataset import (
     ClutterPickDataset,

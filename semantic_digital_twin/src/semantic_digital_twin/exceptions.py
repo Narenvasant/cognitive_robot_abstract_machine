@@ -2,6 +2,7 @@ from __future__ import annotations, absolute_import
 
 from dataclasses import dataclass, field, Field
 from datetime import timedelta
+from http import HTTPStatus
 from pathlib import Path
 from typing import Dict, Set
 from uuid import UUID
@@ -17,8 +18,7 @@ from typing_extensions import (
     Any,
 )
 
-from krrood.adapters.exceptions import JSONSerializationError, UntrackedObjectError
-from krrood.symbolic_math.exceptions import SymbolicMathNotJsonSerializableError
+from krrood.adapters.exceptions import UntrackedObjectError
 from krrood.exceptions import DataclassException
 from semantic_digital_twin.datastructures.definitions import JointStateType
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -1339,6 +1339,35 @@ class PathResolutionError(ParsingError):
 
 
 @dataclass
+class DatasetServerError(ParsingError):
+    """
+    Raised when a dataset server does not answer with what was asked of it.
+    """
+
+    url: str = field(kw_only=True)
+    """
+    The address that was requested.
+    """
+
+    status_code: int = field(kw_only=True)
+    """
+    The status the server answered with.
+    """
+
+    def error_message(self) -> str:
+        return f"The dataset server answered {self.status_code} for '{self.url}'."
+
+    def suggest_correction(self) -> str:
+        if self.status_code == HTTPStatus.NOT_FOUND:
+            return (
+                "check that the dataset server serves the directory this path is under."
+            )
+        return (
+            "check that the dataset server is reachable and serving the dataset root."
+        )
+
+
+@dataclass
 class WorldEntityNotFoundError(UsageError):
     name_or_hash: Union[str, PrefixedName, int]
 
@@ -1445,18 +1474,6 @@ class DoesNotBelongToAWorldError(UsageError):
             "    with world.modify_world():\n"
             "        world.add_kinematic_structure_entity(entity)"
         )
-
-
-class NotJsonSerializable(JSONSerializationError): ...
-
-
-@dataclass
-class SpatialTypeNotJsonSerializable(
-    NotJsonSerializable, SymbolicMathNotJsonSerializableError
-):
-    """
-    Raised when a spatial type that depends on variables is serialized to JSON.
-    """
 
 
 @dataclass
@@ -1882,15 +1899,10 @@ class DuplicateSimulatorPropertyError(UsageError):
     The type of property attached more than once.
     """
 
-    count: int
-    """
-    How many properties of that type the entity carries.
-    """
-
     def error_message(self) -> str:
         return (
-            f"Expected at most one {self.property_type.__name__} simulator property, "
-            f"found {self.count}."
+            f"The entity already carries a {self.property_type.__name__} simulator "
+            "property."
         )
 
     def suggest_correction(self) -> str:

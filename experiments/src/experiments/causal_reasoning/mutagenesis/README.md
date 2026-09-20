@@ -187,5 +187,5 @@ python -m experiments.causal_reasoning.mutagenesis.run_pipeline
 python -m experiments.causal_reasoning.mutagenesis.run_pipeline --orderings 1 --splits 2
 ```
 
-The tests under `test/causal_reasoning_test/test_mutagenesis` run the pipelines and the
+The tests under `test/experiments_test/causal_reasoning_test/test_mutagenesis` run the pipelines and the
 studies on the synthetic molecules, so they need no network access.

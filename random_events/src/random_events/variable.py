@@ -145,8 +145,7 @@ class Symbolic(Variable):
         )
 
     def make_value(self, value) -> Set:
-        # a string is one symbol, not the sequence of its characters
-        if not isinstance(value, Iterable) or isinstance(value, str):
+        if self.names_one_element(value):
             value = [value]
 
         parsed_value = []
@@ -171,6 +170,21 @@ class Symbolic(Variable):
                 parsed_value += matches
 
         return Set.from_simple_sets(*parsed_value)
+
+    @staticmethod
+    def names_one_element(value: Any) -> bool:
+        """
+        Whether a value stands for one element of this variable's domain rather than for
+        a collection of them.
+
+        A string is one value rather than the characters it iterates as, which is what a
+        member of a string-valued enum is; so is anything that is not iterable at all,
+        and an element itself.
+
+        :param value: The value given where this variable's value is expected.
+        :return: Whether it names one element.
+        """
+        return isinstance(value, (str, SetElement)) or not isinstance(value, Iterable)
 
 
 @dataclass(eq=False, repr=False)

@@ -169,6 +169,6 @@ hosted in [tracy_clutter_picking_data](https://github.com/Narenvasant/tracy_clut
 and fetched into the user's cache the first time `run_pipeline` needs them;
 `ExperimentFiles.recorded_attempts` pins the version.
 
-The tests under `test/causal_reasoning_test/test_tracy_clutter_picking` run the pipelines on the
+The tests under `test/experiments_test/causal_reasoning_test/test_tracy_clutter_picking` run the pipelines on the
 synthetic attempts, so they need no simulator. The ones that build the MuJoCo scene are
 skipped where Tracy's description is not installed.
