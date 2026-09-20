@@ -109,9 +109,9 @@ class TopDownGraspGeometry:
         root_transform_tool = self.world.compute_forward_kinematics_np(
             self.world.root, gripper.tool_frame
         )
-        left_center = bounding_box_center_world(self.world, gripper.left_fingertip)
-        right_center = bounding_box_center_world(self.world, gripper.right_fingertip)
-        finger_midpoint = (left_center + right_center) / 2
+        thumb_center = bounding_box_center_world(self.world, gripper.thumb.tip)
+        finger_center = bounding_box_center_world(self.world, gripper.finger.tip)
+        finger_midpoint = (thumb_center + finger_center) / 2
         offset_in_root_frame = finger_midpoint - root_transform_tool[:3, 3]
         return root_transform_tool[:3, :3].T @ offset_in_root_frame
 

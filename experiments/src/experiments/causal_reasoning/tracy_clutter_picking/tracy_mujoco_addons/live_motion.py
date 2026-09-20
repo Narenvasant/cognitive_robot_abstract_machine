@@ -352,11 +352,11 @@ class MotionRunner:
         :return: The depth, in metres.
         """
         world = gripper._world
-        frame_x = world.compute_forward_kinematics_np(
-            gripper.root, gripper.left_fingertip
-        )[0, 3]
+        frame_x = world.compute_forward_kinematics_np(gripper.root, gripper.thumb.tip)[
+            0, 3
+        ]
         inner_face_x = (
-            gripper.left_fingertip.collision.as_bounding_box_collection_in_frame(
+            gripper.thumb.tip.collision.as_bounding_box_collection_in_frame(
                 gripper.root
             )
             .bounding_box()
@@ -409,29 +409,29 @@ class MotionRunner:
 
         simulator = self.simulation.simulator
         target_name = target_body.name.name
-        left_fingertip_name = gripper.left_fingertip.name.name
-        right_fingertip_name = gripper.right_fingertip.name.name
+        thumb_tip_name = gripper.thumb.tip.name.name
+        finger_tip_name = gripper.finger.tip.name.name
 
         def both_fingertips_touching() -> bool:
             """
             Whether both pads are in contact with the target right now.
             """
-            left_contacts = simulator.get_contact_bodies(
-                body_name=left_fingertip_name, including_children=False
+            thumb_contacts = simulator.get_contact_bodies(
+                body_name=thumb_tip_name, including_children=False
             ).result
-            right_contacts = simulator.get_contact_bodies(
-                body_name=right_fingertip_name, including_children=False
+            finger_contacts = simulator.get_contact_bodies(
+                body_name=finger_tip_name, including_children=False
             ).result
-            return target_name in left_contacts and target_name in right_contacts
+            return target_name in thumb_contacts and target_name in finger_contacts
 
         # the pads stay parallel, so one fingertip frame moves purely along the
         # other's closing axis and the distance between them is a 1-D goal
         self.run(
             CartesianPosition(
-                root_link=gripper.right_fingertip,
-                tip_link=gripper.left_fingertip,
+                root_link=gripper.finger.tip,
+                tip_link=gripper.thumb.tip,
                 goal_point=Point3(
-                    frame_distance, 0.0, 0.0, reference_frame=gripper.right_fingertip
+                    frame_distance, 0.0, 0.0, reference_frame=gripper.finger.tip
                 ),
                 threshold=self.closing_threshold,
             ),

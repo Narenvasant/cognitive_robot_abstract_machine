@@ -4,6 +4,7 @@ Tests for the two causal-query pipelines on synthetic attempts.
 
 from __future__ import annotations
 
+import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO classes
 import numpy as np
 import pytest
 

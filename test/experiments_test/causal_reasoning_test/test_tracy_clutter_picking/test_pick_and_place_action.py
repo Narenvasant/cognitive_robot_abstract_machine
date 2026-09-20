@@ -4,6 +4,7 @@ Tests for the grasp geometry the pick and place actions derive from a mounted Tr
 
 from __future__ import annotations
 
+import experiments.orm.ormatic_interface  # noqa: F401  # registers the DAO classes
 import math
 
 import numpy

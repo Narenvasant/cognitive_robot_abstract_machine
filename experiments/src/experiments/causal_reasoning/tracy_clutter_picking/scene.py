@@ -209,7 +209,7 @@ class MilkClutterWorld:
             )
         gripper = arm_of(self.robot, self.pick_arm).end_effector
         ContactParameters(friction=self.grasp_contact.friction).apply_to(
-            [gripper.left_fingertip, gripper.right_fingertip]
+            [gripper.thumb.tip, gripper.finger.tip]
         )
         self.surface_contact.apply_to([self.robot.root])
 
