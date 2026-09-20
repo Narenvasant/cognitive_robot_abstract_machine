@@ -122,45 +122,93 @@ class CountQuestion(AdjustedCountCase):
         return "the effect"
 
 
-def _answered(case: AdjustedCountCase) -> QueryOutcome:
+def _answered(
+    case: AdjustedCountCase,
+    pipeline_name: str = "relational circuit",
+    best_region: str = "0",
+    repeat_duration: float = 0.0,
+) -> QueryOutcome:
     return QueryOutcome(
         case=case,
-        pipeline_name="relational circuit",
+        pipeline_name=pipeline_name,
         duration=0.0,
+        repeat_duration=repeat_duration,
         min_region_support=1,
-        best_region="0",
+        best_region=best_region,
         effect_probability_given_best_region=0.5,
         effects=[
             InterventionalEffect(
-                cause_region="0",
-                region_probability=1.0,
+                cause_region=region,
+                region_probability=0.5,
                 naive_probability=0.5,
-                adjusted_probability=0.5,
+                adjusted_probability=0.9 if region == best_region else 0.1,
                 support_count=10,
-                ordinal=0.0,
+                ordinal=float(region),
             )
+            for region in ("0", "1")
         ],
     )
 
 
-def _report(cases) -> str:
+def _pipeline(name: str, outcomes) -> PipelineReport:
+    return PipelineReport(
+        name=name,
+        fit=FitReport(training_example_count=10),
+        likelihoods={view: None for view in ExampleView},
+        outcomes=outcomes,
+    )
+
+
+def _render(pipelines) -> str:
     report = EvaluationReport(
         random_seed=0,
         training_example_count=10,
         test_example_count=2,
         effect_rate=0.5,
-        pipelines=[
-            PipelineReport(
-                name="relational circuit",
-                fit=FitReport(training_example_count=10),
-                likelihoods={view: None for view in ExampleView},
-                outcomes=[_answered(case) for case in cases],
-            )
-        ],
+        pipelines=pipelines,
         shared_coverage_log_likelihoods={view: {} for view in ExampleView},
     )
     text = ReportText(title="test", introduction=(), effect_summary="nothing")
     return MarkdownReport(whole_domain(), text, report).render()
+
+
+def _report(cases) -> str:
+    return _render(
+        [_pipeline("relational circuit", [_answered(case) for case in cases])]
+    )
+
+
+def test_pipelines_that_disagree_are_grouped_by_their_answer():
+    case = CountQuestion(statistic_name="count", confounders=(SIZE,))
+    rendered = _render(
+        [
+            _pipeline("relational circuit", [_answered(case, "relational circuit")]),
+            _pipeline("propositional tree", [_answered(case, "propositional tree")]),
+            _pipeline(
+                "regression adjustment",
+                [_answered(case, "regression adjustment", "1", float("nan"))],
+            ),
+        ]
+    )
+    assert (
+        "the relational circuit and the propositional tree say 0 (0.90, 0.90); "
+        "the regression adjustment says 1 (0.90)." in rendered
+    )
+
+
+def test_a_pipeline_that_is_not_timed_again_has_no_latency_finding():
+    case = CountQuestion(statistic_name="count", confounders=(SIZE,))
+    rendered = _render(
+        [
+            _pipeline("relational circuit", [_answered(case, repeat_duration=1.5)]),
+            _pipeline(
+                "regression adjustment",
+                [_answered(case, "regression adjustment", "0", float("nan"))],
+            ),
+        ]
+    )
+    assert "- The relational circuit takes 1.50 seconds" in rendered
+    assert "- The regression adjustment takes" not in rendered
 
 
 def test_the_adjustments_table_holds_one_column_per_adjustment_of_one_question():
