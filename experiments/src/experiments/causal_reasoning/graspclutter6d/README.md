@@ -210,8 +210,9 @@ measured around it.
   reordering is measured against. Reported as a distribution: the spread of the adjusted
   probability per region, the share of reorderings in which the most effective region
   moved, and the share in which the trend changed sign.
-- *Splits.* The comparison repeated over five random splits gives the spread of every
-  trend and contrast.
+- *Splits.* Optionally (`--splits N`), the comparison repeated over random splits for
+  the spread of every trend and contrast; off by default, since it multiplies the run
+  time and adds error bars rather than findings.
 - *Learning curve.* Fitting on a growing share of the scenes shows how much data each
   pipeline needs to explain a whole scene.
 - *Ground truth.* Scenes are sampled from a structural causal model over the same
@@ -341,15 +342,18 @@ EOF
 Then:
 
 ```bash
-# fit, score and question every pipeline, reorder the parts twenty times, repeat over
-# five splits, measure the learning curve, score against the synthetic model's truth,
-# follow the grounding samples and measure the scaling
+# fit, score and question every pipeline, score against the synthetic model's truth,
+# reorder the parts twenty times, follow the grounding samples, measure the learning
+# curve and the scaling; the report is rewritten after every study
 python scripts/regenerate_all_orm.py
 python -m experiments.causal_reasoning.graspclutter6d.run_pipeline
 
-# a quicker look: a fifth of the scenes, three orderings, two splits
+# a quicker look: a fifth of the scenes, three orderings
 python -m experiments.causal_reasoning.graspclutter6d.run_pipeline \
-    --scenes 200 --orderings 3 --splits 2
+    --scenes 200 --orderings 3
+
+# with error bars from five random splits, at several times the run time
+python -m experiments.causal_reasoning.graspclutter6d.run_pipeline --splits 5
 
 # after a change to the domain classes, build the scenes afresh
 python -m experiments.causal_reasoning.graspclutter6d.run_pipeline --rebuild

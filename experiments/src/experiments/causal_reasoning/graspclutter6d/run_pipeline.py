@@ -67,6 +67,33 @@ class ExperimentFiles:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ReportWriter:
+    """
+    Writes the report out after every study, so that a run stopped part-way leaves what
+    it has finished on disk and a reader can follow it as it goes.
+    """
+
+    output: Path
+    """
+    The Markdown file to write.
+    """
+
+    report: MarkdownReport
+    """
+    The report, which the studies fill in one by one.
+    """
+
+    def after(self, study: str) -> None:
+        """
+        Write the report as it stands.
+
+        :param study: What was just finished, for the log.
+        """
+        self.output.write_text(self.report.render())
+        logger.info("%s; wrote %s", study, self.output)
+
+
 def main(
     output: Path,
     scene_limit: Optional[int],
@@ -88,7 +115,7 @@ def main(
     :param rebuild: Build the scenes afresh instead of reading the stored ones.
     :param train_fraction: Share of scenes to fit on.
     :param seed: Seed of the split and of the questions' Monte-Carlo grounding; the
-        repeated splits use the seeds counting up from it.
+        learning curve and any repeated splits use the seeds counting up from it.
     :param min_samples_per_leaf: The fewest training rows a leaf of a cause-specific
         model may hold; the pipelines' own default if not given.
     :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
@@ -110,48 +137,39 @@ def main(
         plain_min_samples_per_leaf=plain_min_samples_per_leaf,
         min_region_support=min_region_support,
     )
-    logger.info("Comparing on one split")
-    report = evaluate(dataset, random_seed=seed, **settings)
-    logger.info("Reordering the parts %d times", ordering_count)
-    permutations = permutation_study(
-        dataset, ordering_count=ordering_count, random_seed=seed, **settings
-    )
-    logger.info("Repeating over %d splits", split_count)
-    splits = split_study(
-        dataset, random_seeds=range(seed, seed + split_count), **settings
-    )
-    logger.info("Measuring the learning curve")
-    curve = learning_curve(
-        dataset,
-        random_seeds=range(seed, seed + min(split_count, 3)),
-        plain_min_samples_per_leaf=plain_min_samples_per_leaf,
-    )
-    logger.info("Following the answers as grounding draws more samples")
-    monte_carlo = monte_carlo_study(dataset, random_seed=seed, **settings)
-    logger.info("Scoring against the synthetic model's truth")
-    truth = ground_truth_study(
+    rendered = MarkdownReport(evaluate(dataset, random_seed=seed, **settings))
+    write = ReportWriter(output=output, report=rendered)
+    write.after("Comparing on one split")
+    rendered.truth = ground_truth_study(
         random_seed=seed,
         min_samples_per_leaf=min_samples_per_leaf,
         plain_min_samples_per_leaf=plain_min_samples_per_leaf,
         min_region_support=min_region_support,
     )
-    logger.info("Measuring cost against the number of objects")
-    scaling = scaling_study(
+    write.after("Scoring against the synthetic model's truth")
+    rendered.permutations = permutation_study(
+        dataset, ordering_count=ordering_count, random_seed=seed, **settings
+    )
+    write.after(f"Reordering the parts {ordering_count} times")
+    rendered.monte_carlo = monte_carlo_study(dataset, random_seed=seed, **settings)
+    write.after("Following the answers as grounding draws more samples")
+    rendered.curve = learning_curve(
+        dataset,
+        random_seeds=range(seed, seed + 3),
+        plain_min_samples_per_leaf=plain_min_samples_per_leaf,
+    )
+    write.after("Measuring the learning curve")
+    rendered.scaling = scaling_study(
         random_seed=seed,
         min_samples_per_leaf=min_samples_per_leaf,
         plain_min_samples_per_leaf=plain_min_samples_per_leaf,
     )
-    output.write_text(
-        MarkdownReport(
-            report,
-            permutations=permutations,
-            splits=splits,
-            curve=curve,
-            truth=truth,
-            monte_carlo=monte_carlo,
-            scaling=scaling,
-        ).render()
-    )
+    write.after("Measuring cost against the number of objects")
+    if split_count > 0:
+        rendered.splits = split_study(
+            dataset, random_seeds=range(seed, seed + split_count), **settings
+        )
+        write.after(f"Repeating over {split_count} splits")
     logger.info("Wrote %s", output)
 
 
@@ -166,7 +184,7 @@ if __name__ == "__main__":
     parser.add_argument("--min-samples-per-leaf", type=float, default=None)
     parser.add_argument("--plain-min-samples-per-leaf", type=float, default=None)
     parser.add_argument("--orderings", type=int, default=20)
-    parser.add_argument("--splits", type=int, default=5)
+    parser.add_argument("--splits", type=int, default=0)
     parser.add_argument("--min-region-support", type=int, default=10)
     arguments = parser.parse_args()
     main(
