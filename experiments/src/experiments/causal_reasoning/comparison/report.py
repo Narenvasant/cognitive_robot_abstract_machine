@@ -488,7 +488,7 @@ class MarkdownReport:
         )
         lines += [
             "",
-            f"How well each explains {plural} it never saw, on three views of a "
+            f"How well each explains {plural} it never saw, on three views of one "
             f"{noun}: its own scalars, which every pipeline models; its scalars and "
             f"counts; and the whole {noun}, parts included, which only the pipelines "
             "that model the parts can score. The relational circuit scores a whole "
