@@ -1002,18 +1002,41 @@ class MarkdownReport:
                     f"effective setting (adjusted probabilities: {probabilities})."
                 )
                 continue
+            by_region: Dict[str, List[QueryOutcome]] = {}
+            for answer in answers:
+                by_region.setdefault(answer.most_effective.cause_region, []).append(
+                    answer
+                )
             lines.append(
                 f"- On `{outcome.case.name}`, the pipelines disagree on the most "
                 "effective setting: "
                 + "; ".join(
-                    f"the {answer.pipeline_name} says "
-                    f"{outcome.case.describe_cause(answer.most_effective.cause_region)} "
-                    f"({self._number(answer.most_effective.adjusted_probability, 2)})"
-                    for answer in answers
+                    self._names(agreeing)
+                    + (" say " if len(agreeing) > 1 else " says ")
+                    + outcome.case.describe_cause(region)
+                    + " ("
+                    + ", ".join(
+                        self._number(answer.most_effective.adjusted_probability, 2)
+                        for answer in agreeing
+                    )
+                    + ")"
+                    for region, agreeing in by_region.items()
                 )
                 + "."
             )
         return lines
+
+    @staticmethod
+    def _names(outcomes: Sequence[QueryOutcome]) -> str:
+        """
+        :param outcomes: Outcomes of different pipelines.
+        :return: The pipelines' names as one phrase, such as ``the relational circuit
+            and the unrolled tree``.
+        """
+        names = [f"the {outcome.pipeline_name}" for outcome in outcomes]
+        if len(names) == 1:
+            return names[0]
+        return ", ".join(names[:-1]) + " and " + names[-1]
 
     def _likelihood_findings(self) -> List[str]:
         """
@@ -1102,6 +1125,8 @@ class MarkdownReport:
             mean_repeat = sum(outcome.repeat_duration for outcome in answered) / len(
                 answered
             )
+            if math.isnan(mean_repeat):
+                continue
             lines.append(
                 f"- The {pipeline.name} takes {self._number(mean_repeat, 2)} seconds per "
                 "answered question on average once its models are fitted."
