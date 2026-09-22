@@ -102,6 +102,7 @@ is not a stand-in for the environment.
 |---|---|---|
 | Mutagenesis: ind1 → atom is carbon | 0.55 vs 0.43 | 1.00 vs 1.00 |
 | Mutagenesis: element → atom is terminal | h, cl 1.00; o 0.94; c, n 0.00 | refused (no terminal atom 0) |
+| Mutagenesis: the same, deep set adjustment | c 0.29, h 0.51, cl 0.76 | – |
 | Tracy: neighbour along closing axis → disturbed | 0.18 vs 0.03, [0.12, 0.17] over 2,160 neighbours | 0.22 vs 0.03, [0.11, 0.28] over 240 rows |
 | GraspClutter6D: catalogue → object heavily occluded | grasp 0.36 vs ycb-video 0.32 | ycb-video 0.29 highest |
 | GraspClutter6D: object size → loses every grasp | small 0.12 vs large 0.10, [0.00, 0.03] | large 0.15 highest, [0.02, 0.14] |
@@ -111,6 +112,14 @@ Mutagenesis, the neighbour counts on Tracy, the object counts on GraspClutter6D)
 over every part of every training example. The unrolled tree's are answers about the
 part the dataset happens to list first: the carbon the CTU listing puts first, the
 first-drawn neighbour, the first-labelled object.
+
+The valence row is worth dwelling on, because its truth comes from chemistry rather
+than from a mechanism anyone here wrote. An atom with one bond is terminal, so hydrogen
+and the halogens are terminal wherever they occur and carbon and nitrogen are not. The
+relational circuit reads exactly that; no flat table can be asked the question at all;
+and the deep set, which pools the atoms instead of reading each on its own rows, smooths
+it into 0.29 for carbon and 0.51 for hydrogen. Order-freedom is not enough on its own —
+reading each part as a row of its own is what recovers the relation.
 
 ## What reordering the parts does
 
