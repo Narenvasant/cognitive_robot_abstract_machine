@@ -214,3 +214,142 @@ to fifty-two.
 - The price is grounding time on large examples and the same backdoor adjustment every
   circuit pays; the model itself is a fraction of the size of the tree that holds the
   parts by position.
+
+## For the paper
+
+Text and tables in the manuscript's own conventions (formal, third person, no hyphens,
+no colons inside sentences, every number from `results.md`), written to drop into
+`paper/main.tex` of the AISTATS submission. The rows for the other two datasets are
+already in `tab:comparison` there; the block below adds the third.
+
+### Rows for `tab:comparison`
+
+```latex
+\midrule
+\multicolumn{6}{l}{\emph{GraspClutter6D, 954 scenes, 5 to 20 objects, 52 frames}} \\
+Relational    & 14/14 & 87.4\% & $-17.2$ & 0.00 & 0.0 \\
+Hybrid        & 14/14 & 84.3\% &  83.3   & 0.00 & 123.6 \\
+Propositional & 11/14 & ---    & ---     & ---  & --- \\
+Unrolled      & 14/14 & 67.0\% &  26.9   & 0.50 & 120.4 \\
+Scalars only  &  1/14 & ---    & ---     & ---  & --- \\
+Regression    & 11/14 & ---    & ---     & ---  & --- \\
+```
+
+### The `Real scenes` paragraph of the experiments section
+
+```latex
+\paragraph{Real scenes.}
+The third dataset is GraspClutter6D \citep{graspclutter6d}, 954 real bin, shelf and
+table scenes photographed from 52 poses, with the pose and visibility of every object
+instance in every frame and analytic grasps checked for collision against every scene.
+A scene is the queried class, its value fields the object catalogue it is built from,
+the spread and the stacking of its clutter and whether every object in it keeps a
+grasp, which 37.6\% do, and its two collection fields hold one object per instance
+and one viewpoint per frame. The frames are numbered by the recording rig, so a
+position means the same camera in every scene, and a fourth circuit, the hybrid,
+holds the viewpoints by position and the objects as exchangeable parts. The fourteen
+queries name a cause on the scene, on one of its counts under three sets of
+confounders, and on one object. Every result of the first two datasets repeats
+(\Cref{tab:comparison}). The relational, hybrid and unrolled models answer all
+fourteen queries, the propositional tree and the regression eleven and the scalars
+only tree one. Where the columns are shared the answers agree to three decimals, and
+what they say is that the number of objects is the confounder that matters, since
+adjusting for it moves single regions by up to 0.15 and turns the contrast of the
+small object count from $-0.09$ to $0.07$, where adjusting for the spread of the
+clutter changes nothing to three decimals. The regression agrees on every direction
+and inflates the occluded object contrast to 0.61 against 0.20 for the circuits,
+having assumed a monotone relation the data does not have. On the three queries about
+an object the unrolled tree takes the sign of two effects the other way from the
+relational circuit, and over twenty reorderings its most effective region moves in
+88\% of them while the relational and hybrid answers do not move. The whole scene log
+likelihood places the three models where the order of their parts puts them. The
+hybrid circuit scores held out scenes at 83.3 against 26.9 for the unrolled tree and
+$-17.2$ for the fully exchangeable circuit, and reordering the parts costs the hybrid
+124 nats and the unrolled tree 120 while the relational circuit is unchanged, so the
+model that treats as exchangeable exactly the parts that are exchangeable is the one
+that explains the scenes.
+```
+
+### A paragraph on the known truth, for the experiments section or the appendix
+
+```latex
+\paragraph{Against a known truth.}
+Reordering shows that an answer is stable, not that it is right. A structural causal
+model over the GraspClutter6D domain, whose interventional probabilities are read
+off 200000 scenes sampled with the cause forced in the mechanism, gives every
+pipeline a truth to be scored against, under five settings of the number of objects
+and of the strength with which that number drives both the causes and the effect. The
+model lists the small objects first, so a column that addresses an object by position
+is misleading by construction. Fitted on 400 scenes per setting and asked seven
+queries, the relational circuit answers every one with a support weighted absolute
+error of 0.026 and a rank correlation with the truth of 0.58, the hybrid 0.029 and
+0.56, the propositional tree 0.058 and 0.40 on the four queries it can pose and the
+unrolled tree 0.064 and 0.26 (\Cref{tab:truth}). On the count queries every pipeline
+that answers has the same error, since on those columns they are the same tree, and
+the extremes of a count are rare within every stratum of the confounder. On the three
+queries about an object the relational circuit's error is 0.033, 0.009 and 0.007
+against 0.133, 0.054 and 0.044 for the unrolled tree, and the relational error grows
+from 0.05 to 0.08 as the scenes grow from five to twenty objects.
+```
+
+```latex
+\begin{table}[t]
+\centering
+\caption{Every pipeline against the synthetic model's interventional
+probabilities, over five settings and seven queries. \emph{Weighted} is the mean
+absolute error with each cause region weighted by the training rows it holds,
+\emph{Rank} the mean Spearman correlation between answered and true probabilities
+over a query's regions, and the last three columns the mean absolute error on the
+three queries whose cause or effect lives on one object.}
+\label{tab:truth}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcrrrrr}
+\toprule
+Pipeline & Answ. & Weighted & Rank & Catalogue & Occluded & Size \\
+\midrule
+Relational    & 100\% & 0.026 & 0.58 & 0.033 & 0.009 & 0.007 \\
+Hybrid        & 100\% & 0.029 & 0.56 & 0.033 & 0.009 & 0.007 \\
+Propositional &  57\% & 0.058 & 0.40 & ---   & ---   & ---   \\
+Unrolled      & 100\% & 0.064 & 0.26 & 0.133 & 0.054 & 0.044 \\
+Scalars only  &   0\% & ---   & ---  & ---   & ---   & ---   \\
+\bottomrule
+\end{tabular}
+\end{table}
+```
+
+### Lines for the `Additional Experiments` appendix
+
+```latex
+\paragraph{What adjusting changes.}
+Every count query is asked under more than one set of confounders. On the molecules,
+adjusting for the number of atoms in place of the structural indicator moves single
+regions by up to 0.3 and leaves every trend within 0.1 and every contrast within 0.05
+of its value under the indicator. On the attempts, adjusting for the environment
+changes no region of the crowding query by more than 0.01. On the scenes, adjusting
+for the spread of the clutter leaves the adjusted probabilities equal to the naive
+ones to three decimals in almost every region, and adjusting for the number of
+objects is what moves them.
+
+\paragraph{Learning curves.}
+Fitted on a fifth of the data and scored on the same held out fifth, the relational
+circuit already covers 30\% of the molecules, 30\% of the attempts and 36\% of the
+scenes, against 10\%, 2\% and 13\% for the unrolled tree, since the relational
+template pools every part of every training example where the unrolled table sees
+one row per example. At four fifths the coverages are 75\%, 76\% and 84\% against
+48\%, 43\% and 64\%.
+
+\paragraph{Cost against the size of the example.}
+On synthetic scenes of 5 to 50 objects, 400 per size, the relational circuit grows
+from 2330 to 10016 nodes and its fit from 16 to 44 seconds, the hybrid from 1260 to
+4230 nodes and 10 to 28 seconds, and the unrolled tree from 7422 to 116486 nodes and
+6 to 276 seconds. What a query costs once the models are fitted is the backdoor
+adjustment, which is cheap where the cause and the confounders have few regions and
+takes every circuit alike between two and thirty minutes on the scenes when two
+confounders with several hundred regions each are summed over, and the grounding,
+which adds two to four minutes to a query about an object on the scenes and under
+five seconds elsewhere. Grounding integrates over the distinct values it has sampled
+for the counts a query leaves open, so it settles from fifty samples wherever those
+counts take few values and from 8000 on the scene query whose open count runs to
+fifty two.
+```
