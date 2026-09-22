@@ -237,18 +237,31 @@ def test_report_records_every_question_for_every_pipeline(report, cases):
         "unrolled tree",
         "scalars-only tree",
         "regression adjustment",
+        "neural adjustment",
     ]
     for pipeline in report.pipelines:
         assert [outcome.case for outcome in pipeline.outcomes] == cases
 
 
 def test_the_estimators_without_the_atoms_refuse_the_question_about_one_atom(report):
-    relational, propositional, unrolled, scalars_only, regression = report.pipelines
-    assert relational.outcomes[1].answered
-    assert unrolled.outcomes[1].answered
-    assert propositional.outcomes[1].refusal == Refusal.SCHEMA_MISMATCH
-    assert scalars_only.outcomes[1].refusal == Refusal.SCHEMA_MISMATCH
-    assert regression.outcomes[1].refusal == Refusal.SCHEMA_MISMATCH
+    """
+    A question whose effect lives on an atom needs the atoms. The relational circuit
+    grounds them, the unrolled tree holds them by position and the neural estimator
+    pools them; the tables that summarise them away refuse.
+    """
+    answered = {
+        pipeline.name: pipeline.outcomes[1].answered for pipeline in report.pipelines
+    }
+    assert answered == {
+        "relational circuit": True,
+        "propositional tree": False,
+        "unrolled tree": True,
+        "scalars-only tree": False,
+        "regression adjustment": False,
+        "neural adjustment": True,
+    }
+    for name in ("propositional tree", "scalars-only tree", "regression adjustment"):
+        assert report.pipeline(name).outcomes[1].refusal == Refusal.SCHEMA_MISMATCH
 
 
 def test_shared_coverage_likelihood_is_reported_per_view(report):
@@ -258,7 +271,9 @@ def test_shared_coverage_likelihood_is_reported_per_view(report):
         for pipeline in report.pipelines
         if pipeline.likelihoods[ExampleView.SCALARS] is not None
     }
-    assert "regression adjustment" not in shared[ExampleView.SCALARS]
+    assert not {"regression adjustment", "neural adjustment"} & set(
+        shared[ExampleView.SCALARS]
+    )
     assert set(shared[ExampleView.WHOLE]) == {"relational circuit", "unrolled tree"}
 
 
@@ -339,12 +354,13 @@ def test_markdown_report_names_every_question_and_marks_the_verdicts(
 
 def test_every_circuit_outcome_is_timed_asked_again(report):
     """
-    Every circuit is asked again once its models are fitted; the regression baseline
-    fits one regression per question, so it has nothing to time a second time.
+    Every circuit is asked again once its models are fitted; the estimators that are
+    not circuits fit one model per question, so they have nothing to time a second
+    time.
     """
     for pipeline in report.pipelines:
         for outcome in pipeline.outcomes:
-            if pipeline.name == "regression adjustment":
+            if pipeline.name in ("regression adjustment", "neural adjustment"):
                 assert math.isnan(outcome.repeat_duration)
             else:
                 assert outcome.repeat_duration >= 0

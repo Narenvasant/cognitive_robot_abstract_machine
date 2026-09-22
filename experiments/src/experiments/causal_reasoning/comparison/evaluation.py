@@ -901,11 +901,10 @@ def evaluate(
             for outcome in pipeline_report.outcomes:
                 outcome.repeat_duration = asker.time_repeat(pipeline, outcome.case)
         report.pipelines.append(pipeline_report)
-    report.pipelines.append(
-        regression_adjustment_report(
-            comparison.domain, training.examples, cases, min_region_support
-        )
-    )
+    for baseline_report in baseline_reports(
+        comparison.domain, training.examples, cases, min_region_support
+    ):
+        report.pipelines.append(baseline_report)
     report.shared_coverage_log_likelihoods = {
         view: shared_coverage_log_likelihoods(values)
         for view, values in log_likelihoods.items()
@@ -913,30 +912,63 @@ def evaluate(
     return report
 
 
-def regression_adjustment_report(
+def baselines_of(domain: RelationalDomain, min_region_support: int) -> List[Any]:
+    """
+    The estimators that are not circuits, which every comparison asks the same
+    questions of.
+
+    :param domain: The example and its parts.
+    :param min_region_support: The fewest training rows a cause region may hold for its
+        effect to be read as an answer.
+    :return: The estimators, unfitted.
+    """
+    from experiments.causal_reasoning.comparison.baselines import (
+        RegressionAdjustmentBaseline,
+    )
+    from experiments.causal_reasoning.comparison.neural_baseline import (
+        NeuralAdjustmentBaseline,
+    )
+
+    return [
+        RegressionAdjustmentBaseline(
+            domain=domain, min_region_support=min_region_support
+        ),
+        NeuralAdjustmentBaseline(domain=domain, min_region_support=min_region_support),
+    ]
+
+
+def baseline_reports(
     domain: RelationalDomain,
     examples: Sequence[Any],
     cases: Sequence[CausalQueryCase],
     min_region_support: int,
-) -> PipelineReport:
+) -> List[PipelineReport]:
     """
-    Ask the regression-adjustment baseline every question, as a report shaped like a
-    pipeline's, with no likelihoods since it models no distribution.
+    Ask every estimator that is not a circuit every question, as reports shaped like a
+    pipeline's, with no likelihoods since they model no distribution.
 
     :param domain: The example and its parts.
     :param examples: The examples to fit on.
     :param cases: The questions.
     :param min_region_support: The fewest training examples a cause region may hold
         for its effect to be read as an answer.
-    :return: The report.
+    :return: One report per estimator.
     """
-    from experiments.causal_reasoning.comparison.baselines import (
-        RegressionAdjustmentBaseline,
-    )
+    return [
+        _baseline_report(baseline, examples, cases)
+        for baseline in baselines_of(domain, min_region_support)
+    ]
 
-    baseline = RegressionAdjustmentBaseline(
-        domain=domain, min_region_support=min_region_support
-    )
+
+def _baseline_report(
+    baseline: Any, examples: Sequence[Any], cases: Sequence[CausalQueryCase]
+) -> PipelineReport:
+    """
+    :param baseline: An estimator that is not a circuit.
+    :param examples: The examples to fit on.
+    :param cases: The questions.
+    :return: What it made of them.
+    """
     fit = baseline.fit(examples)
     return PipelineReport(
         name=baseline.name,
@@ -1857,21 +1889,24 @@ def ground_truth_study(
             for ordering in range(ordering_count)
         ]
         for ordering, ordered in enumerate(orderings):
-            for pipeline in comparison.pipelines(
+            estimators = comparison.pipelines(
                 ordered.examples, min_samples_per_leaf, plain_min_samples_per_leaf
-            ):
-                if ordering > 0 and pipeline.order_invariant:
+            ) + baselines_of(comparison.domain, min_region_support)
+            for estimator in estimators:
+                if ordering > 0 and getattr(estimator, "order_invariant", False):
                     continue
-                pipeline.fit(ordered.examples)
+                estimator.fit(ordered.examples)
                 for case in cases:
+                    answered = (
+                        asker.ask(estimator, case)
+                        if isinstance(estimator, CausalQueryPipeline)
+                        else estimator.ask(case)
+                    )
                     report.outcomes.append(
                         (
                             configuration,
                             truth.score(
-                                configuration,
-                                asker.ask(pipeline, case),
-                                pipeline.name,
-                                ordering,
+                                configuration, answered, estimator.name, ordering
                             ),
                         )
                     )

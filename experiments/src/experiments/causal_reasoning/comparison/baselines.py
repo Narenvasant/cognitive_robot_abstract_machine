@@ -86,6 +86,13 @@ class RegressionAdjustmentBaseline:
         return "regression adjustment"
 
     @property
+    def order_invariant(self) -> bool:
+        """
+        Whether its answers are independent of the order the parts are listed in.
+        """
+        return True
+
+    @property
     def table(self) -> FlatTable:
         """
         The propositional table the examples are flattened into.

@@ -15,6 +15,7 @@ from experiments.causal_reasoning.comparison import (
     domain as comparison_domain,
     evaluation as comparison_evaluation,
     exceptions as comparison_exceptions,
+    neural_baseline as comparison_neural_baseline,
     flat_table as comparison_flat_table,
     pipelines as comparison_pipelines,
     queries as comparison_queries,
@@ -30,6 +31,7 @@ from experiments.causal_reasoning.tracy_clutter_picking import (
     exceptions as tracy_exceptions,
     queries as tracy_queries,
     run_pipeline as tracy_run_pipeline,
+    synthetic as tracy_synthetic,
 )
 
 # benchmarking measures a running system instead of describing it
@@ -50,6 +52,7 @@ for comparison_module in (
     comparison_evaluation,
     comparison_exceptions,
     comparison_flat_table,
+    comparison_neural_baseline,
     comparison_pipelines,
     comparison_queries,
     comparison_report,
@@ -60,6 +63,7 @@ for comparison_module in (
     tracy_exceptions,
     tracy_queries,
     tracy_run_pipeline,
+    tracy_synthetic,
 ):
     ignored_classes |= set(classes_of_module(comparison_module))
 
