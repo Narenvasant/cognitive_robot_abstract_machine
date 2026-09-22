@@ -129,12 +129,19 @@ query with an empty object list is a scene with no objects, whose counts are zer
 table ignores a part a query merely lists, and refuses a query that constrains a column it
 does not have: sets one of its attributes, or marks it as cause, confounder or effect.
 
-A sixth estimator is not a circuit at all: **regression adjustment**, the textbook
-backdoor estimator, a logistic regression of the effect on the cause and the confounders
-over the propositional table, averaged at each value of the cause over the confounders'
-distribution in the data. It can be asked exactly the questions the propositional tree
-can, and it is there so that the comparison is not only between configurations of one
-learner.
+Two estimators are not circuits at all. Both take the same causal step, g-computation
+over the empirical distribution of the confounders, so that the estimator and not the
+estimand is what differs from the circuits. **Regression adjustment** is the textbook
+one, a logistic regression of the effect on the cause and the confounders over the
+propositional table, averaged at each value of the cause over the confounders'
+distribution in the data; it can be asked exactly the questions the propositional tree
+can. **Deep set adjustment** encodes every part on its own, pools the encodings of a
+collection by mean and by maximum so that nothing it reads depends on the order the
+parts were listed in, and reads the pooled encoding with a perceptron; where the cause
+is a count, the pooled encoding of the collection that count aggregates is withheld, so
+the count is the only route from the parts to the prediction. It is the reference that
+is order free without being a circuit, and it is there so the comparison is not only
+between configurations of one learner.
 
 ## The pipelines
 
@@ -163,6 +170,7 @@ And in the shared package:
 | `flat_table.py` | `Schema`, how EQL names every attribute; `FlatTable`, the examples as one row each in one of the three `TableLayout`s |
 | `pipelines.py` | `CausalQueryPipeline` and its three implementations: `RelationalPipeline`, `HybridPipeline`, and `FlatTablePipeline` once per layout |
 | `baselines.py` | regression adjustment on the propositional table |
+| `neural_baseline.py` | deep set adjustment, a permutation invariant encoder over the parts with the same g-computation on top |
 | `queries.py` | what every question is made of: `CausalQueryCase`, `Confounder`, and the open-part queries |
 | `dataset.py` | `ExampleDataset`: splitting, reordering the parts, and the effect's rate |
 | `evaluation.py` | asking every question to every pipeline and recording what came of it (`evaluate`), then the studies: `permutation_study` reorders every example's parts and asks the part questions again, `split_study` repeats the comparison over several random splits, `learning_curve` fits on growing shares of the examples, `ground_truth_study` scores every pipeline against a `KnownTruth`, `monte_carlo_study` follows the relational circuit's answers as grounding draws more samples, `scaling_study` measures cost against the number of parts |
