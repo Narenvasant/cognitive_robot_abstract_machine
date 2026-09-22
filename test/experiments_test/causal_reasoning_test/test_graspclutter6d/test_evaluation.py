@@ -156,12 +156,23 @@ def test_the_pipelines_that_share_the_columns_give_the_same_answer(comparison):
 
 def test_every_pipeline_is_scored_on_the_views_it_models(comparison):
     """
-    Every circuit models at least the scene's scalars; regression adjustment models no
-    distribution and is scored on nothing.
+    Every circuit models at least the scene's scalars; the estimators that are not
+    circuits model no distribution and are scored on nothing.
     """
+    estimators = {"regression adjustment", "neural adjustment"}
     for pipeline in comparison.pipelines:
         scored = pipeline.likelihoods[ExampleView.SCALARS] is not None
-        assert scored == (pipeline.name != "regression adjustment")
+        assert scored == (pipeline.name not in estimators)
+
+
+def test_the_estimators_that_are_not_circuits_are_asked_the_same_questions(comparison):
+    names = [pipeline.name for pipeline in comparison.pipelines]
+    assert names[-2:] == ["regression adjustment", "neural adjustment"]
+    asked = [
+        [outcome.case.name for outcome in comparison.pipeline(name).outcomes]
+        for name in names
+    ]
+    assert all(one == asked[0] for one in asked)
 
 
 def test_reordering_the_parts_leaves_the_relational_answers_where_they_were(
