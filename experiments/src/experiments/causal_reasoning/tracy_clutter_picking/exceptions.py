@@ -49,3 +49,22 @@ class UnevenClutterError(DataclassException):
 
     def suggest_correction(self) -> str:
         return "Record every attempt on a clutter of the same size."
+
+
+@dataclass
+class UnreadableQuestionError(DataclassException):
+    """
+    Raised when a question is scored against the closed-form mechanism that the
+    mechanism has no reading of, so no true interventional probability exists for it.
+    """
+
+    question: str
+    """
+    The question's class.
+    """
+
+    def error_message(self) -> str:
+        return f"The mechanism has no reading of {self.question}"
+
+    def suggest_correction(self) -> str:
+        return "Score only the questions whose cause the mechanism forces."

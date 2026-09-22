@@ -45,11 +45,14 @@ from experiments.causal_reasoning.tracy_clutter_picking.domain import (
 )
 from experiments.causal_reasoning.tracy_clutter_picking.queries import (
     ClosingAxisSideCausesDisturbance,
+    CrowdingCausesLift,
+    FrictionCausesLift,
     monte_carlo_cases,
     neighbour_level_cases,
     query_catalogue,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.synthetic import (
+    ClutterTruth,
     synthetic_clutter_pick_scenes,
 )
 
@@ -154,6 +157,15 @@ def report_text(recorded_neighbour_count: int) -> ReportText:
             "The recording's order is the order the layout sampler drew the "
             "neighbours in, which carries nothing about where they stand."
         ),
+        ground_truth_note=(
+            "The mechanism the synthetic attempts are drawn from gives the hold's "
+            "probability in closed form, so forcing the friction or the crowding "
+            "leaves an expectation over layouts and the truth is exact in the "
+            "outcome. The environment is the confounder, since a bin packs the "
+            "cartons more tightly and holds only the slippery ones, and one setting "
+            "removes that by letting both environments draw from the whole friction "
+            "ladder."
+        ),
         learning_curve_note=(
             "Every neighbour of every training attempt goes into the template."
         ),
@@ -189,6 +201,11 @@ def tracy_experiment(recorded_neighbour_count: int) -> Experiment:
         cases=query_catalogue(recorded_neighbour_count),
         part_cases=neighbour_level_cases(recorded_neighbour_count),
         monte_carlo_cases=monte_carlo_cases(recorded_neighbour_count),
+        truth=ClutterTruth(),
+        truth_cases=[
+            FrictionCausesLift(open_part_count=recorded_neighbour_count),
+            CrowdingCausesLift(open_part_count=recorded_neighbour_count),
+        ],
         scaling=ScalingSetup(
             examples_of_size=attempts_of_size,
             case=ClosingAxisSideCausesDisturbance(open_part_count=1, neighbour_index=0),

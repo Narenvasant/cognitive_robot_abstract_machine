@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from experiments.causal_reasoning.comparison.evaluation import (
+    InterventionalEffect,
     Refusal,
     evaluate,
     scaling_study,
@@ -28,7 +29,13 @@ from experiments.causal_reasoning.tracy_clutter_picking.run_pipeline import (
     attempts_of_size,
     tracy_experiment,
 )
+from experiments.causal_reasoning.tracy_clutter_picking.domain import FrictionLadder
+from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
+    UnreadableQuestionError,
+)
 from experiments.causal_reasoning.tracy_clutter_picking.synthetic import (
+    ClutterTruth,
+    MechanismSetting,
     synthetic_clutter_pick_scenes,
 )
 
@@ -132,6 +139,7 @@ def test_report_records_every_question_for_every_pipeline(report, cases):
         "unrolled tree",
         "scalars-only tree",
         "regression adjustment",
+        "neural adjustment",
     ]
     for pipeline in report.pipelines:
         assert [outcome.case for outcome in pipeline.outcomes] == cases
@@ -153,13 +161,28 @@ def test_the_flat_tables_cannot_tell_clutter_sizes_apart(report):
         )
 
 
-def test_only_the_relational_circuit_answers_about_a_neighbour_beyond_the_table(
+def test_only_the_estimators_without_positions_answer_about_a_twelfth_neighbour(
     report,
 ):
-    relational, *flat = report.pipelines
-    assert relational.outcomes[2].answered
-    for pipeline in flat:
-        assert pipeline.outcomes[2].refusal == Refusal.SCHEMA_MISMATCH
+    """
+    A query about a neighbour beyond the recorded clutter size has no column in any
+    flat table, so every estimator that addresses a part by position refuses it. The
+    relational circuit grounds itself for the queried neighbours and the neural
+    estimator pools them, so neither is bound by a position and both answer.
+    """
+    answered = {
+        pipeline.name: pipeline.outcomes[2].answered for pipeline in report.pipelines
+    }
+    assert answered == {
+        "relational circuit": True,
+        "propositional tree": False,
+        "unrolled tree": False,
+        "scalars-only tree": False,
+        "regression adjustment": False,
+        "neural adjustment": True,
+    }
+    for name in ("propositional tree", "unrolled tree", "regression adjustment"):
+        assert report.pipeline(name).outcomes[2].refusal == Refusal.SCHEMA_MISMATCH
 
 
 def test_every_circuit_answers_about_friction_at_the_recorded_size(report):
@@ -217,3 +240,74 @@ def test_markdown_report_puts_an_answer_into_words(experiment, report):
     )
     assert relational_answer.case.effect in markdown
     assert "## What the results show" in markdown
+
+
+# %% the known truth
+
+
+def test_the_mechanism_reads_the_two_queries_it_forces(recorded_neighbour_count):
+    truth = ClutterTruth()
+    for case in (
+        FrictionCausesLift(open_part_count=recorded_neighbour_count),
+        CrowdingCausesLift(open_part_count=recorded_neighbour_count),
+    ):
+        assert truth._cause_of(case) in {"friction", "crowding"}
+    with pytest.raises(UnreadableQuestionError):
+        truth._cause_of(
+            ClosingAxisSideCausesDisturbance(
+                open_part_count=recorded_neighbour_count, neighbour_index=0
+            )
+        )
+
+
+def test_the_truth_rises_with_the_friction(recorded_neighbour_count):
+    """
+    The mechanism gives the hold a share of the friction, so forcing a higher level
+    can only raise the probability of a lift.
+    """
+    truth = ClutterTruth(layout_count=400)
+    setting = MechanismSetting(0.25)
+    case = FrictionCausesLift(open_part_count=recorded_neighbour_count)
+    probabilities = [
+        truth.probability(setting, case, _region(str(level)))
+        for level in sorted(FrictionLadder().levels)
+    ]
+    assert probabilities == sorted(probabilities)
+    assert probabilities[-1] > probabilities[0]
+
+
+def test_more_adjacent_neighbours_lower_the_truth(recorded_neighbour_count):
+    truth = ClutterTruth(layout_count=400)
+    setting = MechanismSetting(0.25)
+    case = CrowdingCausesLift(open_part_count=recorded_neighbour_count)
+    probabilities = [
+        truth.probability(setting, case, _region(str(count))) for count in range(4)
+    ]
+    assert probabilities == sorted(probabilities, reverse=True)
+
+
+def test_removing_the_confounding_leaves_the_crowding_truth_alone(
+    recorded_neighbour_count,
+):
+    """
+    The environment drives the friction only when the confounding is on, and the
+    crowding is forced in both, so the two settings differ only through the friction
+    the layouts were given.
+    """
+    truth = ClutterTruth(layout_count=400)
+    case = CrowdingCausesLift(open_part_count=recorded_neighbour_count)
+    confounded = truth.probability(MechanismSetting(0.25), case, _region("0"))
+    unconfounded = truth.probability(
+        MechanismSetting(0.25, confounded=False), case, _region("0")
+    )
+    assert unconfounded > confounded
+
+
+def _region(name: str) -> InterventionalEffect:
+    return InterventionalEffect(
+        cause_region=name,
+        region_probability=1.0,
+        naive_probability=0.5,
+        adjusted_probability=0.5,
+        support_count=10,
+    )
