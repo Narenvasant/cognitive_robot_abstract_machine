@@ -158,7 +158,15 @@ def test_the_study_scores_every_pipeline_under_every_setting():
     )
     assert report.configurations == [setting]
     assert report.descriptions == {setting: SceneTruth().describe(setting)}
-    assert len(report.pipeline_names) == 5
+    assert report.pipeline_names == [
+        "relational circuit",
+        "hybrid circuit",
+        "propositional tree",
+        "unrolled tree",
+        "scalars-only tree",
+        "regression adjustment",
+        "neural adjustment",
+    ]
     relational = report.of("relational circuit", ordering=0)
     assert [outcome.case.name for outcome in relational] == [
         case.name for case in ground_truth_cases()[3:5]
