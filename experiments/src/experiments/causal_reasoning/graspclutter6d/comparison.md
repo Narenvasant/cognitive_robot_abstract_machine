@@ -11,13 +11,16 @@ the same report; only the domain, the data and the questions are each dataset's 
 The pipelines are the same everywhere: a **relational circuit** (an RSPN, grounded per
 query and registered as a causal circuit), a **propositional tree** (a JPT on the
 example's scalars and its aggregation counts), an **unrolled tree** (the same tree with
-every part's attributes under the part's position), a **scalars-only tree**, and
-**regression adjustment** (a logistic regression on the propositional table, the
-backdoor estimator that is not a circuit). GraspClutter6D adds a **hybrid circuit**,
-which holds the camera frames by position, since the recording rig fixes their order,
-and the objects as exchangeable parts. Every circuit answers a `cause`/`causes_effect`
-EQL query by backdoor adjustment on a model stratified to be support-deterministic over
-the cause.
+every part's attributes under the part's position), and a **scalars-only tree**. Two
+estimators that are not circuits stand beside them and take the same causal step,
+g-computation over the empirical distribution of the confounders: **regression
+adjustment**, a logistic regression on the propositional table, and **deep set
+adjustment**, which encodes every part on its own, pools the encodings by mean and by
+maximum so that nothing it reads depends on the listing order, and reads the pooled
+encoding with a perceptron. GraspClutter6D adds a **hybrid circuit**, which holds the
+camera frames by position, since the recording rig fixes their order, and the objects
+as exchangeable parts. Every circuit answers a `cause`/`causes_effect` EQL query by
+backdoor adjustment on a model stratified to be support-deterministic over the cause.
 
 ## The datasets
 
@@ -29,7 +32,7 @@ the cause.
 | questions | 14 | 7 | 14 |
 | about one part | 3 | 2 | 3 |
 | adjustments compared | ind1 / atom count / both | environment / none | extent / object count / both |
-| known truth | – | – | synthetic model, 5 settings |
+| known truth | – | closed-form mechanism, 4 settings | structural causal model, 5 settings |
 
 ## Which questions each pipeline can answer
 
@@ -37,21 +40,25 @@ the cause.
 |---|---|---|---|
 | relational circuit | 14 of 14 | 7 of 7 | 14 of 14 |
 | hybrid circuit | – | – | 14 of 14 |
+| deep set adjustment | 14 of 14 | 7 of 7 | 14 of 14 |
 | propositional tree | 11 of 14 | 5 of 7 | 11 of 14 |
 | unrolled tree | 12 of 14 | 6 of 7 | 14 of 14 |
 | scalars-only tree | 1 of 14 | 2 of 7 | 1 of 14 |
 | regression adjustment | 11 of 14 | 5 of 7 | 11 of 14 |
 
-The pattern is the same on every dataset. A flat table refuses a question that
-constrains a column it does not have: the scalars-only tree has no counts, so it can
-pose only the questions whose cause and confounder are both scalars; the propositional
-tree and the regression baseline have no parts, so they refuse every question whose
-cause or effect lives on one; the unrolled tree has the parts by position, so it answers
-those about whatever part the example lists there, and refuses the ones the listing
-order makes impossible (no molecule's first atom is terminal, so both terminal-atom
-questions; no column for the twelfth neighbour of a nine-neighbour recording). The
-relational circuit grounds itself for whatever the query names and answers everything,
-including the atom-element question the earlier version of the pipeline refused.
+The pattern is the same on every dataset, and the line it draws is not between circuits
+and everything else. A flat table refuses a question that constrains a column it does
+not have: the scalars-only tree has no counts, so it can pose only the questions whose
+cause and confounder are both scalars; the propositional tree and the regression
+baseline have no parts, so they refuse every question whose cause or effect lives on
+one; the unrolled tree has the parts by position, so it answers those about whatever
+part the example lists there, and refuses the ones the listing order makes impossible
+(no molecule's first atom is terminal, so both terminal-atom questions; no column for
+the twelfth neighbour of a nine-neighbour recording). The two models that answer
+everything are the relational circuit, which grounds itself for whatever the query
+names, and the deep set, which pools the parts instead of positioning them. Posing a
+relational causal question is what separates a model that does not address a part by
+position from a table, not what separates a circuit from a neural estimator.
 
 ## Where the columns are shared, the answers are the same
 
@@ -73,11 +80,11 @@ with Newcombe's interval) read off the relational circuit:
 | GraspClutter6D: occluded objects → every object graspable, adjusting for object count | 0.20 [-0.13, 0.44] (2 → 16) |
 | GraspClutter6D: clear viewpoints → every object graspable, adjusting for object count | -0.32 [-0.42, -0.19] (0 → 52) |
 
-Regression adjustment agrees on the direction of every trend and disagrees on its
-size, in both directions: it flattens the step relations (Tracy's friction contrast
-0.31 for 1.00, Mutagenesis' aromatic-bond contrast 0.05 for 0.73 under both
-confounders) and inflates the non-monotone one (GraspClutter6D's occluded-object
-contrast 0.61 for 0.20). A logistic model is the wrong shape for both, and a circuit
+Both estimators that are not circuits agree on the direction of every trend and
+disagree on its size, in both directions: they flatten the step relations (Tracy's
+friction contrast 0.31 for regression and 0.32 for the deep set against 1.00 for every
+circuit) and inflate the non-monotone one (GraspClutter6D's occluded-object contrast
+0.61 for 0.20). A model that assumes a shape is the wrong shape for both, and a circuit
 reads the effect off each region without assuming one.
 
 **What adjusting changes.** Every dataset asks its count questions under more than one
@@ -153,25 +160,42 @@ tree, one row per example, covers 2 to 13%.
 
 ## Against a known truth
 
-Only GraspClutter6D has a synthetic model of its domain whose interventional
-probabilities are known by construction (the cause forced in the mechanism, the effect's
-rate read off 200,000 forced scenes), under five settings of object count and
-confounding strength.
+Two of the three domains were generated and supply interventional probabilities to be
+scored against. Tracy's attempts come from a mechanism that gives the hold's
+probability in closed form, so forcing the friction or the crowding leaves an
+expectation over layouts alone, over four settings of how much of the hold a neighbour
+takes away and of whether the environment drives the friction as well as the crowding.
+GraspClutter6D's scenes come from a structural causal model whose one confounder is the
+number of objects, read off 200,000 forced scenes, over five settings of object count
+and confounding strength; it lists small objects first, so addressing an object by
+position is misleading by construction.
 
-| pipeline | questions answered | support-weighted abs. error | rank correlation with truth |
-|---|---|---|---|
-| relational circuit | 100% | 0.026 | 0.58 |
-| hybrid circuit | 100% | 0.029 | 0.56 |
-| propositional tree | 57% | 0.058 | 0.40 |
-| unrolled tree | 100% | 0.064 | 0.26 |
-| scalars-only tree | 0% | – | – |
+| | Tracy, weighted error | Tracy, rank | Scenes, weighted error | Scenes, rank | Scenes, object queries |
+|---|---|---|---|---|---|
+| relational circuit | 0.074 | 0.97 | **0.026** | **0.58** | **0.016** |
+| hybrid circuit | – | – | 0.029 | 0.56 | **0.016** |
+| propositional tree | 0.074 | 0.97 | 0.058 | 0.40 | – |
+| unrolled tree | 0.066 | 0.98 | 0.064 | 0.26 | 0.077 |
+| regression adjustment | 0.048 | 1.00 | 0.033 | 0.53 | – |
+| deep set adjustment | **0.040** | 1.00 | 0.027 | 0.36 | 0.030 |
 
-On the count questions every pipeline that answers has the same error, since they are
-the same tree on the same columns; on the three questions about an object the
-relational circuit's error is 0.033, 0.009 and 0.007 against the unrolled tree's 0.133,
-0.054 and 0.044, and the error of every pipeline grows with the number of objects in a
-scene (0.05 at five, 0.08 at twenty for the relational circuit) as the counts' extremes
-grow rarer.
+The two mechanisms separate two claims. On the attempts, where both questions are about
+the attempt itself and the mechanism is smooth in a continuous cause, the estimators
+that are not circuits are the closest to the truth, because stratification reads each
+region off its own rows where a smooth model borrows strength across them. On the
+scenes, where three of the seven questions are about an object, the relational circuit
+has the lowest weighted error and the highest rank correlation; on the three object
+questions its error is 0.033, 0.009 and 0.007 against the unrolled tree's 0.133, 0.054
+and 0.044, four to six times closer, with the deep set its peer at 0.026, 0.045 and
+0.019 and the regression unable to pose them at all. Where the pipelines share columns
+their error is identical (0.125 on the small-object question, whose extremes are rare
+within every stratum of the confounder), and the relational error grows only from 0.05
+to 0.08 as the scenes grow from five to twenty objects.
+
+Accuracy is therefore not what separates the circuit from an order-free estimator. What
+separates them is that the circuit's answer is exact with respect to the grounded
+circuit, that the same model scores the likelihood of a whole example, and that it
+refuses a question it cannot support instead of returning a number anyway.
 
 ## Cost
 
@@ -180,6 +204,7 @@ grow rarer.
 | relational circuit: nodes / fit seconds | 4,663 / 44 | 7,266 / 8 | 37,013 / 190 |
 | propositional tree: nodes / fit seconds | 3,009 / 10 | 2,003 / 1 | 10,429 / 43 |
 | unrolled tree: nodes / fit seconds | 72,243 / 83 | 24,312 / 5 | 364,486 / 523 |
+| deep set adjustment: fit seconds, whole cost | 2 | 0.3 | – |
 | relational circuit: seconds per question, fitted | 7.5 | 4.3 | 322 |
 | propositional tree: seconds per question, fitted | 7.1 | 0.6 | 158 |
 | unrolled tree: seconds per question, fitted | 8.9 | 0.8 | 122 |
@@ -204,13 +229,19 @@ to fifty-two.
 - Every estimator that has the columns gives the same causal answer, circuit or not:
   the relational circuit is not a better model of the scalars and counts than a flat
   tree, it is that tree, and the comparison is honest about it.
-- The questions a flat learner can pose depend on how the data was flattened, and its
-  answers about a part depend on the order the parts were written down; the relational
-  circuit's do not, on any of the three datasets.
-- Where the truth is known, the relational circuit's answers about a part are three to
-  five times closer to it than the unrolled tree's, and its whole-example likelihood is
-  the best on every dataset whose parts have no order, and second only to its own
-  hybrid on the one whose frames do.
+- The questions a flat table can pose depend on how the data was flattened, and its
+  answers about a part depend on the order the parts were written down. Two models
+  escape both, the relational circuit and the deep set, and neither addresses a part by
+  position.
+- Where the truth is known, the relational circuit's answers about a part are four to
+  six times closer to it than the unrolled tree's and the deep set's are comparable,
+  while on a smooth mechanism with a continuous cause both estimators that are not
+  circuits are closer than any circuit.
+- What the circuit has and the deep set does not is an exactness guarantee with respect
+  to the grounded circuit, a likelihood over whole examples, and a refusal where a
+  query outruns what was fitted. Its whole-example likelihood is the best on every
+  dataset whose parts have no order, and second only to its own hybrid on the one whose
+  frames do.
 - The price is grounding time on large examples and the same backdoor adjustment every
   circuit pays; the model itself is a fraction of the size of the tree that holds the
   parts by position.
@@ -221,6 +252,10 @@ Text and tables in the manuscript's own conventions (formal, third person, no hy
 no colons inside sentences, every number from `results.md`), written to drop into
 `paper/main.tex` of the AISTATS submission. The rows for the other two datasets are
 already in `tab:comparison` there; the block below adds the third.
+
+These blocks were written for the first version of the manuscript and are kept for
+reference; the manuscript in `krrood-aistats-2027` now carries them, with the deep set
+and the second known truth folded in.
 
 ### Rows for `tab:comparison`
 
