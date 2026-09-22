@@ -100,22 +100,22 @@ The scenes themselves, before any model: the share where every object stays gras
 
 One row per question, one column per pipeline. An answered cell says, in words, which setting of the cause makes the effect most likely after adjustment and how likely, against the least favourable setting, over the regions that hold enough training scenes to be read; a refused cell says why the pipeline could not answer at all.
 
-| question | relational circuit | hybrid circuit | propositional tree | unrolled tree | scalars-only tree | regression adjustment |
-|---|---|---|---|---|---|---|
-| How many small objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 3 small objects, every object of the scene stays graspable with probability 0.49, the highest of any setting; with 12 small objects it is only 0.20. | answered: with 3 small objects, every object of the scene stays graspable with probability 0.49, the highest of any setting; with 12 small objects it is only 0.20. | answered: with 3 small objects, every object of the scene stays graspable with probability 0.49, the highest of any setting; with 12 small objects it is only 0.20. | answered: with 3 small objects, every object of the scene stays graspable with probability 0.49, the highest of any setting; with 12 small objects it is only 0.20. | refused: the fitted table has no column for the queried variables. | answered: with 0 small objects, every object of the scene stays graspable with probability 0.42, the highest of any setting; with 14 small objects it is only 0.31. |
-| How many small objects cause every object of a scene to stay graspable, adjusting for the number of objects? | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | refused: the fitted table has no column for the queried variables. | answered: with 0 small objects, every object of the scene stays graspable with probability 0.42, the highest of any setting; with 14 small objects it is only 0.31. |
-| How many small objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out and the number of objects? | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | refused: the fitted table has no column for the queried variables. | answered: with 0 small objects, every object of the scene stays graspable with probability 0.38, the highest of any setting; with 14 small objects it is only 0.38. |
-| How many occluded objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 4 occluded objects it is only 0.16. | refused: the fitted table has no column for the queried variables. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.47, the highest of any setting; with 2 occluded objects it is only 0.27. |
-| How many occluded objects cause every object of a scene to stay graspable, adjusting for the number of objects? | answered: with 12 occluded objects, every object of the scene stays graspable with probability 0.47, the highest of any setting; with 4 occluded objects it is only 0.07. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.61, the highest of any setting; with 4 occluded objects it is only 0.10. | answered: with 12 occluded objects, every object of the scene stays graspable with probability 0.47, the highest of any setting; with 4 occluded objects it is only 0.07. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.55, the highest of any setting; with 4 occluded objects it is only 0.09. | refused: the fitted table has no column for the queried variables. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.71, the highest of any setting; with 2 occluded objects it is only 0.10. |
-| How many occluded objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out and the number of objects? | answered: with 12 occluded objects, every object of the scene stays graspable with probability 0.45, the highest of any setting; with 4 occluded objects it is only 0.09. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.61, the highest of any setting; with 4 occluded objects it is only 0.10. | answered: with 12 occluded objects, every object of the scene stays graspable with probability 0.46, the highest of any setting; with 4 occluded objects it is only 0.08. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.55, the highest of any setting; with 4 occluded objects it is only 0.09. | refused: the fitted table has no column for the queried variables. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.70, the highest of any setting; with 2 occluded objects it is only 0.10. |
-| How many clear viewpoints cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 2 clear viewpoints, every object of the scene stays graspable with probability 0.59, the highest of any setting; with 11 clear viewpoints it is only 0.10. | answered: with 2 clear viewpoints, every object of the scene stays graspable with probability 0.59, the highest of any setting; with 11 clear viewpoints it is only 0.10. | answered: with 2 clear viewpoints, every object of the scene stays graspable with probability 0.59, the highest of any setting; with 11 clear viewpoints it is only 0.10. | answered: with 2 clear viewpoints, every object of the scene stays graspable with probability 0.59, the highest of any setting; with 11 clear viewpoints it is only 0.10. | refused: the fitted table has no column for the queried variables. | answered: with 0 clear viewpoints, every object of the scene stays graspable with probability 0.53, the highest of any setting; with 52 clear viewpoints it is only 0.24. |
-| How many clear viewpoints cause every object of a scene to stay graspable, adjusting for the number of objects? | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.08. | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.08. | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.08. | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.08. | refused: the fitted table has no column for the queried variables. | answered: with 0 clear viewpoints, every object of the scene stays graspable with probability 0.55, the highest of any setting; with 52 clear viewpoints it is only 0.23. |
-| How many clear viewpoints cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out and the number of objects? | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 50 clear viewpoints it is only 0.11. | answered: with 1 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.09. | answered: with 1 clear viewpoints, every object of the scene stays graspable with probability 0.53, the highest of any setting; with 50 clear viewpoints it is only 0.12. | answered: with 1 clear viewpoints, every object of the scene stays graspable with probability 0.63, the highest of any setting; with 11 clear viewpoints it is only 0.09. | refused: the fitted table has no column for the queried variables. | answered: with 0 clear viewpoints, every object of the scene stays graspable with probability 0.55, the highest of any setting; with 52 clear viewpoints it is only 0.22. |
-| Does the object catalogue a scene is built from cause every object of it to stay graspable, adjusting for its spread (extent)? | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.34. |
-| Does the object catalogue a scene is built from cause every object of it to stay graspable, adjusting for its small-object count? | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.39, the highest of any setting; with the mixed catalogue it is only 0.27. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.40, the highest of any setting; with the mixed catalogue it is only 0.30. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.40, the highest of any setting; with the mixed catalogue it is only 0.28. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.40, the highest of any setting; with the mixed catalogue it is only 0.30. | refused: the fitted table has no column for the queried variables. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.40, the highest of any setting; with the mixed catalogue it is only 0.34. |
-| Does the object catalogue a scene is built from cause object 0 of it to be heavily occluded? | answered: with the grasp catalogue, object 0 is heavily occluded with probability 0.36, the highest of any setting; with the ycb-video catalogue it is only 0.32. | answered: with the grasp catalogue, object 0 is heavily occluded with probability 0.36, the highest of any setting; with the ycb-video catalogue it is only 0.32. | refused: the fitted table has no column for the queried variables. | answered: with the ycb-video catalogue, object 0 is heavily occluded with probability 0.29, the highest of any setting; with the mixed catalogue it is only 0.23. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. |
-| How many occluded objects cause object 0 of a scene to lose every grasp? | answered: with 10 occluded objects, object 0 loses every grasp with probability 0.13, the highest of any setting; with 2 occluded objects it is only 0.08. | answered: with 10 occluded objects, object 0 loses every grasp with probability 0.13, the highest of any setting; with 2 occluded objects it is only 0.08. | refused: the fitted table has no column for the queried variables. | answered: with 3 occluded objects, object 0 loses every grasp with probability 0.18, the highest of any setting; with 15 occluded objects it is only 0.04. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. |
-| Does the size of object 0 of a scene cause it to lose every grasp? | answered: with object 0 being small, object 0 loses every grasp with probability 0.12, the highest of any setting; with object 0 being large it is only 0.10. | answered: with object 0 being small, object 0 loses every grasp with probability 0.12, the highest of any setting; with object 0 being large it is only 0.10. | refused: the fitted table has no column for the queried variables. | answered: with object 0 being large, object 0 loses every grasp with probability 0.15, the highest of any setting; with object 0 being small it is only 0.08. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. |
+| question | relational circuit | hybrid circuit | propositional tree | unrolled tree | scalars-only tree | regression adjustment | neural adjustment |
+|---|---|---|---|---|---|---|---|
+| How many small objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 3 small objects, every object of the scene stays graspable with probability 0.49, the highest of any setting; with 12 small objects it is only 0.20. | answered: with 3 small objects, every object of the scene stays graspable with probability 0.49, the highest of any setting; with 12 small objects it is only 0.20. | answered: with 3 small objects, every object of the scene stays graspable with probability 0.49, the highest of any setting; with 12 small objects it is only 0.20. | answered: with 3 small objects, every object of the scene stays graspable with probability 0.49, the highest of any setting; with 12 small objects it is only 0.20. | refused: the fitted table has no column for the queried variables. | answered: with 0 small objects, every object of the scene stays graspable with probability 0.42, the highest of any setting; with 14 small objects it is only 0.31. | answered: with 13 small objects, every object of the scene stays graspable with probability 0.39, the highest of any setting; with 7 small objects it is only 0.34. |
+| How many small objects cause every object of a scene to stay graspable, adjusting for the number of objects? | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | refused: the fitted table has no column for the queried variables. | answered: with 0 small objects, every object of the scene stays graspable with probability 0.42, the highest of any setting; with 14 small objects it is only 0.31. | answered: with 11 small objects, every object of the scene stays graspable with probability 0.36, the highest of any setting; with 14 small objects it is only 0.33. |
+| How many small objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out and the number of objects? | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.51, the highest of any setting; with 12 small objects it is only 0.11. | refused: the fitted table has no column for the queried variables. | answered: with 0 small objects, every object of the scene stays graspable with probability 0.38, the highest of any setting; with 14 small objects it is only 0.38. | answered: with 14 small objects, every object of the scene stays graspable with probability 0.42, the highest of any setting; with 2 small objects it is only 0.31. |
+| How many occluded objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 4 occluded objects it is only 0.16. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 4 occluded objects it is only 0.16. | refused: the fitted table has no column for the queried variables. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.47, the highest of any setting; with 2 occluded objects it is only 0.27. | answered: with 2 occluded objects, every object of the scene stays graspable with probability 0.47, the highest of any setting; with 14 occluded objects it is only 0.27. |
+| How many occluded objects cause every object of a scene to stay graspable, adjusting for the number of objects? | answered: with 12 occluded objects, every object of the scene stays graspable with probability 0.47, the highest of any setting; with 4 occluded objects it is only 0.07. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.61, the highest of any setting; with 4 occluded objects it is only 0.10. | answered: with 12 occluded objects, every object of the scene stays graspable with probability 0.47, the highest of any setting; with 4 occluded objects it is only 0.07. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.55, the highest of any setting; with 4 occluded objects it is only 0.09. | refused: the fitted table has no column for the queried variables. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.71, the highest of any setting; with 2 occluded objects it is only 0.10. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.68, the highest of any setting; with 2 occluded objects it is only 0.19. |
+| How many occluded objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out and the number of objects? | answered: with 12 occluded objects, every object of the scene stays graspable with probability 0.45, the highest of any setting; with 4 occluded objects it is only 0.09. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.61, the highest of any setting; with 4 occluded objects it is only 0.10. | answered: with 12 occluded objects, every object of the scene stays graspable with probability 0.46, the highest of any setting; with 4 occluded objects it is only 0.08. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.55, the highest of any setting; with 4 occluded objects it is only 0.09. | refused: the fitted table has no column for the queried variables. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.70, the highest of any setting; with 2 occluded objects it is only 0.10. | answered: with 16 occluded objects, every object of the scene stays graspable with probability 0.68, the highest of any setting; with 2 occluded objects it is only 0.17. |
+| How many clear viewpoints cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out? | answered: with 2 clear viewpoints, every object of the scene stays graspable with probability 0.59, the highest of any setting; with 11 clear viewpoints it is only 0.10. | answered: with 2 clear viewpoints, every object of the scene stays graspable with probability 0.59, the highest of any setting; with 11 clear viewpoints it is only 0.10. | answered: with 2 clear viewpoints, every object of the scene stays graspable with probability 0.59, the highest of any setting; with 11 clear viewpoints it is only 0.10. | answered: with 2 clear viewpoints, every object of the scene stays graspable with probability 0.59, the highest of any setting; with 11 clear viewpoints it is only 0.10. | refused: the fitted table has no column for the queried variables. | answered: with 0 clear viewpoints, every object of the scene stays graspable with probability 0.53, the highest of any setting; with 52 clear viewpoints it is only 0.24. | answered: with 18 clear viewpoints, every object of the scene stays graspable with probability 0.38, the highest of any setting; with 7 clear viewpoints it is only 0.38. |
+| How many clear viewpoints cause every object of a scene to stay graspable, adjusting for the number of objects? | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.08. | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.08. | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.08. | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.08. | refused: the fitted table has no column for the queried variables. | answered: with 0 clear viewpoints, every object of the scene stays graspable with probability 0.55, the highest of any setting; with 52 clear viewpoints it is only 0.23. | answered: with 37 clear viewpoints, every object of the scene stays graspable with probability 0.38, the highest of any setting; with 7 clear viewpoints it is only 0.38. |
+| How many clear viewpoints cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out and the number of objects? | answered: with 15 clear viewpoints, every object of the scene stays graspable with probability 0.52, the highest of any setting; with 50 clear viewpoints it is only 0.11. | answered: with 1 clear viewpoints, every object of the scene stays graspable with probability 0.60, the highest of any setting; with 11 clear viewpoints it is only 0.09. | answered: with 1 clear viewpoints, every object of the scene stays graspable with probability 0.53, the highest of any setting; with 50 clear viewpoints it is only 0.12. | answered: with 1 clear viewpoints, every object of the scene stays graspable with probability 0.63, the highest of any setting; with 11 clear viewpoints it is only 0.09. | refused: the fitted table has no column for the queried variables. | answered: with 0 clear viewpoints, every object of the scene stays graspable with probability 0.55, the highest of any setting; with 52 clear viewpoints it is only 0.22. | answered: with 18 clear viewpoints, every object of the scene stays graspable with probability 0.38, the highest of any setting; with 52 clear viewpoints it is only 0.38. |
+| Does the object catalogue a scene is built from cause every object of it to stay graspable, adjusting for its spread (extent)? | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.33. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.41, the highest of any setting; with the mixed catalogue it is only 0.34. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.38, the highest of any setting; with the mixed catalogue it is only 0.38. |
+| Does the object catalogue a scene is built from cause every object of it to stay graspable, adjusting for its small-object count? | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.39, the highest of any setting; with the mixed catalogue it is only 0.27. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.40, the highest of any setting; with the mixed catalogue it is only 0.30. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.40, the highest of any setting; with the mixed catalogue it is only 0.28. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.40, the highest of any setting; with the mixed catalogue it is only 0.30. | refused: the fitted table has no column for the queried variables. | answered: with the grasp catalogue, every object of the scene stays graspable with probability 0.40, the highest of any setting; with the mixed catalogue it is only 0.34. | answered: with the ycb-video catalogue, every object of the scene stays graspable with probability 0.38, the highest of any setting; with the mixed catalogue it is only 0.38. |
+| Does the object catalogue a scene is built from cause object 0 of it to be heavily occluded? | answered: with the grasp catalogue, object 0 is heavily occluded with probability 0.36, the highest of any setting; with the ycb-video catalogue it is only 0.32. | answered: with the grasp catalogue, object 0 is heavily occluded with probability 0.36, the highest of any setting; with the ycb-video catalogue it is only 0.32. | refused: the fitted table has no column for the queried variables. | answered: with the ycb-video catalogue, object 0 is heavily occluded with probability 0.29, the highest of any setting; with the mixed catalogue it is only 0.23. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. | answered: with the mixed catalogue, object 0 is heavily occluded with probability 0.35, the highest of any setting; with the ycb-video catalogue it is only 0.34. |
+| How many occluded objects cause object 0 of a scene to lose every grasp? | answered: with 10 occluded objects, object 0 loses every grasp with probability 0.13, the highest of any setting; with 2 occluded objects it is only 0.08. | answered: with 10 occluded objects, object 0 loses every grasp with probability 0.13, the highest of any setting; with 2 occluded objects it is only 0.08. | refused: the fitted table has no column for the queried variables. | answered: with 3 occluded objects, object 0 loses every grasp with probability 0.18, the highest of any setting; with 15 occluded objects it is only 0.04. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. | answered: with 0 occluded objects, object 0 loses every grasp with probability 0.25, the highest of any setting; with 20 occluded objects it is only 0.03. |
+| Does the size of object 0 of a scene cause it to lose every grasp? | answered: with object 0 being small, object 0 loses every grasp with probability 0.12, the highest of any setting; with object 0 being large it is only 0.10. | answered: with object 0 being small, object 0 loses every grasp with probability 0.12, the highest of any setting; with object 0 being large it is only 0.10. | refused: the fitted table has no column for the queried variables. | answered: with object 0 being large, object 0 loses every grasp with probability 0.15, the highest of any setting; with object 0 being small it is only 0.08. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. | answered: with object 0 being small, object 0 loses every grasp with probability 0.17, the highest of any setting; with object 0 being large it is only 0.16. |
 
 A question about counts needs the counts: the scalars-only tree refuses it. A question whose effect is one object's own attribute needs the objects: the propositional tree refuses it, the unrolled tree answers it about whatever object the scenes list at that position, and the relational circuit answers it about an exchangeable object. What an answer about "object 0" is worth is what the reordering below measures.
 
@@ -123,22 +123,22 @@ A question about counts needs the counts: the scalars-only tree refuses it. A qu
 
 The most effective setting is an argmax over up to twenty sparse regions and moves with the split. Two summaries that do not: *trend* is Spearman's rank correlation between the cause's value and the adjusted probability over the supported regions, for a numeric cause; *contrast* is the adjusted probability at the highest supported region minus at the lowest (for a symbolic cause, at the most effective minus at the least), with Newcombe's interval from the Wilson intervals of the two regions' support.
 
-| question | relational circuit, trend | relational circuit, contrast | hybrid circuit, trend | hybrid circuit, contrast | propositional tree, trend | propositional tree, contrast | unrolled tree, trend | unrolled tree, contrast | scalars-only tree, trend | scalars-only tree, contrast | regression adjustment, trend | regression adjustment, contrast |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| small_object_count_causes_graspability_adjusting_extent | -0.52 | -0.09 [-0.30, 0.18] (0 → 14) | -0.53 | -0.09 [-0.30, 0.18] (0 → 14) | -0.53 | -0.09 [-0.30, 0.18] (0 → 14) | -0.52 | -0.09 [-0.30, 0.18] (0 → 14) | - | - | -1.00 | -0.11 [-0.31, 0.16] (0 → 14) |
-| small_object_count_causes_graspability_adjusting_object_count | -0.42 | 0.07 [-0.18, 0.31] (0 → 14) | -0.37 | 0.06 [-0.19, 0.30] (0 → 14) | -0.36 | 0.06 [-0.18, 0.31] (0 → 14) | -0.39 | 0.06 [-0.19, 0.30] (0 → 14) | - | - | -1.00 | -0.11 [-0.30, 0.16] (0 → 14) |
-| small_object_count_causes_graspability_adjusting_extent_and_object_count | -0.42 | 0.08 [-0.17, 0.32] (0 → 14) | -0.37 | 0.06 [-0.19, 0.30] (0 → 14) | -0.36 | 0.08 [-0.17, 0.32] (0 → 14) | -0.39 | 0.06 [-0.18, 0.31] (0 → 14) | - | - | -1.00 | -0.00 [-0.22, 0.26] (0 → 14) |
-| occluded_object_count_causes_graspability_adjusting_extent | 0.68 | 0.34 [-0.00, 0.57] (2 → 16) | 0.68 | 0.34 [-0.00, 0.57] (2 → 16) | 0.64 | 0.34 [-0.00, 0.57] (2 → 16) | 0.64 | 0.34 [-0.00, 0.57] (2 → 16) | - | - | 1.00 | 0.20 [-0.14, 0.47] (2 → 16) |
-| occluded_object_count_causes_graspability_adjusting_object_count | 0.76 | 0.20 [-0.13, 0.44] (2 → 16) | 0.76 | 0.42 [0.07, 0.64] (2 → 16) | 0.78 | 0.21 [-0.13, 0.45] (2 → 16) | 0.81 | 0.36 [0.02, 0.59] (2 → 16) | - | - | 1.00 | 0.61 [0.26, 0.78] (2 → 16) |
-| occluded_object_count_causes_graspability_adjusting_extent_and_object_count | 0.78 | 0.17 [-0.16, 0.42] (2 → 16) | 0.74 | 0.42 [0.07, 0.64] (2 → 16) | 0.76 | 0.17 [-0.16, 0.43] (2 → 16) | 0.82 | 0.36 [0.02, 0.59] (2 → 16) | - | - | 1.00 | 0.60 [0.26, 0.77] (2 → 16) |
-| clear_viewpoint_count_causes_graspability_adjusting_extent | -0.66 | -0.28 [-0.39, -0.15] (0 → 52) | -0.66 | -0.28 [-0.39, -0.15] (0 → 52) | -0.66 | -0.28 [-0.39, -0.15] (0 → 52) | -0.66 | -0.28 [-0.39, -0.15] (0 → 52) | - | - | -1.00 | -0.29 [-0.40, -0.16] (0 → 52) |
-| clear_viewpoint_count_causes_graspability_adjusting_object_count | -0.71 | -0.32 [-0.42, -0.19] (0 → 52) | -0.70 | -0.30 [-0.40, -0.17] (0 → 52) | -0.71 | -0.32 [-0.42, -0.19] (0 → 52) | -0.70 | -0.31 [-0.41, -0.19] (0 → 52) | - | - | -1.00 | -0.33 [-0.43, -0.19] (0 → 52) |
-| clear_viewpoint_count_causes_graspability_adjusting_extent_and_object_count | -0.58 | -0.29 [-0.40, -0.16] (0 → 52) | -0.66 | -0.29 [-0.39, -0.16] (0 → 52) | -0.59 | -0.29 [-0.40, -0.16] (0 → 52) | -0.65 | -0.31 [-0.41, -0.18] (0 → 52) | - | - | -1.00 | -0.33 [-0.44, -0.20] (0 → 52) |
-| catalogue_causes_graspability_adjusting_extent | - | 0.07 [-0.00, 0.15] (mixed → grasp) | - | 0.07 [-0.02, 0.16] (mixed → grasp) | - | 0.07 [-0.02, 0.16] (mixed → grasp) | - | 0.07 [-0.02, 0.16] (mixed → grasp) | - | 0.07 [-0.02, 0.16] (mixed → grasp) | - | 0.07 [-0.03, 0.16] (mixed → grasp) |
-| catalogue_causes_graspability_adjusting_small_object_count | - | 0.13 [0.05, 0.20] (mixed → grasp) | - | 0.09 [-0.00, 0.18] (mixed → grasp) | - | 0.12 [0.02, 0.20] (mixed → grasp) | - | 0.09 [-0.00, 0.18] (mixed → grasp) | - | - | - | 0.06 [-0.04, 0.15] (mixed → grasp) |
-| catalogue_causes_occluded_object_0 | - | 0.04 [-0.05, 0.13] (ycb-video → grasp) | - | 0.04 [-0.05, 0.13] (ycb-video → grasp) | - | - | - | 0.05 [-0.04, 0.14] (mixed → ycb-video) | - | - | - | - |
-| occluded_object_count_causes_blocked_object_0 | 0.31 | 0.02 [-0.26, 0.23] (2 → 16) | 0.31 | 0.02 [-0.26, 0.23] (2 → 16) | - | - | -0.49 | -0.04 [-0.31, 0.16] (2 → 16) | - | - | - | - |
-| size_causes_blocked_object_0 | - | 0.02 [0.00, 0.03] (large → small) | - | 0.02 [0.00, 0.03] (large → small) | - | - | - | 0.08 [0.02, 0.14] (small → large) | - | - | - | - |
+| question | relational circuit, trend | relational circuit, contrast | hybrid circuit, trend | hybrid circuit, contrast | propositional tree, trend | propositional tree, contrast | unrolled tree, trend | unrolled tree, contrast | scalars-only tree, trend | scalars-only tree, contrast | regression adjustment, trend | regression adjustment, contrast | neural adjustment, trend | neural adjustment, contrast |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| small_object_count_causes_graspability_adjusting_extent | -0.52 | -0.09 [-0.30, 0.18] (0 → 14) | -0.53 | -0.09 [-0.30, 0.18] (0 → 14) | -0.53 | -0.09 [-0.30, 0.18] (0 → 14) | -0.52 | -0.09 [-0.30, 0.18] (0 → 14) | - | - | -1.00 | -0.11 [-0.31, 0.16] (0 → 14) | 0.25 | 0.01 [-0.21, 0.27] (0 → 14) |
+| small_object_count_causes_graspability_adjusting_object_count | -0.42 | 0.07 [-0.18, 0.31] (0 → 14) | -0.37 | 0.06 [-0.19, 0.30] (0 → 14) | -0.36 | 0.06 [-0.18, 0.31] (0 → 14) | -0.39 | 0.06 [-0.19, 0.30] (0 → 14) | - | - | -1.00 | -0.11 [-0.30, 0.16] (0 → 14) | 0.20 | -0.02 [-0.22, 0.25] (0 → 14) |
+| small_object_count_causes_graspability_adjusting_extent_and_object_count | -0.42 | 0.08 [-0.17, 0.32] (0 → 14) | -0.37 | 0.06 [-0.19, 0.30] (0 → 14) | -0.36 | 0.08 [-0.17, 0.32] (0 → 14) | -0.39 | 0.06 [-0.18, 0.31] (0 → 14) | - | - | -1.00 | -0.00 [-0.22, 0.26] (0 → 14) | 0.90 | 0.09 [-0.14, 0.35] (0 → 14) |
+| occluded_object_count_causes_graspability_adjusting_extent | 0.68 | 0.34 [-0.00, 0.57] (2 → 16) | 0.68 | 0.34 [-0.00, 0.57] (2 → 16) | 0.64 | 0.34 [-0.00, 0.57] (2 → 16) | 0.64 | 0.34 [-0.00, 0.57] (2 → 16) | - | - | 1.00 | 0.20 [-0.14, 0.47] (2 → 16) | -0.95 | -0.14 [-0.44, 0.18] (2 → 16) |
+| occluded_object_count_causes_graspability_adjusting_object_count | 0.76 | 0.20 [-0.13, 0.44] (2 → 16) | 0.76 | 0.42 [0.07, 0.64] (2 → 16) | 0.78 | 0.21 [-0.13, 0.45] (2 → 16) | 0.81 | 0.36 [0.02, 0.59] (2 → 16) | - | - | 1.00 | 0.61 [0.26, 0.78] (2 → 16) | 1.00 | 0.49 [0.14, 0.70] (2 → 16) |
+| occluded_object_count_causes_graspability_adjusting_extent_and_object_count | 0.78 | 0.17 [-0.16, 0.42] (2 → 16) | 0.74 | 0.42 [0.07, 0.64] (2 → 16) | 0.76 | 0.17 [-0.16, 0.43] (2 → 16) | 0.82 | 0.36 [0.02, 0.59] (2 → 16) | - | - | 1.00 | 0.60 [0.26, 0.77] (2 → 16) | 1.00 | 0.51 [0.16, 0.71] (2 → 16) |
+| clear_viewpoint_count_causes_graspability_adjusting_extent | -0.66 | -0.28 [-0.39, -0.15] (0 → 52) | -0.66 | -0.28 [-0.39, -0.15] (0 → 52) | -0.66 | -0.28 [-0.39, -0.15] (0 → 52) | -0.66 | -0.28 [-0.39, -0.15] (0 → 52) | - | - | -1.00 | -0.29 [-0.40, -0.16] (0 → 52) | -0.28 | -0.00 [-0.13, 0.13] (0 → 52) |
+| clear_viewpoint_count_causes_graspability_adjusting_object_count | -0.71 | -0.32 [-0.42, -0.19] (0 → 52) | -0.70 | -0.30 [-0.40, -0.17] (0 → 52) | -0.71 | -0.32 [-0.42, -0.19] (0 → 52) | -0.70 | -0.31 [-0.41, -0.19] (0 → 52) | - | - | -1.00 | -0.33 [-0.43, -0.19] (0 → 52) | -0.08 | -0.00 [-0.13, 0.13] (0 → 52) |
+| clear_viewpoint_count_causes_graspability_adjusting_extent_and_object_count | -0.58 | -0.29 [-0.40, -0.16] (0 → 52) | -0.66 | -0.29 [-0.39, -0.16] (0 → 52) | -0.59 | -0.29 [-0.40, -0.16] (0 → 52) | -0.65 | -0.31 [-0.41, -0.18] (0 → 52) | - | - | -1.00 | -0.33 [-0.44, -0.20] (0 → 52) | -0.92 | -0.00 [-0.13, 0.13] (0 → 52) |
+| catalogue_causes_graspability_adjusting_extent | - | 0.07 [-0.00, 0.15] (mixed → grasp) | - | 0.07 [-0.02, 0.16] (mixed → grasp) | - | 0.07 [-0.02, 0.16] (mixed → grasp) | - | 0.07 [-0.02, 0.16] (mixed → grasp) | - | 0.07 [-0.02, 0.16] (mixed → grasp) | - | 0.07 [-0.03, 0.16] (mixed → grasp) | - | 0.00 [-0.10, 0.09] (mixed → grasp) |
+| catalogue_causes_graspability_adjusting_small_object_count | - | 0.13 [0.05, 0.20] (mixed → grasp) | - | 0.09 [-0.00, 0.18] (mixed → grasp) | - | 0.12 [0.02, 0.20] (mixed → grasp) | - | 0.09 [-0.00, 0.18] (mixed → grasp) | - | - | - | 0.06 [-0.04, 0.15] (mixed → grasp) | - | 0.00 [-0.10, 0.10] (mixed → ycb-video) |
+| catalogue_causes_occluded_object_0 | - | 0.04 [-0.05, 0.13] (ycb-video → grasp) | - | 0.04 [-0.05, 0.13] (ycb-video → grasp) | - | - | - | 0.05 [-0.04, 0.14] (mixed → ycb-video) | - | - | - | - | - | 0.00 [-0.02, 0.03] (ycb-video → mixed) |
+| occluded_object_count_causes_blocked_object_0 | 0.31 | 0.02 [-0.26, 0.23] (2 → 16) | 0.31 | 0.02 [-0.26, 0.23] (2 → 16) | - | - | -0.49 | -0.04 [-0.31, 0.16] (2 → 16) | - | - | - | - | -1.00 | -0.22 [-0.39, -0.01] (0 → 20) |
+| size_causes_blocked_object_0 | - | 0.02 [0.00, 0.03] (large → small) | - | 0.02 [0.00, 0.03] (large → small) | - | - | - | 0.08 [0.02, 0.14] (small → large) | - | - | - | - | - | 0.02 [-0.00, 0.03] (large → small) |
 
 ## What adjusting for changes
 
@@ -259,14 +259,15 @@ What each pipeline cost. *Models fitted* counts the plain model plus one support
 
 | pipeline | models fitted | training seconds | nodes | edges |
 |---|---|---|---|---|
-| relational circuit | 6 | 190.33 | 37013 | 36995 |
-| hybrid circuit | 1 | 43.98 | 8668 | 8664 |
-| propositional tree | 5 | 43.07 | 10429 | 10424 |
-| unrolled tree | 6 | 523.03 | 364486 | 364480 |
-| scalars-only tree | 2 | 0.05 | 526 | 524 |
-| regression adjustment | 12 | 8.30 | 0 | 0 |
+| relational circuit | 6 | 187.16 | 37013 | 36995 |
+| hybrid circuit | 1 | 41.19 | 8668 | 8664 |
+| propositional tree | 5 | 40.75 | 10429 | 10424 |
+| unrolled tree | 6 | 495.87 | 364486 | 364480 |
+| scalars-only tree | 2 | 0.04 | 526 | 524 |
+| regression adjustment | 12 | 7.85 | 0 | 0 |
+| neural adjustment | 15 | 8.44 | 0 | 0 |
 
-How well each explains scenes it never saw, on three views of a scene: its own scalars, which every pipeline models; its scalars and counts; and the whole scene, parts included, which only the pipelines that model the parts can score. The relational circuit scores a whole scene as its class circuit over the scalars and counts times each part template over one part given the counts; the unrolled tree scores it as one row. *Held-out coverage* is the share of held-out scenes that lie inside the plain model's support at all, since a tree's leaves span only the value ranges they were fitted on, and a whole scene is covered only if every one of its parts is. The *mean log-likelihood* is over the covered scenes only; the last column restricts it to the scenes every pipeline in the table covers, so the numbers are over the same rows.
+How well each explains scenes it never saw, on three views of one scene: its own scalars, which every pipeline models; its scalars and counts; and the whole scene, parts included, which only the pipelines that model the parts can score. The relational circuit scores a whole scene as its class circuit over the scalars and counts times each part template over one part given the counts; the unrolled tree scores it as one row. *Held-out coverage* is the share of held-out scenes that lie inside the plain model's support at all, since a tree's leaves span only the value ranges they were fitted on, and a whole scene is covered only if every one of its parts is. The *mean log-likelihood* is over the covered scenes only; the last column restricts it to the scenes every pipeline in the table covers, so the numbers are over the same rows.
 
 ### scalars
 
@@ -299,22 +300,22 @@ How well each explains scenes it never saw, on three views of a scene: its own s
 
 Wall-clock time from asking to the answer or the refusal. The *first ask* of a cause includes fitting that cause's own support-deterministic model; *asked again* repeats the question with every model fitted, so only grounding (for the relational circuit), verification and backdoor adjustment remain. A refusal is fast when it is a schema check; a relational answer draws Monte-Carlo samples for every count the query leaves open and grounds one part template per sampled value, which is where its time goes.
 
-| question | relational circuit, first ask | relational circuit, asked again | hybrid circuit, first ask | hybrid circuit, asked again | propositional tree, first ask | propositional tree, asked again | unrolled tree, first ask | unrolled tree, asked again | scalars-only tree, first ask | scalars-only tree, asked again | regression adjustment, first ask | regression adjustment, asked again |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| small_object_count_causes_graspability_adjusting_extent | 160.36 | 124.88 | 46.21 | 7.84 | 10.80 | 2.28 | 108.67 | 8.73 | 0.01 | 0.00 | 0.03 | - |
-| small_object_count_causes_graspability_adjusting_object_count | 173.38 | 164.16 | 22.20 | 21.83 | 17.45 | 18.72 | 23.72 | 21.29 | 0.01 | 0.00 | 0.04 | - |
-| small_object_count_causes_graspability_adjusting_extent_and_object_count | 316.61 | 312.50 | 103.44 | 106.35 | 100.55 | 102.30 | 133.18 | 135.11 | 0.00 | 0.01 | 0.03 | - |
-| occluded_object_count_causes_graspability_adjusting_extent | 171.33 | 132.80 | 53.36 | 8.89 | 13.32 | 4.79 | 119.59 | 11.67 | 0.01 | 0.00 | 0.02 | - |
-| occluded_object_count_causes_graspability_adjusting_object_count | 185.41 | 175.32 | 24.00 | 24.33 | 20.58 | 20.91 | 27.73 | 27.76 | 0.00 | 0.01 | 0.03 | - |
-| occluded_object_count_causes_graspability_adjusting_extent_and_object_count | 489.87 | 453.95 | 100.82 | 103.19 | 156.19 | 151.79 | 101.81 | 104.11 | 0.00 | 0.00 | 0.03 | - |
-| clear_viewpoint_count_causes_graspability_adjusting_extent | 295.22 | 243.21 | 220.09 | 126.14 | 128.43 | 121.29 | 381.38 | 134.42 | 0.00 | 0.00 | 0.04 | - |
-| clear_viewpoint_count_causes_graspability_adjusting_object_count | 254.20 | 248.31 | 104.38 | 103.49 | 96.89 | 95.89 | 109.94 | 111.41 | 0.00 | 0.00 | 0.04 | - |
-| clear_viewpoint_count_causes_graspability_adjusting_extent_and_object_count | 1788.80 | 1786.91 | 1691.30 | 1695.80 | 1219.77 | 1216.70 | 1128.31 | 1131.44 | 0.00 | 0.01 | 0.04 | - |
-| catalogue_causes_graspability_adjusting_extent | 211.26 | 185.15 | 15.49 | 2.28 | 9.02 | 0.23 | 26.17 | 4.17 | 0.27 | 0.24 | 0.02 | - |
-| catalogue_causes_graspability_adjusting_small_object_count | 194.61 | 200.42 | 1.94 | 1.94 | 1.23 | 1.21 | 2.34 | 2.22 | 0.01 | 0.01 | 0.02 | - |
-| catalogue_causes_occluded_object_0 | 217.52 | 227.61 | 259.58 | 228.12 | 0.01 | 0.01 | 1.14 | 1.19 | 0.00 | 0.00 | 0.01 | - |
-| occluded_object_count_causes_blocked_object_0 | 168.30 | 171.53 | 207.25 | 176.85 | 0.01 | 0.00 | 8.52 | 8.62 | 0.00 | 0.00 | 0.01 | - |
-| size_causes_blocked_object_0 | 118.78 | 87.10 | 123.93 | 90.20 | 0.00 | 0.00 | 29.70 | 1.12 | 0.00 | 0.00 | 0.00 | - |
+| question | relational circuit, first ask | relational circuit, asked again | hybrid circuit, first ask | hybrid circuit, asked again | propositional tree, first ask | propositional tree, asked again | unrolled tree, first ask | unrolled tree, asked again | scalars-only tree, first ask | scalars-only tree, asked again | regression adjustment, first ask | regression adjustment, asked again | neural adjustment, first ask | neural adjustment, asked again |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| small_object_count_causes_graspability_adjusting_extent | 162.10 | 121.23 | 43.22 | 7.67 | 10.47 | 2.19 | 102.86 | 5.93 | 0.00 | 0.00 | 0.03 | - | 0.23 | - |
+| small_object_count_causes_graspability_adjusting_object_count | 167.47 | 160.43 | 20.77 | 22.25 | 18.30 | 18.27 | 22.75 | 25.09 | 0.01 | 0.00 | 0.03 | - | 0.27 | - |
+| small_object_count_causes_graspability_adjusting_extent_and_object_count | 324.67 | 305.65 | 100.84 | 102.42 | 100.28 | 100.83 | 130.60 | 132.94 | 0.00 | 0.00 | 0.04 | - | 0.20 | - |
+| occluded_object_count_causes_graspability_adjusting_extent | 167.77 | 129.99 | 49.40 | 8.32 | 14.31 | 4.92 | 112.81 | 11.60 | 0.00 | 0.00 | 0.03 | - | 0.31 | - |
+| occluded_object_count_causes_graspability_adjusting_object_count | 183.23 | 170.57 | 23.91 | 23.48 | 20.70 | 20.39 | 26.28 | 27.53 | 0.00 | 0.01 | 0.03 | - | 0.26 | - |
+| occluded_object_count_causes_graspability_adjusting_extent_and_object_count | 448.56 | 440.44 | 97.94 | 100.54 | 151.48 | 150.49 | 97.81 | 101.35 | 0.00 | 0.00 | 0.04 | - | 0.17 | - |
+| clear_viewpoint_count_causes_graspability_adjusting_extent | 286.74 | 238.43 | 210.99 | 124.85 | 126.43 | 119.96 | 368.07 | 133.67 | 0.00 | 0.00 | 0.05 | - | 0.24 | - |
+| clear_viewpoint_count_causes_graspability_adjusting_object_count | 253.46 | 242.33 | 101.42 | 101.46 | 96.18 | 95.06 | 110.05 | 109.50 | 0.01 | 0.00 | 0.06 | - | 0.27 | - |
+| clear_viewpoint_count_causes_graspability_adjusting_extent_and_object_count | 1751.47 | 1727.74 | 1675.29 | 1676.96 | 1236.53 | 1209.40 | 1113.49 | 1122.68 | 0.00 | 0.00 | 0.06 | - | 0.24 | - |
+| catalogue_causes_graspability_adjusting_extent | 204.66 | 175.48 | 15.83 | 0.77 | 8.51 | 0.23 | 27.61 | 1.15 | 0.26 | 0.23 | 0.03 | - | 0.35 | - |
+| catalogue_causes_graspability_adjusting_small_object_count | 188.89 | 187.34 | 1.76 | 1.76 | 1.24 | 1.20 | 2.21 | 5.14 | 0.00 | 0.00 | 0.03 | - | 0.35 | - |
+| catalogue_causes_occluded_object_0 | 215.83 | 215.76 | 249.60 | 220.05 | 0.00 | 0.00 | 1.08 | 1.13 | 0.00 | 0.00 | 0.01 | - | 2.09 | - |
+| occluded_object_count_causes_blocked_object_0 | 163.61 | 164.03 | 197.78 | 170.33 | 0.00 | 0.00 | 5.70 | 5.81 | 0.01 | 0.00 | 0.01 | - | 1.76 | - |
+| size_causes_blocked_object_0 | 114.26 | 82.78 | 116.23 | 89.79 | 0.01 | 0.00 | 27.73 | 4.33 | 0.00 | 0.00 | 0.01 | - | 1.79 | - |
 
 ## Does the order of the parts matter?
 
@@ -446,32 +447,29 @@ The pipelines that model the parts, fitted on synthetic scenes of growing size (
 - The unrolled tree answered 14 of 14 questions.
 - The scalars-only tree answered 1 of 14 questions, refusing `small_object_count_causes_graspability_adjusting_extent` because the fitted table has no column for the queried variables; `small_object_count_causes_graspability_adjusting_object_count` because the fitted table has no column for the queried variables; `small_object_count_causes_graspability_adjusting_extent_and_object_count` because the fitted table has no column for the queried variables; `occluded_object_count_causes_graspability_adjusting_extent` because the fitted table has no column for the queried variables; `occluded_object_count_causes_graspability_adjusting_object_count` because the fitted table has no column for the queried variables; `occluded_object_count_causes_graspability_adjusting_extent_and_object_count` because the fitted table has no column for the queried variables; `clear_viewpoint_count_causes_graspability_adjusting_extent` because the fitted table has no column for the queried variables; `clear_viewpoint_count_causes_graspability_adjusting_object_count` because the fitted table has no column for the queried variables; `clear_viewpoint_count_causes_graspability_adjusting_extent_and_object_count` because the fitted table has no column for the queried variables; `catalogue_causes_graspability_adjusting_small_object_count` because the fitted table has no column for the queried variables; `catalogue_causes_occluded_object_0` because the fitted table has no column for the queried variables; `occluded_object_count_causes_blocked_object_0` because the fitted table has no column for the queried variables; `size_causes_blocked_object_0` because the fitted table has no column for the queried variables.
 - The regression adjustment answered 11 of 14 questions, refusing `catalogue_causes_occluded_object_0` because the fitted table has no column for the queried variables; `occluded_object_count_causes_blocked_object_0` because the fitted table has no column for the queried variables; `size_causes_blocked_object_0` because the fitted table has no column for the queried variables.
-- On `small_object_count_causes_graspability_adjusting_extent`, the pipelines disagree on the most effective setting: the relational circuit says 3 small objects (0.49); the hybrid circuit says 3 small objects (0.49); the propositional tree says 3 small objects (0.49); the unrolled tree says 3 small objects (0.49); the regression adjustment says 0 small objects (0.42).
-- On `small_object_count_causes_graspability_adjusting_object_count`, the pipelines disagree on the most effective setting: the relational circuit says 14 small objects (0.51); the hybrid circuit says 14 small objects (0.51); the propositional tree says 14 small objects (0.51); the unrolled tree says 14 small objects (0.51); the regression adjustment says 0 small objects (0.42).
-- On `small_object_count_causes_graspability_adjusting_extent_and_object_count`, the pipelines disagree on the most effective setting: the relational circuit says 14 small objects (0.51); the hybrid circuit says 14 small objects (0.51); the propositional tree says 14 small objects (0.51); the unrolled tree says 14 small objects (0.51); the regression adjustment says 0 small objects (0.38).
-- On `occluded_object_count_causes_graspability_adjusting_extent`, every pipeline that answered finds 16 occluded objects the most effective setting (adjusted probabilities: relational circuit 0.52, hybrid circuit 0.52, propositional tree 0.52, unrolled tree 0.52, regression adjustment 0.47).
-- On `occluded_object_count_causes_graspability_adjusting_object_count`, the pipelines disagree on the most effective setting: the relational circuit says 12 occluded objects (0.47); the hybrid circuit says 16 occluded objects (0.61); the propositional tree says 12 occluded objects (0.47); the unrolled tree says 16 occluded objects (0.55); the regression adjustment says 16 occluded objects (0.71).
-- On `occluded_object_count_causes_graspability_adjusting_extent_and_object_count`, the pipelines disagree on the most effective setting: the relational circuit says 12 occluded objects (0.45); the hybrid circuit says 16 occluded objects (0.61); the propositional tree says 12 occluded objects (0.46); the unrolled tree says 16 occluded objects (0.55); the regression adjustment says 16 occluded objects (0.70).
-- On `clear_viewpoint_count_causes_graspability_adjusting_extent`, the pipelines disagree on the most effective setting: the relational circuit says 2 clear viewpoints (0.59); the hybrid circuit says 2 clear viewpoints (0.59); the propositional tree says 2 clear viewpoints (0.59); the unrolled tree says 2 clear viewpoints (0.59); the regression adjustment says 0 clear viewpoints (0.53).
-- On `clear_viewpoint_count_causes_graspability_adjusting_object_count`, the pipelines disagree on the most effective setting: the relational circuit says 15 clear viewpoints (0.60); the hybrid circuit says 15 clear viewpoints (0.60); the propositional tree says 15 clear viewpoints (0.60); the unrolled tree says 15 clear viewpoints (0.60); the regression adjustment says 0 clear viewpoints (0.55).
-- On `clear_viewpoint_count_causes_graspability_adjusting_extent_and_object_count`, the pipelines disagree on the most effective setting: the relational circuit says 15 clear viewpoints (0.52); the hybrid circuit says 1 clear viewpoints (0.60); the propositional tree says 1 clear viewpoints (0.53); the unrolled tree says 1 clear viewpoints (0.63); the regression adjustment says 0 clear viewpoints (0.55).
-- On `catalogue_causes_graspability_adjusting_extent`, every pipeline that answered finds the grasp catalogue the most effective setting (adjusted probabilities: relational circuit 0.41, hybrid circuit 0.41, propositional tree 0.41, unrolled tree 0.41, scalars-only tree 0.41, regression adjustment 0.41).
-- On `catalogue_causes_graspability_adjusting_small_object_count`, every pipeline that answered finds the grasp catalogue the most effective setting (adjusted probabilities: relational circuit 0.39, hybrid circuit 0.40, propositional tree 0.40, unrolled tree 0.40, regression adjustment 0.40).
-- On `catalogue_causes_occluded_object_0`, the pipelines disagree on the most effective setting: the relational circuit says the grasp catalogue (0.36); the hybrid circuit says the grasp catalogue (0.36); the unrolled tree says the ycb-video catalogue (0.29).
-- On `occluded_object_count_causes_blocked_object_0`, the pipelines disagree on the most effective setting: the relational circuit says 10 occluded objects (0.13); the hybrid circuit says 10 occluded objects (0.13); the unrolled tree says 3 occluded objects (0.18).
-- On `size_causes_blocked_object_0`, the pipelines disagree on the most effective setting: the relational circuit says object 0 being small (0.12); the hybrid circuit says object 0 being small (0.12); the unrolled tree says object 0 being large (0.15).
+- The neural adjustment answered 14 of 14 questions.
+- On `small_object_count_causes_graspability_adjusting_extent`, the pipelines disagree on the most effective setting: the relational circuit, the hybrid circuit, the propositional tree and the unrolled tree say 3 small objects (0.49, 0.49, 0.49, 0.49); the regression adjustment says 0 small objects (0.42); the neural adjustment says 13 small objects (0.39).
+- On `small_object_count_causes_graspability_adjusting_object_count`, the pipelines disagree on the most effective setting: the relational circuit, the hybrid circuit, the propositional tree and the unrolled tree say 14 small objects (0.51, 0.51, 0.51, 0.51); the regression adjustment says 0 small objects (0.42); the neural adjustment says 11 small objects (0.36).
+- On `small_object_count_causes_graspability_adjusting_extent_and_object_count`, the pipelines disagree on the most effective setting: the relational circuit, the hybrid circuit, the propositional tree, the unrolled tree and the neural adjustment say 14 small objects (0.51, 0.51, 0.51, 0.51, 0.42); the regression adjustment says 0 small objects (0.38).
+- On `occluded_object_count_causes_graspability_adjusting_extent`, the pipelines disagree on the most effective setting: the relational circuit, the hybrid circuit, the propositional tree, the unrolled tree and the regression adjustment say 16 occluded objects (0.52, 0.52, 0.52, 0.52, 0.47); the neural adjustment says 2 occluded objects (0.47).
+- On `occluded_object_count_causes_graspability_adjusting_object_count`, the pipelines disagree on the most effective setting: the relational circuit and the propositional tree say 12 occluded objects (0.47, 0.47); the hybrid circuit, the unrolled tree, the regression adjustment and the neural adjustment say 16 occluded objects (0.61, 0.55, 0.71, 0.68).
+- On `occluded_object_count_causes_graspability_adjusting_extent_and_object_count`, the pipelines disagree on the most effective setting: the relational circuit and the propositional tree say 12 occluded objects (0.45, 0.46); the hybrid circuit, the unrolled tree, the regression adjustment and the neural adjustment say 16 occluded objects (0.61, 0.55, 0.70, 0.68).
+- On `clear_viewpoint_count_causes_graspability_adjusting_extent`, the pipelines disagree on the most effective setting: the relational circuit, the hybrid circuit, the propositional tree and the unrolled tree say 2 clear viewpoints (0.59, 0.59, 0.59, 0.59); the regression adjustment says 0 clear viewpoints (0.53); the neural adjustment says 18 clear viewpoints (0.38).
+- On `clear_viewpoint_count_causes_graspability_adjusting_object_count`, the pipelines disagree on the most effective setting: the relational circuit, the hybrid circuit, the propositional tree and the unrolled tree say 15 clear viewpoints (0.60, 0.60, 0.60, 0.60); the regression adjustment says 0 clear viewpoints (0.55); the neural adjustment says 37 clear viewpoints (0.38).
+- On `clear_viewpoint_count_causes_graspability_adjusting_extent_and_object_count`, the pipelines disagree on the most effective setting: the relational circuit says 15 clear viewpoints (0.52); the hybrid circuit, the propositional tree and the unrolled tree say 1 clear viewpoints (0.60, 0.53, 0.63); the regression adjustment says 0 clear viewpoints (0.55); the neural adjustment says 18 clear viewpoints (0.38).
+- On `catalogue_causes_graspability_adjusting_extent`, every pipeline that answered finds the grasp catalogue the most effective setting (adjusted probabilities: relational circuit 0.41, hybrid circuit 0.41, propositional tree 0.41, unrolled tree 0.41, scalars-only tree 0.41, regression adjustment 0.41, neural adjustment 0.38).
+- On `catalogue_causes_graspability_adjusting_small_object_count`, the pipelines disagree on the most effective setting: the relational circuit, the hybrid circuit, the propositional tree, the unrolled tree and the regression adjustment say the grasp catalogue (0.39, 0.40, 0.40, 0.40, 0.40); the neural adjustment says the ycb-video catalogue (0.38).
+- On `catalogue_causes_occluded_object_0`, the pipelines disagree on the most effective setting: the relational circuit and the hybrid circuit say the grasp catalogue (0.36, 0.36); the unrolled tree says the ycb-video catalogue (0.29); the neural adjustment says the mixed catalogue (0.35).
+- On `occluded_object_count_causes_blocked_object_0`, the pipelines disagree on the most effective setting: the relational circuit and the hybrid circuit say 10 occluded objects (0.13, 0.13); the unrolled tree says 3 occluded objects (0.18); the neural adjustment says 0 occluded objects (0.25).
+- On `size_causes_blocked_object_0`, the pipelines disagree on the most effective setting: the relational circuit, the hybrid circuit and the neural adjustment say object 0 being small (0.12, 0.12, 0.17); the unrolled tree says object 0 being large (0.15).
 - On the scalars, the scalars-only tree assigns the highest mean log-likelihood (0.20, against relational circuit 0.10, hybrid circuit -0.06, propositional tree 0.10, unrolled tree -0.02) to the held-out scenes every pipeline covers; coverage: relational circuit 100.0%, hybrid circuit 100.0%, propositional tree 100.0%, unrolled tree 100.0%, scalars-only tree 95.8%.
 - On the scalars and counts, the relational circuit assigns the highest mean log-likelihood (-12.76, against hybrid circuit -13.26, propositional tree -12.76, unrolled tree -13.09) to the held-out scenes every pipeline covers; coverage: relational circuit 91.1%, hybrid circuit 94.2%, propositional tree 91.1%, unrolled tree 95.8%.
 - On the whole scene, the hybrid circuit assigns the highest mean log-likelihood (83.33, against relational circuit -17.22, unrolled tree 26.91) to the held-out scenes every pipeline covers; coverage: relational circuit 87.4%, hybrid circuit 84.3%, unrolled tree 67.0%.
-- Over 20 reorderings, the relational circuit's adjusted effect probabilities ranged by up to 0.00 and its most effective region moved in 0.0% of the reorderings; its whole-scene mean log-likelihood fell by up to 0.00 from the dataset's own order.
-- Over 20 reorderings, the hybrid circuit's adjusted effect probabilities ranged by up to 0.00 and its most effective region moved in 0.0% of the reorderings; its whole-scene mean log-likelihood fell by up to 123.61 from the dataset's own order.
-- Over 20 reorderings, the unrolled tree's adjusted effect probabilities ranged by up to 0.50 and its most effective region moved in 88.3% of the reorderings; its whole-scene mean log-likelihood fell by up to 120.39 from the dataset's own order.
-- The relational circuit takes 322.42 seconds per answered question on average once its models are fitted.
-- The hybrid circuit takes 192.66 seconds per answered question on average once its models are fitted.
-- The propositional tree takes 157.83 seconds per answered question on average once its models are fitted.
-- The unrolled tree takes 121.66 seconds per answered question on average once its models are fitted.
-- The scalars-only tree takes 0.24 seconds per answered question on average once its models are fitted.
-- The regression adjustment takes - seconds per answered question on average once its models are fitted.
+- The relational circuit takes 311.59 seconds per answered question on average once its models are fitted.
+- The hybrid circuit takes 189.33 seconds per answered question on average once its models are fitted.
+- The propositional tree takes 156.63 seconds per answered question on average once its models are fitted.
+- The unrolled tree takes 120.56 seconds per answered question on average once its models are fitted.
+- The scalars-only tree takes 0.23 seconds per answered question on average once its models are fitted.
 
 ## How many small objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out?
 
@@ -610,6 +608,32 @@ Refused: the fitted table has no column for the queried variables.
 | 20 † | 2 | 0.003 | 0.000 | 0.264 | [0.03, 0.81] |
 
 EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.42).
+
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 148 | 0.194 | 0.446 | 0.379 | [0.30, 0.46] |
+| 1 | 35 | 0.046 | 0.429 | 0.370 | [0.23, 0.54] |
+| 2 | 48 | 0.063 | 0.333 | 0.368 | [0.25, 0.51] |
+| 3 | 55 | 0.072 | 0.491 | 0.369 | [0.25, 0.50] |
+| 4 | 66 | 0.087 | 0.333 | 0.364 | [0.26, 0.48] |
+| 5 | 66 | 0.087 | 0.409 | 0.353 | [0.25, 0.47] |
+| 6 | 67 | 0.088 | 0.313 | 0.342 | [0.24, 0.46] |
+| 7 | 78 | 0.102 | 0.359 | 0.338 | [0.24, 0.45] |
+| 8 | 52 | 0.068 | 0.327 | 0.339 | [0.23, 0.47] |
+| 9 | 42 | 0.055 | 0.381 | 0.346 | [0.22, 0.50] |
+| 10 | 29 | 0.038 | 0.414 | 0.357 | [0.21, 0.54] |
+| 11 | 25 | 0.033 | 0.240 | 0.371 | [0.21, 0.57] |
+| 12 | 15 | 0.020 | 0.200 | 0.385 | [0.19, 0.63] |
+| 13 | 12 | 0.016 | 0.333 | 0.394 | [0.18, 0.66] |
+| 14 | 14 | 0.018 | 0.357 | 0.389 | [0.19, 0.64] |
+| 15 † | 4 | 0.005 | 0.500 | 0.353 | [0.08, 0.77] |
+| 16 † | 3 | 0.004 | 0.333 | 0.273 | [0.04, 0.76] |
+| 17 † | 2 | 0.003 | 0.000 | 0.164 | [0.01, 0.76] |
+| 20 † | 2 | 0.003 | 0.000 | 0.010 | [0.00, 0.66] |
+
+EQL's own `cause` search settles on 13: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.39).
 
 
 ## How many small objects cause every object of a scene to stay graspable, adjusting for the number of objects?
@@ -750,6 +774,32 @@ Refused: the fitted table has no column for the queried variables.
 
 EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.42).
 
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 148 | 0.194 | 0.446 | 0.351 | [0.28, 0.43] |
+| 1 | 35 | 0.046 | 0.429 | 0.351 | [0.21, 0.52] |
+| 2 | 48 | 0.063 | 0.333 | 0.348 | [0.23, 0.49] |
+| 3 | 55 | 0.072 | 0.491 | 0.344 | [0.23, 0.48] |
+| 4 | 66 | 0.087 | 0.333 | 0.338 | [0.24, 0.46] |
+| 5 | 66 | 0.087 | 0.409 | 0.334 | [0.23, 0.45] |
+| 6 | 67 | 0.088 | 0.313 | 0.336 | [0.23, 0.46] |
+| 7 | 78 | 0.102 | 0.359 | 0.344 | [0.25, 0.45] |
+| 8 | 52 | 0.068 | 0.327 | 0.354 | [0.24, 0.49] |
+| 9 | 42 | 0.055 | 0.381 | 0.361 | [0.23, 0.51] |
+| 10 | 29 | 0.038 | 0.414 | 0.364 | [0.21, 0.54] |
+| 11 | 25 | 0.033 | 0.240 | 0.364 | [0.21, 0.56] |
+| 12 | 15 | 0.020 | 0.200 | 0.359 | [0.17, 0.61] |
+| 13 | 12 | 0.016 | 0.333 | 0.348 | [0.15, 0.62] |
+| 14 | 14 | 0.018 | 0.357 | 0.333 | [0.15, 0.59] |
+| 15 † | 4 | 0.005 | 0.500 | 0.315 | [0.07, 0.74] |
+| 16 † | 3 | 0.004 | 0.333 | 0.297 | [0.05, 0.77] |
+| 17 † | 2 | 0.003 | 0.000 | 0.279 | [0.03, 0.82] |
+| 20 † | 2 | 0.003 | 0.000 | 0.246 | [0.03, 0.80] |
+
+EQL's own `cause` search settles on 11: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.36).
+
 
 ## How many small objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out and the number of objects?
 
@@ -888,6 +938,32 @@ Refused: the fitted table has no column for the queried variables.
 | 20 † | 2 | 0.003 | 0.000 | 0.376 | [0.06, 0.86] |
 
 EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.38).
+
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 148 | 0.194 | 0.446 | 0.327 | [0.26, 0.41] |
+| 1 | 35 | 0.046 | 0.429 | 0.316 | [0.19, 0.48] |
+| 2 | 48 | 0.063 | 0.333 | 0.307 | [0.20, 0.45] |
+| 3 | 55 | 0.072 | 0.491 | 0.310 | [0.20, 0.44] |
+| 4 | 66 | 0.087 | 0.333 | 0.314 | [0.21, 0.43] |
+| 5 | 66 | 0.087 | 0.409 | 0.320 | [0.22, 0.44] |
+| 6 | 67 | 0.088 | 0.313 | 0.326 | [0.23, 0.44] |
+| 7 | 78 | 0.102 | 0.359 | 0.333 | [0.24, 0.44] |
+| 8 | 52 | 0.068 | 0.327 | 0.341 | [0.23, 0.48] |
+| 9 | 42 | 0.055 | 0.381 | 0.351 | [0.22, 0.50] |
+| 10 | 29 | 0.038 | 0.414 | 0.362 | [0.21, 0.54] |
+| 11 | 25 | 0.033 | 0.240 | 0.375 | [0.21, 0.57] |
+| 12 | 15 | 0.020 | 0.200 | 0.389 | [0.19, 0.63] |
+| 13 | 12 | 0.016 | 0.333 | 0.403 | [0.18, 0.67] |
+| 14 | 14 | 0.018 | 0.357 | 0.416 | [0.20, 0.66] |
+| 15 † | 4 | 0.005 | 0.500 | 0.429 | [0.12, 0.81] |
+| 16 † | 3 | 0.004 | 0.333 | 0.439 | [0.10, 0.85] |
+| 17 † | 2 | 0.003 | 0.000 | 0.444 | [0.08, 0.89] |
+| 20 † | 2 | 0.003 | 0.000 | 0.419 | [0.07, 0.88] |
+
+EQL's own `cause` search settles on 14: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.42).
 
 
 ## How many occluded objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out?
@@ -1038,6 +1114,34 @@ Refused: the fitted table has no column for the queried variables.
 
 EQL's own `cause` search settles on 16: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.47).
 
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 † | 3 | 0.004 | 0.333 | 0.500 | [0.13, 0.87] |
+| 1 † | 4 | 0.005 | 0.250 | 0.479 | [0.14, 0.84] |
+| 2 | 12 | 0.016 | 0.167 | 0.473 | [0.23, 0.73] |
+| 3 | 17 | 0.022 | 0.353 | 0.472 | [0.26, 0.69] |
+| 4 | 25 | 0.033 | 0.160 | 0.470 | [0.29, 0.66] |
+| 5 | 25 | 0.033 | 0.400 | 0.466 | [0.29, 0.65] |
+| 6 | 42 | 0.055 | 0.190 | 0.459 | [0.32, 0.61] |
+| 7 | 71 | 0.093 | 0.324 | 0.448 | [0.34, 0.56] |
+| 8 | 72 | 0.094 | 0.431 | 0.429 | [0.32, 0.54] |
+| 9 | 87 | 0.114 | 0.345 | 0.403 | [0.31, 0.51] |
+| 10 | 95 | 0.125 | 0.453 | 0.372 | [0.28, 0.47] |
+| 11 | 93 | 0.122 | 0.409 | 0.340 | [0.25, 0.44] |
+| 12 | 61 | 0.080 | 0.426 | 0.309 | [0.21, 0.43] |
+| 13 | 51 | 0.067 | 0.333 | 0.284 | [0.18, 0.42] |
+| 14 | 43 | 0.056 | 0.372 | 0.275 | [0.16, 0.42] |
+| 15 | 25 | 0.033 | 0.400 | 0.289 | [0.15, 0.49] |
+| 16 | 21 | 0.028 | 0.524 | 0.333 | [0.17, 0.55] |
+| 17 † | 8 | 0.010 | 0.625 | 0.396 | [0.15, 0.71] |
+| 18 † | 6 | 0.008 | 0.667 | 0.464 | [0.17, 0.79] |
+| 19 † | 1 | 0.001 | 1.000 | 0.531 | [0.06, 0.95] |
+| 20 † | 1 | 0.001 | 1.000 | 0.597 | [0.08, 0.96] |
+
+EQL's own `cause` search settles on 2: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.47).
+
 
 ## How many occluded objects cause every object of a scene to stay graspable, adjusting for the number of objects?
 
@@ -1187,6 +1291,34 @@ Refused: the fitted table has no column for the queried variables.
 
 EQL's own `cause` search settles on 16: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.71).
 
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 † | 3 | 0.004 | 0.333 | 0.193 | [0.02, 0.71] |
+| 1 † | 4 | 0.005 | 0.250 | 0.188 | [0.03, 0.65] |
+| 2 | 12 | 0.016 | 0.167 | 0.189 | [0.06, 0.47] |
+| 3 | 17 | 0.022 | 0.353 | 0.196 | [0.07, 0.43] |
+| 4 | 25 | 0.033 | 0.160 | 0.207 | [0.09, 0.40] |
+| 5 | 25 | 0.033 | 0.400 | 0.224 | [0.10, 0.42] |
+| 6 | 42 | 0.055 | 0.190 | 0.250 | [0.14, 0.40] |
+| 7 | 71 | 0.093 | 0.324 | 0.280 | [0.19, 0.39] |
+| 8 | 72 | 0.094 | 0.431 | 0.310 | [0.22, 0.42] |
+| 9 | 87 | 0.114 | 0.345 | 0.341 | [0.25, 0.45] |
+| 10 | 95 | 0.125 | 0.453 | 0.371 | [0.28, 0.47] |
+| 11 | 93 | 0.122 | 0.409 | 0.400 | [0.31, 0.50] |
+| 12 | 61 | 0.080 | 0.426 | 0.430 | [0.31, 0.55] |
+| 13 | 51 | 0.067 | 0.333 | 0.464 | [0.33, 0.60] |
+| 14 | 43 | 0.056 | 0.372 | 0.513 | [0.37, 0.65] |
+| 15 | 25 | 0.033 | 0.400 | 0.589 | [0.40, 0.76] |
+| 16 | 21 | 0.028 | 0.524 | 0.679 | [0.47, 0.84] |
+| 17 † | 8 | 0.010 | 0.625 | 0.761 | [0.42, 0.93] |
+| 18 † | 6 | 0.008 | 0.667 | 0.829 | [0.43, 0.97] |
+| 19 † | 1 | 0.001 | 1.000 | 0.881 | [0.16, 1.00] |
+| 20 † | 1 | 0.001 | 1.000 | 0.920 | [0.17, 1.00] |
+
+EQL's own `cause` search settles on 16: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.68).
+
 
 ## How many occluded objects cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out and the number of objects?
 
@@ -1335,6 +1467,34 @@ Refused: the fitted table has no column for the queried variables.
 | 20 † | 1 | 0.001 | 1.000 | 0.852 | [0.15, 0.99] |
 
 EQL's own `cause` search settles on 16: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.70).
+
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 † | 3 | 0.004 | 0.333 | 0.178 | [0.02, 0.70] |
+| 1 † | 4 | 0.005 | 0.250 | 0.174 | [0.02, 0.64] |
+| 2 | 12 | 0.016 | 0.167 | 0.171 | [0.05, 0.45] |
+| 3 | 17 | 0.022 | 0.353 | 0.171 | [0.06, 0.40] |
+| 4 | 25 | 0.033 | 0.160 | 0.180 | [0.08, 0.37] |
+| 5 | 25 | 0.033 | 0.400 | 0.201 | [0.09, 0.39] |
+| 6 | 42 | 0.055 | 0.190 | 0.229 | [0.13, 0.38] |
+| 7 | 71 | 0.093 | 0.324 | 0.262 | [0.17, 0.37] |
+| 8 | 72 | 0.094 | 0.431 | 0.297 | [0.20, 0.41] |
+| 9 | 87 | 0.114 | 0.345 | 0.333 | [0.24, 0.44] |
+| 10 | 95 | 0.125 | 0.453 | 0.369 | [0.28, 0.47] |
+| 11 | 93 | 0.122 | 0.409 | 0.407 | [0.31, 0.51] |
+| 12 | 61 | 0.080 | 0.426 | 0.447 | [0.33, 0.57] |
+| 13 | 51 | 0.067 | 0.333 | 0.493 | [0.36, 0.63] |
+| 14 | 43 | 0.056 | 0.372 | 0.552 | [0.40, 0.69] |
+| 15 | 25 | 0.033 | 0.400 | 0.617 | [0.42, 0.78] |
+| 16 | 21 | 0.028 | 0.524 | 0.680 | [0.47, 0.84] |
+| 17 † | 8 | 0.010 | 0.625 | 0.738 | [0.40, 0.92] |
+| 18 † | 6 | 0.008 | 0.667 | 0.790 | [0.40, 0.96] |
+| 19 † | 1 | 0.001 | 1.000 | 0.834 | [0.14, 0.99] |
+| 20 † | 1 | 0.001 | 1.000 | 0.870 | [0.16, 1.00] |
+
+EQL's own `cause` search settles on 16: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.68).
 
 
 ## How many clear viewpoints cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out?
@@ -1645,6 +1805,66 @@ Refused: the fitted table has no column for the queried variables.
 
 EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.53).
 
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 181 | 0.237 | 0.481 | 0.378 | [0.31, 0.45] |
+| 1 | 11 | 0.014 | 0.545 | 0.378 | [0.16, 0.66] |
+| 2 | 18 | 0.024 | 0.556 | 0.377 | [0.19, 0.60] |
+| 3 † | 8 | 0.010 | 0.625 | 0.377 | [0.14, 0.70] |
+| 4 † | 3 | 0.004 | 0.667 | 0.377 | [0.08, 0.82] |
+| 5 † | 7 | 0.009 | 0.429 | 0.377 | [0.13, 0.71] |
+| 6 † | 5 | 0.007 | 0.600 | 0.377 | [0.11, 0.75] |
+| 7 | 10 | 0.013 | 0.500 | 0.377 | [0.15, 0.67] |
+| 8 † | 5 | 0.007 | 0.400 | 0.377 | [0.11, 0.75] |
+| 9 † | 6 | 0.008 | 0.500 | 0.377 | [0.12, 0.73] |
+| 10 | 10 | 0.013 | 0.400 | 0.377 | [0.15, 0.67] |
+| 11 | 10 | 0.013 | 0.100 | 0.377 | [0.15, 0.67] |
+| 12 † | 5 | 0.007 | 0.800 | 0.377 | [0.11, 0.75] |
+| 13 † | 9 | 0.012 | 0.222 | 0.377 | [0.15, 0.68] |
+| 14 † | 3 | 0.004 | 1.000 | 0.378 | [0.08, 0.82] |
+| 15 | 10 | 0.013 | 0.500 | 0.378 | [0.15, 0.67] |
+| 16 † | 2 | 0.003 | 0.000 | 0.378 | [0.06, 0.86] |
+| 17 † | 4 | 0.005 | 0.500 | 0.378 | [0.09, 0.78] |
+| 18 | 11 | 0.014 | 0.273 | 0.378 | [0.16, 0.66] |
+| 19 † | 5 | 0.007 | 0.800 | 0.378 | [0.11, 0.75] |
+| 20 † | 3 | 0.004 | 0.333 | 0.378 | [0.08, 0.82] |
+| 21 † | 7 | 0.009 | 0.714 | 0.378 | [0.13, 0.71] |
+| 22 † | 5 | 0.007 | 0.600 | 0.378 | [0.11, 0.75] |
+| 23 † | 9 | 0.012 | 0.778 | 0.378 | [0.15, 0.68] |
+| 24 † | 3 | 0.004 | 0.667 | 0.378 | [0.08, 0.82] |
+| 25 † | 7 | 0.009 | 0.571 | 0.378 | [0.13, 0.71] |
+| 26 † | 4 | 0.005 | 0.500 | 0.378 | [0.09, 0.78] |
+| 27 † | 8 | 0.010 | 0.750 | 0.378 | [0.14, 0.70] |
+| 28 † | 4 | 0.005 | 0.500 | 0.378 | [0.09, 0.78] |
+| 29 † | 3 | 0.004 | 0.667 | 0.378 | [0.08, 0.82] |
+| 30 † | 6 | 0.008 | 0.667 | 0.378 | [0.12, 0.73] |
+| 31 † | 3 | 0.004 | 0.333 | 0.378 | [0.08, 0.82] |
+| 32 † | 5 | 0.007 | 0.400 | 0.378 | [0.11, 0.75] |
+| 33 † | 5 | 0.007 | 0.400 | 0.378 | [0.11, 0.75] |
+| 34 † | 9 | 0.012 | 0.111 | 0.378 | [0.15, 0.68] |
+| 35 † | 5 | 0.007 | 1.000 | 0.378 | [0.11, 0.75] |
+| 36 † | 6 | 0.008 | 0.500 | 0.378 | [0.12, 0.73] |
+| 37 | 10 | 0.013 | 0.400 | 0.378 | [0.15, 0.67] |
+| 38 † | 6 | 0.008 | 0.500 | 0.378 | [0.12, 0.73] |
+| 39 † | 7 | 0.009 | 0.286 | 0.378 | [0.13, 0.71] |
+| 40 | 11 | 0.014 | 0.273 | 0.378 | [0.16, 0.66] |
+| 41 † | 7 | 0.009 | 0.286 | 0.378 | [0.13, 0.71] |
+| 42 | 10 | 0.013 | 0.500 | 0.378 | [0.15, 0.67] |
+| 43 | 14 | 0.018 | 0.357 | 0.378 | [0.18, 0.63] |
+| 44 | 13 | 0.017 | 0.308 | 0.378 | [0.17, 0.64] |
+| 45 | 15 | 0.020 | 0.400 | 0.378 | [0.18, 0.62] |
+| 46 | 22 | 0.029 | 0.136 | 0.377 | [0.21, 0.58] |
+| 47 | 20 | 0.026 | 0.300 | 0.377 | [0.20, 0.59] |
+| 48 | 29 | 0.038 | 0.172 | 0.377 | [0.23, 0.56] |
+| 49 | 32 | 0.042 | 0.312 | 0.377 | [0.23, 0.55] |
+| 50 | 45 | 0.059 | 0.111 | 0.377 | [0.25, 0.52] |
+| 51 | 36 | 0.047 | 0.139 | 0.377 | [0.24, 0.54] |
+| 52 | 71 | 0.093 | 0.197 | 0.377 | [0.27, 0.49] |
+
+EQL's own `cause` search settles on 18: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.38).
+
 
 ## How many clear viewpoints cause every object of a scene to stay graspable, adjusting for the number of objects?
 
@@ -1953,6 +2173,66 @@ Refused: the fitted table has no column for the queried variables.
 | 52 | 71 | 0.093 | 0.197 | 0.226 | [0.14, 0.34] |
 
 EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.55).
+
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 181 | 0.237 | 0.481 | 0.378 | [0.31, 0.45] |
+| 1 | 11 | 0.014 | 0.545 | 0.378 | [0.16, 0.66] |
+| 2 | 18 | 0.024 | 0.556 | 0.378 | [0.19, 0.60] |
+| 3 † | 8 | 0.010 | 0.625 | 0.377 | [0.14, 0.70] |
+| 4 † | 3 | 0.004 | 0.667 | 0.377 | [0.08, 0.82] |
+| 5 † | 7 | 0.009 | 0.429 | 0.377 | [0.13, 0.71] |
+| 6 † | 5 | 0.007 | 0.600 | 0.377 | [0.11, 0.75] |
+| 7 | 10 | 0.013 | 0.500 | 0.377 | [0.15, 0.67] |
+| 8 † | 5 | 0.007 | 0.400 | 0.377 | [0.11, 0.75] |
+| 9 † | 6 | 0.008 | 0.500 | 0.377 | [0.12, 0.73] |
+| 10 | 10 | 0.013 | 0.400 | 0.377 | [0.15, 0.67] |
+| 11 | 10 | 0.013 | 0.100 | 0.377 | [0.15, 0.67] |
+| 12 † | 5 | 0.007 | 0.800 | 0.377 | [0.11, 0.75] |
+| 13 † | 9 | 0.012 | 0.222 | 0.378 | [0.15, 0.68] |
+| 14 † | 3 | 0.004 | 1.000 | 0.378 | [0.08, 0.82] |
+| 15 | 10 | 0.013 | 0.500 | 0.378 | [0.15, 0.67] |
+| 16 † | 2 | 0.003 | 0.000 | 0.378 | [0.06, 0.86] |
+| 17 † | 4 | 0.005 | 0.500 | 0.378 | [0.09, 0.78] |
+| 18 | 11 | 0.014 | 0.273 | 0.378 | [0.16, 0.66] |
+| 19 † | 5 | 0.007 | 0.800 | 0.378 | [0.11, 0.75] |
+| 20 † | 3 | 0.004 | 0.333 | 0.378 | [0.08, 0.82] |
+| 21 † | 7 | 0.009 | 0.714 | 0.378 | [0.13, 0.71] |
+| 22 † | 5 | 0.007 | 0.600 | 0.378 | [0.11, 0.75] |
+| 23 † | 9 | 0.012 | 0.778 | 0.378 | [0.15, 0.68] |
+| 24 † | 3 | 0.004 | 0.667 | 0.378 | [0.08, 0.82] |
+| 25 † | 7 | 0.009 | 0.571 | 0.378 | [0.13, 0.71] |
+| 26 † | 4 | 0.005 | 0.500 | 0.378 | [0.09, 0.78] |
+| 27 † | 8 | 0.010 | 0.750 | 0.378 | [0.14, 0.70] |
+| 28 † | 4 | 0.005 | 0.500 | 0.378 | [0.09, 0.78] |
+| 29 † | 3 | 0.004 | 0.667 | 0.378 | [0.08, 0.82] |
+| 30 † | 6 | 0.008 | 0.667 | 0.378 | [0.12, 0.73] |
+| 31 † | 3 | 0.004 | 0.333 | 0.378 | [0.08, 0.82] |
+| 32 † | 5 | 0.007 | 0.400 | 0.378 | [0.11, 0.75] |
+| 33 † | 5 | 0.007 | 0.400 | 0.378 | [0.11, 0.75] |
+| 34 † | 9 | 0.012 | 0.111 | 0.378 | [0.15, 0.68] |
+| 35 † | 5 | 0.007 | 1.000 | 0.378 | [0.11, 0.75] |
+| 36 † | 6 | 0.008 | 0.500 | 0.378 | [0.12, 0.73] |
+| 37 | 10 | 0.013 | 0.400 | 0.378 | [0.15, 0.67] |
+| 38 † | 6 | 0.008 | 0.500 | 0.378 | [0.12, 0.73] |
+| 39 † | 7 | 0.009 | 0.286 | 0.378 | [0.13, 0.71] |
+| 40 | 11 | 0.014 | 0.273 | 0.378 | [0.16, 0.66] |
+| 41 † | 7 | 0.009 | 0.286 | 0.378 | [0.13, 0.71] |
+| 42 | 10 | 0.013 | 0.500 | 0.378 | [0.15, 0.67] |
+| 43 | 14 | 0.018 | 0.357 | 0.378 | [0.18, 0.63] |
+| 44 | 13 | 0.017 | 0.308 | 0.378 | [0.17, 0.64] |
+| 45 | 15 | 0.020 | 0.400 | 0.378 | [0.18, 0.62] |
+| 46 | 22 | 0.029 | 0.136 | 0.378 | [0.21, 0.58] |
+| 47 | 20 | 0.026 | 0.300 | 0.378 | [0.20, 0.59] |
+| 48 | 29 | 0.038 | 0.172 | 0.378 | [0.23, 0.56] |
+| 49 | 32 | 0.042 | 0.312 | 0.378 | [0.23, 0.55] |
+| 50 | 45 | 0.059 | 0.111 | 0.377 | [0.25, 0.52] |
+| 51 | 36 | 0.047 | 0.139 | 0.377 | [0.24, 0.54] |
+| 52 | 71 | 0.093 | 0.197 | 0.377 | [0.27, 0.49] |
+
+EQL's own `cause` search settles on 37: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.38).
 
 
 ## How many clear viewpoints cause every object of a scene to stay graspable, adjusting for how far the clutter is spread out and the number of objects?
@@ -2263,6 +2543,66 @@ Refused: the fitted table has no column for the queried variables.
 
 EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.55).
 
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 181 | 0.237 | 0.481 | 0.378 | [0.31, 0.45] |
+| 1 | 11 | 0.014 | 0.545 | 0.378 | [0.16, 0.66] |
+| 2 | 18 | 0.024 | 0.556 | 0.378 | [0.19, 0.60] |
+| 3 † | 8 | 0.010 | 0.625 | 0.377 | [0.14, 0.70] |
+| 4 † | 3 | 0.004 | 0.667 | 0.377 | [0.08, 0.82] |
+| 5 † | 7 | 0.009 | 0.429 | 0.377 | [0.13, 0.71] |
+| 6 † | 5 | 0.007 | 0.600 | 0.377 | [0.11, 0.75] |
+| 7 | 10 | 0.013 | 0.500 | 0.377 | [0.15, 0.67] |
+| 8 † | 5 | 0.007 | 0.400 | 0.377 | [0.11, 0.75] |
+| 9 † | 6 | 0.008 | 0.500 | 0.377 | [0.12, 0.73] |
+| 10 | 10 | 0.013 | 0.400 | 0.377 | [0.15, 0.67] |
+| 11 | 10 | 0.013 | 0.100 | 0.378 | [0.15, 0.67] |
+| 12 † | 5 | 0.007 | 0.800 | 0.378 | [0.11, 0.75] |
+| 13 † | 9 | 0.012 | 0.222 | 0.378 | [0.15, 0.68] |
+| 14 † | 3 | 0.004 | 1.000 | 0.378 | [0.08, 0.82] |
+| 15 | 10 | 0.013 | 0.500 | 0.378 | [0.15, 0.67] |
+| 16 † | 2 | 0.003 | 0.000 | 0.378 | [0.06, 0.86] |
+| 17 † | 4 | 0.005 | 0.500 | 0.378 | [0.09, 0.78] |
+| 18 | 11 | 0.014 | 0.273 | 0.378 | [0.16, 0.66] |
+| 19 † | 5 | 0.007 | 0.800 | 0.378 | [0.11, 0.76] |
+| 20 † | 3 | 0.004 | 0.333 | 0.378 | [0.08, 0.82] |
+| 21 † | 7 | 0.009 | 0.714 | 0.378 | [0.13, 0.71] |
+| 22 † | 5 | 0.007 | 0.600 | 0.378 | [0.11, 0.76] |
+| 23 † | 9 | 0.012 | 0.778 | 0.378 | [0.15, 0.68] |
+| 24 † | 3 | 0.004 | 0.667 | 0.378 | [0.08, 0.82] |
+| 25 † | 7 | 0.009 | 0.571 | 0.378 | [0.13, 0.71] |
+| 26 † | 4 | 0.005 | 0.500 | 0.378 | [0.09, 0.78] |
+| 27 † | 8 | 0.010 | 0.750 | 0.378 | [0.14, 0.70] |
+| 28 † | 4 | 0.005 | 0.500 | 0.378 | [0.09, 0.78] |
+| 29 † | 3 | 0.004 | 0.667 | 0.378 | [0.08, 0.82] |
+| 30 † | 6 | 0.008 | 0.667 | 0.378 | [0.12, 0.73] |
+| 31 † | 3 | 0.004 | 0.333 | 0.378 | [0.08, 0.82] |
+| 32 † | 5 | 0.007 | 0.400 | 0.378 | [0.11, 0.75] |
+| 33 † | 5 | 0.007 | 0.400 | 0.378 | [0.11, 0.75] |
+| 34 † | 9 | 0.012 | 0.111 | 0.378 | [0.15, 0.68] |
+| 35 † | 5 | 0.007 | 1.000 | 0.378 | [0.11, 0.75] |
+| 36 † | 6 | 0.008 | 0.500 | 0.377 | [0.12, 0.73] |
+| 37 | 10 | 0.013 | 0.400 | 0.377 | [0.15, 0.67] |
+| 38 † | 6 | 0.008 | 0.500 | 0.377 | [0.12, 0.73] |
+| 39 † | 7 | 0.009 | 0.286 | 0.377 | [0.13, 0.71] |
+| 40 | 11 | 0.014 | 0.273 | 0.377 | [0.16, 0.66] |
+| 41 † | 7 | 0.009 | 0.286 | 0.377 | [0.13, 0.71] |
+| 42 | 10 | 0.013 | 0.500 | 0.377 | [0.15, 0.67] |
+| 43 | 14 | 0.018 | 0.357 | 0.377 | [0.18, 0.63] |
+| 44 | 13 | 0.017 | 0.308 | 0.377 | [0.17, 0.64] |
+| 45 | 15 | 0.020 | 0.400 | 0.377 | [0.18, 0.62] |
+| 46 | 22 | 0.029 | 0.136 | 0.377 | [0.21, 0.58] |
+| 47 | 20 | 0.026 | 0.300 | 0.377 | [0.20, 0.59] |
+| 48 | 29 | 0.038 | 0.172 | 0.377 | [0.23, 0.56] |
+| 49 | 32 | 0.042 | 0.312 | 0.377 | [0.23, 0.55] |
+| 50 | 45 | 0.059 | 0.111 | 0.377 | [0.25, 0.52] |
+| 51 | 36 | 0.047 | 0.139 | 0.377 | [0.24, 0.54] |
+| 52 | 71 | 0.093 | 0.197 | 0.377 | [0.27, 0.49] |
+
+EQL's own `cause` search settles on 18: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.38).
+
 
 ## Does the object catalogue a scene is built from cause every object of it to stay graspable, adjusting for its spread (extent)?
 
@@ -2328,6 +2668,16 @@ EQL's own `cause` search settles on grasp: the region most probable once the eff
 
 EQL's own `cause` search settles on grasp: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.41).
 
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| grasp | 386 | 0.506 | 0.407 | 0.377 | [0.33, 0.43] |
+| mixed | 129 | 0.169 | 0.333 | 0.377 | [0.30, 0.46] |
+| ycb-video | 248 | 0.325 | 0.355 | 0.377 | [0.32, 0.44] |
+
+EQL's own `cause` search settles on grasp: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.38).
+
 
 ## Does the object catalogue a scene is built from cause every object of it to stay graspable, adjusting for its small-object count?
 
@@ -2387,6 +2737,16 @@ Refused: the fitted table has no column for the queried variables.
 
 EQL's own `cause` search settles on grasp: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.40).
 
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| grasp | 386 | 0.506 | 0.407 | 0.377 | [0.33, 0.43] |
+| mixed | 129 | 0.169 | 0.333 | 0.377 | [0.30, 0.46] |
+| ycb-video | 248 | 0.325 | 0.355 | 0.377 | [0.32, 0.44] |
+
+EQL's own `cause` search settles on ycb-video: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.38).
+
 
 ## Does the object catalogue a scene is built from cause object 0 of it to be heavily occluded?
 
@@ -2433,6 +2793,16 @@ Refused: the fitted table has no column for the queried variables.
 ### regression adjustment
 
 Refused: the fitted table has no column for the queried variables.
+
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| grasp | 5536 | 0.499 | 0.337 | 0.344 | [0.33, 0.36] |
+| mixed | 1905 | 0.172 | 0.349 | 0.347 | [0.33, 0.37] |
+| ycb-video | 3650 | 0.329 | 0.301 | 0.343 | [0.33, 0.36] |
+
+EQL's own `cause` search settles on mixed: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.35).
 
 
 ## How many occluded objects cause object 0 of a scene to lose every grasp?
@@ -2535,6 +2905,34 @@ Refused: the fitted table has no column for the queried variables.
 
 Refused: the fitted table has no column for the queried variables.
 
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| 0 | 33 | 0.003 | 0.091 | 0.247 | [0.13, 0.42] |
+| 1 | 47 | 0.004 | 0.213 | 0.233 | [0.13, 0.37] |
+| 2 | 156 | 0.014 | 0.128 | 0.215 | [0.16, 0.29] |
+| 3 | 197 | 0.018 | 0.208 | 0.194 | [0.15, 0.26] |
+| 4 | 313 | 0.028 | 0.163 | 0.175 | [0.14, 0.22] |
+| 5 | 295 | 0.027 | 0.112 | 0.156 | [0.12, 0.20] |
+| 6 | 543 | 0.049 | 0.157 | 0.138 | [0.11, 0.17] |
+| 7 | 919 | 0.083 | 0.141 | 0.126 | [0.11, 0.15] |
+| 8 | 936 | 0.084 | 0.112 | 0.120 | [0.10, 0.14] |
+| 9 | 1205 | 0.109 | 0.118 | 0.118 | [0.10, 0.14] |
+| 10 | 1378 | 0.124 | 0.108 | 0.118 | [0.10, 0.14] |
+| 11 | 1402 | 0.126 | 0.115 | 0.118 | [0.10, 0.14] |
+| 12 | 945 | 0.085 | 0.098 | 0.117 | [0.10, 0.14] |
+| 13 | 839 | 0.076 | 0.088 | 0.114 | [0.09, 0.14] |
+| 14 | 744 | 0.067 | 0.101 | 0.105 | [0.09, 0.13] |
+| 15 | 447 | 0.040 | 0.083 | 0.091 | [0.07, 0.12] |
+| 16 | 383 | 0.035 | 0.044 | 0.074 | [0.05, 0.10] |
+| 17 | 152 | 0.014 | 0.020 | 0.057 | [0.03, 0.11] |
+| 18 | 117 | 0.011 | 0.034 | 0.043 | [0.02, 0.10] |
+| 19 | 20 | 0.002 | 0.000 | 0.033 | [0.00, 0.21] |
+| 20 | 20 | 0.002 | 0.000 | 0.025 | [0.00, 0.20] |
+
+EQL's own `cause` search settles on 0: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.25).
+
 
 ## Does the size of object 0 of a scene cause it to lose every grasp?
 
@@ -2581,4 +2979,14 @@ Refused: the fitted table has no column for the queried variables.
 ### regression adjustment
 
 Refused: the fitted table has no column for the queried variables.
+
+### neural adjustment
+
+| cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
+|---|---|---|---|---|---|
+| large | 3602 | 0.325 | 0.103 | 0.156 | [0.14, 0.17] |
+| medium | 3578 | 0.323 | 0.108 | 0.158 | [0.15, 0.17] |
+| small | 3911 | 0.353 | 0.122 | 0.173 | [0.16, 0.18] |
+
+EQL's own `cause` search settles on small: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.17).
 
