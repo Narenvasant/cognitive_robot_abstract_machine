@@ -249,82 +249,108 @@ measured around it.
 
 ## What the results show
 
-Numbers from `results.md`: one 763/191 split with seed 0 for the questions and timings,
-five splits for the spreads, three random orderings of the parts. Every number below is
-in there, in the table it came from.
+Numbers from `results.md`: one 763/191 split with seed 0 for the questions, the
+timings and the likelihoods; twenty random orderings of the parts; five settings of the
+synthetic model with 400 scenes each; a support threshold of ten training scenes per
+cause region. Every number below is in there, in the table it came from.
 
-**Which questions each pipeline can ask.** The relational circuit and the unrolled tree
-answer all eight questions; the propositional tree answers the five whose cause and effect
-are scene attributes or counts and refuses the three about an individual object, because
-it has no column for one; the scalars-only tree answers one question in eight, the
-catalogue question adjusted for extent, because that is the only one that mentions
-nothing it lacks. This is the same pattern on every one of the five splits. The relational
-circuit refused the object-size question on one of the five splits as not
-support-deterministic: the grounded circuit mixes one copy of the object template per
-sampled count, and on that split the copies overlapped on `size`, so backdoor adjustment
-had no disjoint regions to intervene on and the circuit said so rather than answer.
+**Which questions each pipeline can ask.** The relational circuit, the hybrid circuit
+and the unrolled tree answer all fourteen questions; the propositional tree and the
+regression baseline answer the eleven whose cause and effect are scene attributes or
+counts and refuse the three about an individual object, because they have no column
+for one; the scalars-only tree answers one question in fourteen, the catalogue question
+adjusted for extent, the only one that mentions nothing it lacks.
 
-**Where every pipeline has the columns, every pipeline answers alike.** On the five
+**Where every pipeline has the columns, every pipeline answers alike.** On the eleven
 scene-level questions the relational circuit and the propositional tree agree to the
 third decimal, as they must: the relational circuit's class circuit *is* the
-propositional tree, fitted on the same eight columns. The unrolled tree agrees with them
-on the most effective setting on four of the five and is within 0.01 on the fifth. What
-the shared answers say about GraspClutter6D: the dataset's own catalogue of 200 objects
-leaves every object graspable more often than the YCB-Video objects or a mix of both
-(0.41 against 0.36 and 0.33, adjusting for how far the clutter is spread), and adjusting
-for the small-object count instead moves that by a hundredth. The count questions have
-mild trends and noisy extremes. Going from no small objects to eleven or twelve takes the
-adjusted probability from 0.45 to 0.20–0.24, and the occluded-object count runs the other
-way, from 0.16–0.19 at four to six occluded objects to 0.52–0.67 at sixteen to eighteen;
-but the settings the report names as *most effective* — 15 small objects at 0.50, 19
-occluded objects at 1.00 — are strata of four and of one scene, and the five splits
-disagree on them (small-object count: 1, 3 or 15). Read the trend, not the extreme. The
-naive and adjusted columns agree almost everywhere: within a stratum of the cause, the
-clutter's extent carried no further information about graspability.
+propositional tree, fitted on the same columns. The hybrid circuit and the unrolled tree
+give the same trend and, to within a few hundredths, the same contrast on every one of
+them; where they name another most effective region, it is a tie between two regions
+at 0.5 or an argmax over sparse regions, and the contrast says so with its interval.
+What the shared answers say about GraspClutter6D: the dataset's own catalogue of 200
+objects leaves every object graspable more often than a mix of both catalogues (0.41
+against 0.33 adjusting for extent, 0.39 against 0.27 adjusting for the small-object
+count; contrast 0.07 [-0.00, 0.15] and 0.13 [0.05, 0.20]); the small-object count has
+no effect once the number of objects is adjusted for (contrast 0.07 [-0.18, 0.31] from
+none to fourteen, trend -0.4); more occluded objects go with *more* scenes that leave
+every object graspable (0.34 [-0.00, 0.57] from two to sixteen, trend 0.7); and more
+clear viewpoints go with fewer (-0.28 [-0.39, -0.15] from none to fifty-two, trend
+-0.7). The last two are the confounding the dataset is known for: the bin scenes are
+photographed from fewer clear poses and stacked deeper, and the number of objects
+drives both the counts and the graspability.
 
-**The answers about an object depend on which object "object 0" is, unless the model
-treats objects as exchangeable.** Asked how many occluded objects cause one object to
-lose every grasp, the relational circuit gives a monotone answer about an exchangeable
-object: 0.06 with no occluded objects rising smoothly to 0.16 with twenty. The unrolled
-tree, asked the same question about the object listed first, answers 0.33 at zero
-occluded objects falling to 0.00 at seventeen — the opposite direction, and about a
-different thing. Reordering the parts three times moves the unrolled tree's adjusted
-probabilities by up to 0.33 and flips its most effective setting on two of the three
-object questions; the relational circuit's answers do not move at all, on any question,
-under any ordering, because nothing about an exchangeable part can depend on where it was
-listed. Over the five splits the relational circuit finds the same most effective setting
-of the occluded-count question every time (20), and the unrolled tree alternates between
-0 and 1.
+**Adjusting for the number of objects is what changes the answers.** With extent alone
+adjusted for, the adjusted probabilities equal the naive ones to the third decimal in
+almost every region: the spread of the clutter carries no information about
+graspability beyond the count itself. Adjusting for the number of objects moves single
+regions by up to 0.15 (twelve small objects: 0.20 naive, 0.11 adjusted; sixteen occluded
+objects: 0.52 naive, 0.38 adjusted) and the small-object contrast from -0.09 to +0.07.
+The regression baseline agrees with the circuits on the direction of every trend but
+not on its size: it puts the occluded-object contrast at 0.61 [0.26, 0.78] adjusting for
+the number of objects where the circuits put it at 0.20 to 0.42, which is what a
+logistic model does to a relation that is not monotone.
 
-**Whole-scene likelihood, and what the dataset's order is worth.** In the order the
-dataset lists the parts, the unrolled tree explains the held-out scenes it covers far
-better than the relational circuit: a mean whole-scene log-likelihood of +31 against −14
-over the scenes both cover. Under any random reordering that number falls to −88, and
-its coverage from 67% to 41–46%, while the relational circuit's stays at −16 and 84%. The
-reason is that a scene's frames are numbered by the recording rig, four cameras per pose
-in a fixed sequence, so which camera took frame *i* is the same in every scene and the
-viewpoint columns address a real thing: in the dataset's order that column is
-deterministic, worth log 4 for each of the 52 frames on its own, and the camera's
-distance to the objects at position *i* is close to the same across scenes as well. The
-relational circuit treats a viewpoint as exchangeable and pays for the camera every time.
-This is the one place the flat table's position-as-identity assumption is right, and it
-is right about the rig, not about the scene; the object columns, which carry no such
-identity, are the ones whose causal answers flip. A flat learner has no way to tell the
-two kinds of column apart, and a relational model has no way to use the first kind.
+**The answers about an object are the answers the synthetic model checks.** Read off
+the relational circuit, the catalogue makes an exchangeable object heavily occluded
+with probability 0.36 against 0.32; the occluded-object count leaves an object's own
+chance of losing every grasp between 0.08 and 0.13 (trend 0.3, contrast 0.02 [-0.26,
+0.23]); and a small object loses every grasp a shade more often than a large one (0.12
+against 0.10, contrast 0.02 [0.00, 0.03] over the 11,000 training objects). The
+unrolled tree answers the same three questions about "object 0" and gets the sign of
+two of them the other way (the ycb-video catalogue, a large object) with contrasts of
+0.05 and 0.08 whose intervals exclude the relational circuit's. Against the synthetic
+model, whose interventional probabilities are known, the relational circuit's error on
+these three questions is 0.033, 0.009 and 0.007 and the unrolled tree's 0.133, 0.054
+and 0.044; over every question and setting the relational circuit's support-weighted
+error is 0.026 and its rank correlation with the truth 0.58, the propositional tree's
+0.058 and 0.40, the unrolled tree's 0.064 and 0.26. Where the pipelines share columns
+their error is the same (0.125 on the small-object question, the count's extremes being
+rare within every stratum of the confounder); where they do not, the circuit is three
+to five times closer to the truth, and its error grows only from 0.05 to 0.08 as the
+scenes grow from five to twenty objects.
 
-**Cost.** The relational circuit's plain fit takes 146 seconds against 35 for the
-propositional tree and 486 for the unrolled tree, whose 363,000 nodes are forty times
-the relational circuit's 36,000. Once fitted, the trees answer a question in 0.2 to
-15 seconds (the clear-viewpoint question, over a count that runs from 0 to 52, takes the
-propositional tree 116 seconds) and the relational circuit in 75 to 217, the difference
-being Monte-Carlo grounding over the counts the query leaves open.
+**Reordering the parts moves the unrolled tree's answers and nothing else.** Over
+twenty random orderings the unrolled tree's most effective region moves in 88% of them
+and its adjusted probability on the occluded-count question ranges by 0.50; the
+relational and hybrid circuits' answers about objects do not move by 1e-9, because an
+exchangeable object has no position. The dataset's own order is not arbitrary for the
+viewpoints, whose frames the recording rig numbers, and the whole-scene likelihood shows
+it: the hybrid circuit, which holds the viewpoints by position and the objects as
+exchangeable, scores held-out scenes at 83.3 nats against the unrolled tree's 26.9 and
+the relational circuit's -17.2, and reordering the parts costs it 124 nats and the
+unrolled tree 120, while the relational circuit's likelihood stays where it was. A
+position means something for a viewpoint and nothing for an object, and the three
+models sit exactly where that puts them.
+
+**Data and grounding samples.** The relational circuit's templates pool every object
+and every frame of every training scene, so at a fifth of the data it already covers
+36% of the held-out scenes, against the unrolled tree's 13%, and 84% against 64% at four
+fifths. Grounding needs samples in proportion to how many distinct values the open
+counts take: the object-level question is settled from fifty samples, the small-object
+count question adjusted for the number of objects only from 8,000, which is why the
+relational circuit answers the count questions in minutes.
+
+**Cost.** The relational circuit is 37,013 nodes and 190 seconds of fitting, the hybrid
+circuit 8,668 and 44, the propositional tree 10,429 and 43, the unrolled tree 364,486
+and 523. Once fitted, a scene-level question costs every circuit the same backdoor
+adjustment over the cause's regions times the confounders' (a two-confounder question
+takes 2 to 30 minutes on every one of them), and an object question costs the
+relational and hybrid circuits two to four minutes of grounding against the unrolled
+tree's seconds. On synthetic scenes of growing size the relational circuit's templates
+grow from 2,330 to 10,016 nodes between five and fifty objects and its fit from 16 to
+44 seconds, the unrolled tree from 7,422 to 116,486 nodes and 6 to 276 seconds, one
+block of columns per position.
 
 What the comparison does not show: that the relational circuit gives better causal
-answers than a flat tree on questions both can pose from the same counts. On those
-columns it is that tree. What it shows is which questions a flat learner can pose at all,
-that its answers about parts are answers about a listing order, and that the one thing
-the listing order does encode here — the camera rig — is exactly the thing an
-exchangeable model cannot see.
+answers on scene-level questions than a flat tree given the same counts. It cannot,
+because on those columns it is that tree. What it shows is which questions a flat
+learner can pose at all, that its answers about parts are answers about the listing
+order, and that the relational circuit is the one model here whose answers about an
+object are both order-free and, where the truth is known, close to it.
+
+`comparison.md` puts these numbers beside the other two datasets the same pipeline was
+run on.
 
 ## Running it
 
