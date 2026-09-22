@@ -96,6 +96,7 @@ And in the shared package:
 | `flat_table.py` | `Schema`, how EQL names every attribute; `FlatTable`, the examples as one row each in one of the three `TableLayout`s |
 | `pipelines.py` | `CausalQueryPipeline` and its three implementations: `RelationalPipeline`, `HybridPipeline`, and `FlatTablePipeline` once per layout |
 | `baselines.py` | regression adjustment on the propositional table |
+| `neural_baseline.py` | deep set adjustment, a permutation invariant encoder over the parts with the same g-computation on top |
 | `queries.py` | what every question is made of: `CausalQueryCase`, `Confounder`, and the open-part queries |
 | `dataset.py` | `ExampleDataset`: splitting, reordering the parts, and the effect's rate |
 | `evaluation.py` | asking every question to every pipeline and recording what came of it (`evaluate`), then the studies: `permutation_study` reorders every example's parts and asks the part questions again, `split_study` repeats the comparison over several random splits, `learning_curve` fits on growing shares of the examples, `ground_truth_study` scores every pipeline against a `KnownTruth`, `monte_carlo_study` follows the relational circuit's answers as grounding draws more samples, `scaling_study` measures cost against the number of parts |
