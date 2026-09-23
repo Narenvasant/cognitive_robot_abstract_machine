@@ -116,10 +116,17 @@ first-drawn neighbour, the first-labelled object.
 The valence row is worth dwelling on, because its truth comes from chemistry rather
 than from a mechanism anyone here wrote. An atom with one bond is terminal, so hydrogen
 and the halogens are terminal wherever they occur and carbon and nitrogen are not. The
-relational circuit reads exactly that; no flat table can be asked the question at all;
-and the deep set, which pools the atoms instead of reading each on its own rows, smooths
-it into 0.29 for carbon and 0.51 for hydrogen. Order-freedom is not enough on its own —
-reading each part as a row of its own is what recovers the relation.
+relational circuit reads exactly that, and no flat table can be asked the question at
+all. The deep set reads it too, its conditional probabilities being exact (carbon 0.000,
+hydrogen 1.000, oxygen 0.942), and then loses it in the adjustment, returning 0.29 for
+carbon and 0.51 for hydrogen. The reason is worth stating precisely, because it is not
+the pooling. Forcing the element on every atom while that atom's other fields keep the
+values they were recorded with asks the network about combinations the data does not
+hold, a carbon carrying the atom-type code of a hydrogen. A smooth model answers there
+anyway; a stratified circuit reads each region off its own rows and has nothing to
+extrapolate from. Raising the network's capacity and iterations twentyfold moves carbon
+only from 0.29 to 0.30, so this is a property of g-computation over correlated
+attributes and not of underfitting, and any estimator that interpolates would show it.
 
 ## What reordering the parts does
 
