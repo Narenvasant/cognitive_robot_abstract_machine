@@ -312,7 +312,12 @@ model, whose interventional probabilities are known, the relational circuit's er
 these three questions is 0.033, 0.009 and 0.007 and the unrolled tree's 0.133, 0.054
 and 0.044; over every question and setting the relational circuit's support-weighted
 error is 0.026 and its rank correlation with the truth 0.58, the propositional tree's
-0.058 and 0.40, the unrolled tree's 0.064 and 0.26. Where the pipelines share columns
+0.058 and 0.40, the unrolled tree's 0.064 and 0.26. The deep set is the circuit's peer
+on that measure, 0.027 and 0.36, and the regression, which can pose only four of the
+seven questions, 0.033 and 0.53. Accuracy against a generated mechanism is therefore
+not what separates the circuit from an estimator that is order free by construction;
+what separates them is that the circuit answers exactly, scores a whole scene, and
+refuses a question it cannot support. Where the pipelines share columns
 their error is the same (0.125 on the small-object question, the count's extremes being
 rare within every stratum of the confounder); where they do not, the circuit is three
 to five times closer to the truth, and its error grows only from 0.05 to 0.08 as the

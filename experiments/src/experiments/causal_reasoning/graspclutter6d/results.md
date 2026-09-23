@@ -374,29 +374,30 @@ Scenes sampled from a structural causal model over the same domain, whose interv
 | propositional tree | 57.1% | 0.087 | 0.058 | 0.444 | 0.087 | 0.40 |
 | unrolled tree | 100.0% | 0.083 | 0.064 | 0.444 | 0.083 | 0.26 |
 | scalars-only tree | 0.0% | - | - | - | - | - |
+| regression adjustment | 57.1% | 0.048 | 0.033 | 0.489 | 0.048 | 0.53 |
+| neural adjustment | 100.0% | 0.068 | 0.027 | 0.440 | 0.068 | 0.36 |
 
 Mean absolute error per setting of the model:
 
-| objects per scene | confounding strength | relational circuit | hybrid circuit | propositional tree | unrolled tree | scalars-only tree |
-|---|---|---|---|---|---|---|
-| 5 | 0.6 | 0.053 | 0.073 | 0.060 | 0.065 | - |
-| 10 | 0.0 | 0.062 | 0.067 | 0.082 | 0.081 | - |
-| 10 | 0.3 | 0.063 | 0.070 | 0.082 | 0.085 | - |
-| 10 | 0.6 | 0.071 | 0.069 | 0.090 | 0.083 | - |
-| 20 | 0.6 | 0.084 | 0.080 | 0.108 | 0.093 | - |
+| objects per scene | confounding strength | relational circuit | hybrid circuit | propositional tree | unrolled tree | scalars-only tree | regression adjustment | neural adjustment |
+|---|---|---|---|---|---|---|---|---|
+| 5 | 0.6 | 0.053 | 0.073 | 0.060 | 0.065 | - | 0.083 | 0.069 |
+| 10 | 0.0 | 0.062 | 0.067 | 0.082 | 0.081 | - | 0.018 | 0.065 |
+| 10 | 0.3 | 0.063 | 0.070 | 0.082 | 0.085 | - | 0.031 | 0.038 |
+| 10 | 0.6 | 0.071 | 0.069 | 0.090 | 0.083 | - | 0.043 | 0.057 |
+| 20 | 0.6 | 0.084 | 0.080 | 0.108 | 0.093 | - | 0.066 | 0.099 |
 
 Mean absolute error per question, over every setting:
 
-| question | relational circuit | hybrid circuit | propositional tree | unrolled tree | scalars-only tree |
-|---|---|---|---|---|---|
-| small_object_count_causes_graspability_adjusting_object_count | 0.125 | 0.128 | 0.125 | 0.125 | - |
-| occluded_object_count_causes_graspability_adjusting_object_count | 0.052 | 0.049 | 0.052 | 0.053 | - |
-| clear_viewpoint_count_causes_graspability_adjusting_object_count | 0.075 | 0.092 | 0.075 | 0.081 | - |
-| catalogue_causes_graspability_adjusting_object_count | 0.020 | 0.032 | 0.020 | 0.018 | - |
-| catalogue_causes_occluded_object_0 | 0.033 | 0.033 | - | 0.133 | - |
-| occluded_object_count_causes_blocked_object_0 | 0.009 | 0.009 | - | 0.054 | - |
-| size_causes_blocked_object_0 | 0.007 | 0.007 | - | 0.044 | - |
-
+| question | relational circuit | hybrid circuit | propositional tree | unrolled tree | scalars-only tree | regression adjustment | neural adjustment |
+|---|---|---|---|---|---|---|---|
+| small_object_count_causes_graspability_adjusting_object_count | 0.125 | 0.128 | 0.125 | 0.125 | - | 0.078 | 0.131 |
+| occluded_object_count_causes_graspability_adjusting_object_count | 0.052 | 0.049 | 0.052 | 0.053 | - | 0.030 | 0.048 |
+| clear_viewpoint_count_causes_graspability_adjusting_object_count | 0.075 | 0.092 | 0.075 | 0.081 | - | 0.024 | 0.040 |
+| catalogue_causes_graspability_adjusting_object_count | 0.020 | 0.032 | 0.020 | 0.018 | - | 0.021 | 0.046 |
+| catalogue_causes_occluded_object_0 | 0.033 | 0.033 | - | 0.133 | - | - | 0.026 |
+| occluded_object_count_causes_blocked_object_0 | 0.009 | 0.009 | - | 0.054 | - | - | 0.045 |
+| size_causes_blocked_object_0 | 0.007 | 0.007 | - | 0.044 | - | - | 0.019 |
 ## How many grounding samples it takes
 
 Inference on a grounded circuit is exact; grounding itself draws Monte-Carlo samples for every count the query leaves open and mixes one copy of the part templates per sampled value, so marginalising the open counts is a consistent estimate, not an exact sum. The relational circuit was fitted once and asked the same two questions with grounding drawing more and more samples; *deviation* is the largest difference, over the cause regions, from the answer at 32,000 samples, and *settled from* is the smallest number of samples from which every larger one stays within 0.01 of it.
