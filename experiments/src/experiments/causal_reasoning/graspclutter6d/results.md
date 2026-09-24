@@ -341,6 +341,56 @@ The whole-scene likelihood of the same held-out scenes with the parts in the ord
 | hybrid circuit | 84.3% / 78.74 | 0.589 ± 0.021 / -42.60 ± 1.36 | 123.61 |
 | unrolled tree | 67.0% / 24.85 | 0.452 ± 0.023 / -91.71 ± 1.78 | 120.39 |
 
+## Over several splits
+
+The comparison repeated over 3 random splits (seeds 0, 1, 2), mean ± standard deviation. The likelihoods are over the scenes every pipeline modelling the view covers.
+
+### scalars
+
+| pipeline | held-out coverage | mean log-likelihood (covered by all) |
+|---|---|---|
+| relational circuit | 0.995 ± 0.004 | 0.06 ± 0.03 |
+| hybrid circuit | 0.995 ± 0.004 | -0.07 ± 0.01 |
+| propositional tree | 0.995 ± 0.004 | 0.06 ± 0.03 |
+| unrolled tree | 0.995 ± 0.004 | -0.04 ± 0.05 |
+| scalars-only tree | 0.974 ± 0.011 | 0.17 ± 0.02 |
+
+### scalars and counts
+
+| pipeline | held-out coverage | mean log-likelihood (covered by all) |
+|---|---|---|
+| relational circuit | 0.873 ± 0.028 | -12.68 ± 0.12 |
+| hybrid circuit | 0.932 ± 0.009 | -13.31 ± 0.05 |
+| propositional tree | 0.873 ± 0.028 | -12.68 ± 0.12 |
+| unrolled tree | 0.941 ± 0.018 | -13.14 ± 0.05 |
+
+### whole scene
+
+| pipeline | held-out coverage | mean log-likelihood (covered by all) |
+|---|---|---|
+| relational circuit | 0.838 ± 0.028 | -16.75 ± 0.93 |
+| hybrid circuit | 0.803 ± 0.034 | 83.92 ± 5.02 |
+| unrolled tree | 0.644 ± 0.045 | 29.68 ± 4.32 |
+
+Per question, how many splits each pipeline answered, and the mean ± standard deviation over the splits of its trend and of its contrast:
+
+| question | relational circuit, answered | relational circuit, trend | relational circuit, contrast | hybrid circuit, answered | hybrid circuit, trend | hybrid circuit, contrast | propositional tree, answered | propositional tree, trend | propositional tree, contrast | unrolled tree, answered | unrolled tree, trend | unrolled tree, contrast | scalars-only tree, answered | scalars-only tree, trend | scalars-only tree, contrast | regression adjustment, answered | regression adjustment, trend | regression adjustment, contrast | neural adjustment, answered | neural adjustment, trend | neural adjustment, contrast |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| small_object_count_causes_graspability_adjusting_extent | 3 of 3 | -0.55 ± 0.03 | -0.13 ± 0.03 | 3 of 3 | -0.55 ± 0.03 | -0.13 ± 0.03 | 3 of 3 | -0.55 ± 0.03 | -0.13 ± 0.03 | 3 of 3 | -0.55 ± 0.03 | -0.13 ± 0.03 | 0 of 3 | - | - | 3 of 3 | -1.00 ± 0.00 | -0.14 ± 0.03 | 3 of 3 | 0.03 ± 0.22 | -0.03 ± 0.04 |
+| small_object_count_causes_graspability_adjusting_object_count | 3 of 3 | -0.31 ± 0.17 | 0.03 ± 0.09 | 3 of 3 | -0.30 ± 0.15 | 0.02 ± 0.09 | 3 of 3 | -0.28 ± 0.13 | 0.03 ± 0.09 | 3 of 3 | -0.29 ± 0.13 | 0.03 ± 0.09 | 0 of 3 | - | - | 3 of 3 | -1.00 ± 0.00 | -0.13 ± 0.02 | 3 of 3 | 0.29 ± 0.24 | -0.03 ± 0.02 |
+| small_object_count_causes_graspability_adjusting_extent_and_object_count | 3 of 3 | -0.30 ± 0.16 | 0.05 ± 0.09 | 3 of 3 | -0.30 ± 0.15 | 0.03 ± 0.09 | 3 of 3 | -0.28 ± 0.13 | 0.05 ± 0.10 | 3 of 3 | -0.29 ± 0.13 | 0.03 ± 0.09 | 0 of 3 | - | - | 3 of 3 | -1.00 ± 0.00 | -0.02 ± 0.01 | 3 of 3 | 0.76 ± 0.19 | 0.07 ± 0.03 |
+| occluded_object_count_causes_graspability_adjusting_extent | 3 of 3 | 0.69 ± 0.03 | 0.25 ± 0.08 | 3 of 3 | 0.69 ± 0.02 | 0.25 ± 0.08 | 3 of 3 | 0.68 ± 0.04 | 0.25 ± 0.08 | 3 of 3 | 0.69 ± 0.04 | 0.25 ± 0.08 | 0 of 3 | - | - | 3 of 3 | 1.00 ± 0.00 | 0.17 ± 0.03 | 3 of 3 | -0.95 ± 0.00 | -0.18 ± 0.03 |
+| occluded_object_count_causes_graspability_adjusting_object_count | 3 of 3 | 0.69 ± 0.12 | 0.12 ± 0.10 | 3 of 3 | 0.79 ± 0.07 | 0.29 ± 0.13 | 3 of 3 | 0.68 ± 0.14 | 0.13 ± 0.10 | 3 of 3 | 0.82 ± 0.03 | 0.29 ± 0.07 | 0 of 3 | - | - | 3 of 3 | 1.00 ± 0.00 | 0.59 ± 0.02 | 3 of 3 | 1.00 ± 0.00 | 0.41 ± 0.06 |
+| occluded_object_count_causes_graspability_adjusting_extent_and_object_count | 3 of 3 | 0.69 ± 0.11 | 0.10 ± 0.09 | 3 of 3 | 0.78 ± 0.07 | 0.29 ± 0.13 | 3 of 3 | 0.66 ± 0.14 | 0.10 ± 0.10 | 3 of 3 | 0.83 ± 0.03 | 0.29 ± 0.07 | 0 of 3 | - | - | 3 of 3 | 1.00 ± 0.00 | 0.58 ± 0.02 | 3 of 3 | 1.00 ± 0.00 | 0.39 ± 0.09 |
+| clear_viewpoint_count_causes_graspability_adjusting_extent | 3 of 3 | -0.73 ± 0.06 | -0.27 ± 0.01 | 3 of 3 | -0.73 ± 0.06 | -0.27 ± 0.01 | 3 of 3 | -0.73 ± 0.06 | -0.27 ± 0.01 | 3 of 3 | -0.73 ± 0.06 | -0.27 ± 0.01 | 0 of 3 | - | - | 3 of 3 | -1.00 ± 0.00 | -0.29 ± 0.01 | 3 of 3 | -0.62 ± 0.27 | -0.00 ± 0.00 |
+| clear_viewpoint_count_causes_graspability_adjusting_object_count | 3 of 3 | -0.71 ± 0.03 | -0.33 ± 0.01 | 3 of 3 | -0.70 ± 0.04 | -0.29 ± 0.01 | 3 of 3 | -0.72 ± 0.02 | -0.33 ± 0.00 | 3 of 3 | -0.71 ± 0.02 | -0.30 ± 0.02 | 0 of 3 | - | - | 3 of 3 | -1.00 ± 0.00 | -0.33 ± 0.01 | 3 of 3 | -0.23 ± 0.54 | -0.00 ± 0.00 |
+| clear_viewpoint_count_causes_graspability_adjusting_extent_and_object_count | 3 of 3 | -0.64 ± 0.05 | -0.30 ± 0.01 | 3 of 3 | -0.67 ± 0.07 | -0.28 ± 0.01 | 3 of 3 | -0.65 ± 0.05 | -0.30 ± 0.01 | 3 of 3 | -0.70 ± 0.03 | -0.30 ± 0.01 | 0 of 3 | - | - | 3 of 3 | -1.00 ± 0.00 | -0.33 ± 0.01 | 3 of 3 | -0.90 ± 0.03 | -0.00 ± 0.00 |
+| catalogue_causes_graspability_adjusting_extent | 3 of 3 | - | 0.15 ± 0.05 | 3 of 3 | - | 0.15 ± 0.05 | 3 of 3 | - | 0.15 ± 0.05 | 3 of 3 | - | 0.15 ± 0.05 | 3 of 3 | - | 0.15 ± 0.05 | 3 of 3 | - | 0.14 ± 0.05 | 3 of 3 | - | 0.00 ± 0.00 |
+| catalogue_causes_graspability_adjusting_small_object_count | 3 of 3 | - | 0.17 ± 0.03 | 3 of 3 | - | 0.15 ± 0.04 | 3 of 3 | - | 0.17 ± 0.04 | 3 of 3 | - | 0.15 ± 0.04 | 0 of 3 | - | - | 3 of 3 | - | 0.13 ± 0.05 | 3 of 3 | - | 0.00 ± 0.00 |
+| catalogue_causes_occluded_object_0 | 3 of 3 | - | 0.03 ± 0.01 | 3 of 3 | - | 0.03 ± 0.01 | 0 of 3 | - | - | 3 of 3 | - | 0.04 ± 0.01 | 0 of 3 | - | - | 0 of 3 | - | - | 3 of 3 | - | 0.00 ± 0.00 |
+| occluded_object_count_causes_blocked_object_0 | 3 of 3 | 0.37 ± 0.11 | 0.02 ± 0.01 | 3 of 3 | 0.37 ± 0.11 | 0.02 ± 0.01 | 0 of 3 | - | - | 3 of 3 | -0.58 ± 0.12 | -0.07 ± 0.05 | 0 of 3 | - | - | 0 of 3 | - | - | 3 of 3 | -0.97 ± 0.03 | -0.17 ± 0.05 |
+| size_causes_blocked_object_0 | 3 of 3 | - | 0.02 ± 0.00 | 3 of 3 | - | 0.02 ± 0.00 | 0 of 3 | - | - | 3 of 3 | - | 0.07 ± 0.01 | 0 of 3 | - | - | 0 of 3 | - | - | 3 of 3 | - | 0.02 ± 0.00 |
+
 ## How much training data it takes
 
 Every pipeline's plain model fitted on a growing share of the scenes and scored on the same held-out fifth, over 3 splits, mean ± standard deviation of the held-out coverage and of the mean log-likelihood over the covered scenes. The relational circuit's templates pool every part of every training scene, where the unrolled tree sees one row per scene. Every object of every training scene, and every frame of it, goes into the templates.
