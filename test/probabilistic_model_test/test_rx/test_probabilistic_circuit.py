@@ -1,0 +1,601 @@
+import unittest
+import plotly.graph_objects as go
+import random_events.interval
+from random_events.interval import closed, singleton
+
+from probabilistic_model.distributions.gaussian import GaussianDistribution
+from probabilistic_model.distributions.distributions import (
+    DiracDeltaDistribution,
+    IntegerDistribution,
+)
+from probabilistic_model.distributions.uniform import UniformDistribution
+from probabilistic_model.probabilistic_circuit.rx.probabilistic_circuit import *
+from probabilistic_model.utils import MissingDict
+
+
+class SymbolEnum(IntEnum):
+    A = 0
+    B = 1
+    C = 2
+
+
+class SmallCircuitTestCast(unittest.TestCase):
+    """
+    Integration test for all classes in probabilistic circuits.
+    """
+
+    x = Continuous("x")
+    y = Continuous("y")
+
+    model: ProbabilisticCircuit
+
+    def setUp(self):
+        model = ProbabilisticCircuit()
+        sum1, sum2, sum3 = (
+            SumUnit(probabilistic_circuit=model),
+            SumUnit(probabilistic_circuit=model),
+            SumUnit(probabilistic_circuit=model),
+        )
+        sum4, sum5 = SumUnit(probabilistic_circuit=model), SumUnit(
+            probabilistic_circuit=model
+        )
+        prod1, prod2 = ProductUnit(probabilistic_circuit=model), ProductUnit(
+            probabilistic_circuit=model
+        )
+
+        sum1.add_subcircuit(prod1, np.log(0.5))
+        sum1.add_subcircuit(prod2, np.log(0.5))
+        prod1.add_subcircuit(sum2)
+        prod1.add_subcircuit(sum4)
+        prod2.add_subcircuit(sum3)
+        prod2.add_subcircuit(sum5)
+
+        d_x1 = leaf(
+            UniformDistribution(
+                variable=self.x, interval=SimpleInterval.from_data(0, 1)
+            ),
+            probabilistic_circuit=model,
+        )
+        d_x2 = leaf(
+            UniformDistribution(
+                variable=self.x, interval=SimpleInterval.from_data(2, 3)
+            ),
+            probabilistic_circuit=model,
+        )
+        d_y1 = leaf(
+            UniformDistribution(
+                variable=self.y, interval=SimpleInterval.from_data(0, 1)
+            ),
+            probabilistic_circuit=model,
+        )
+        d_y2 = leaf(
+            UniformDistribution(
+                variable=self.y, interval=SimpleInterval.from_data(3, 4)
+            ),
+            probabilistic_circuit=model,
+        )
+
+        sum2.add_subcircuit(d_x1, np.log(0.8))
+        sum2.add_subcircuit(d_x2, np.log(0.2))
+        sum3.add_subcircuit(d_x1, np.log(0.7))
+        sum3.add_subcircuit(d_x2, np.log(0.3))
+
+        sum4.add_subcircuit(d_y1, np.log(0.5))
+        sum4.add_subcircuit(d_y2, np.log(0.5))
+        sum5.add_subcircuit(d_y1, np.log(0.1))
+        sum5.add_subcircuit(d_y2, np.log(0.9))
+
+        self.model = sum1.probabilistic_circuit
+
+    def test_sampling(self):
+        samples = self.model.sample(100)
+        unique = np.unique(samples, axis=0)
+        self.assertGreater(len(unique), 95)
+
+    def test_truncation(self):
+        event = SimpleEvent.from_data(
+            {self.x: closed(0, 0.25) | closed(0.5, 0.75)}
+        ).as_composite_set()
+        conditional, prob = self.model.truncated(event)
+        self.assertAlmostEqual(prob, 0.375)
+        conditional.plot_structure()
+        # plt.show()
+
+    def test_plot(self):
+        self.model.log_likelihood(np.array([[0.5, 0.5]]))
+        color_map = {
+            self.model.root: "red",
+            self.model.root.subcircuits[0]: "blue",
+            self.model.leaves[0]: "green",
+        }
+        self.model.plot_structure(
+            color_map,
+            plot_inference=True,
+            inference_representation=lambda node: round(
+                node.result_of_current_query[0].item(), 2
+            ),
+        )
+        # plt.show()
+
+    def test_translation(self):
+        translation = {self.x: 5, self.y: 10}
+        self.model.apply_translation(translation)
+        event = SimpleEvent.from_data(
+            {self.x: closed(5, 5.25) | closed(5.5, 5.75)}
+        ).as_composite_set()
+        probability = self.model.probability(event)
+        self.assertAlmostEqual(probability, 0.375)
+
+    def test_copy(self):
+        copied = self.model.__deepcopy__()
+        self.assertTrue(copied is not self.model)
+        self.assertTrue(copied.graph is not self.model.graph)
+        self.assertTrue(copied.is_valid())
+        self.assertEqual(len(copied.nodes()), len(self.model.nodes()))
+        self.assertEqual(len(copied.graph.edges()), len(self.model.graph.edges()))
+
+
+class SymbolicPlottingTestCase(unittest.TestCase):
+    x = Symbolic(name="x", domain=Set.from_iterable(SymbolEnum))
+    model: ProbabilisticCircuit
+
+    @classmethod
+    def setUpClass(cls):
+        probabilities = MissingDict(float)
+        probabilities[int(SymbolEnum.A)] = 7 / 20
+        probabilities[int(SymbolEnum.B)] = 13 / 20
+        cls.model = ProbabilisticCircuit()
+        l1 = UnivariateDiscreteLeaf(
+            SymbolicDistribution(variable=cls.x, probabilities=probabilities)
+        )
+        cls.model.add_node(l1)
+
+    def test_plot(self):
+        fig = go.Figure(self.model.plot(), self.model.plotly_layout())
+        # fig.show()
+
+
+class ConditioningWithOrphansTestCase(unittest.TestCase):
+    x = Continuous("x")
+    y = Continuous("y")
+
+    prod = ProductUnit(probabilistic_circuit=ProbabilisticCircuit())
+    px = UnivariateContinuousLeaf(GaussianDistribution(variable=x, location=1, scale=1))
+    py = UnivariateContinuousLeaf(GaussianDistribution(variable=y, location=1, scale=1))
+
+    prod.add_subcircuit(px)
+    prod.add_subcircuit(py)
+
+    model = prod.probabilistic_circuit
+
+    def test_conditioning(self):
+        event = SimpleEvent.from_data(
+            {
+                self.x: closed(1.191472053527832, 1.2024999856948853),
+                self.y: random_events.interval.open(1500.0009765625, np.inf)
+                | random_events.interval.open(-np.inf, -1500.0009765625),
+            }
+        ).as_composite_set()
+
+        result, probability = self.model.truncated(event)
+        self.assertIsNone(result)
+
+
+class DiracMixtureConditioningTestCase(unittest.TestCase):
+    x = Continuous("x")
+
+    model: ProbabilisticCircuit
+
+    @classmethod
+    def setUpClass(cls):
+        cls.model = ProbabilisticCircuit()
+        root = SumUnit(probabilistic_circuit=cls.model)
+        root.add_subcircuit(
+            leaf(
+                UniformDistribution(
+                    variable=cls.x, interval=SimpleInterval.from_data(0, 1.0)
+                ),
+                cls.model,
+            ),
+            np.log(0.5),
+        )
+        root.add_subcircuit(
+            leaf(
+                DiracDeltaDistribution(variable=cls.x, location=0.5, density_cap=2.0),
+                cls.model,
+            ),
+            np.log(0.5),
+        )
+
+    def test_conditioning(self):
+        event = SimpleEvent.from_data({self.x: closed(0.0, 1.0)}).as_composite_set()
+        conditional, probability = self.model.truncated(event)
+        self.assertAlmostEqual(probability, 1.0)
+
+    def test_conditioning_without_dirac(self):
+        event = SimpleEvent.from_data(
+            {self.x: closed(0.0, 0.25) | closed(0.75, 1.0)}
+        ).as_composite_set()
+
+        conditional, probability = self.model.truncated(event)
+        self.assertAlmostEqual(probability, 0.25)
+        self.assertEqual(len(list(conditional.nodes())), 3)
+        self.assertTrue(
+            all(
+                [
+                    isinstance(node.distribution, UniformDistribution)
+                    for node in conditional.leaves
+                ]
+            )
+        )
+
+    def test_conditioning_singleton(self):
+        event = SimpleEvent.from_data({self.x: singleton(0.5)}).as_composite_set()
+
+        conditional, probability = self.model.truncated(event)
+        self.assertEqual(len(list(conditional.nodes())), 1)
+        self.assertIsInstance(conditional.root.distribution, DiracDeltaDistribution)
+
+        conditional, probability = self.model.conditional({self.x: 0.5})
+        self.assertAlmostEqual(probability, 1.5)
+        self.assertEqual(len(list(conditional.nodes())), 1)
+        self.assertTrue(
+            all(
+                [
+                    isinstance(node.distribution, DiracDeltaDistribution)
+                    for node in conditional.leaves
+                ]
+            )
+        )
+
+
+class ConditioningTestCase(unittest.TestCase):
+    x = Continuous("x")
+    y = Continuous("y")
+
+    model: ProbabilisticCircuit
+
+    @classmethod
+    def setUpClass(cls):
+        model = ProbabilisticCircuit()
+        s1 = SumUnit(probabilistic_circuit=model)
+        p1 = ProductUnit(probabilistic_circuit=model)
+        p2 = ProductUnit(probabilistic_circuit=model)
+
+        u1 = leaf(
+            UniformDistribution(
+                variable=cls.x, interval=SimpleInterval.from_data(0, 1.0)
+            ),
+            model,
+        )
+        u2 = leaf(
+            UniformDistribution(
+                variable=cls.x, interval=SimpleInterval.from_data(0.0, 2)
+            ),
+            model,
+        )
+        u3 = leaf(
+            UniformDistribution(
+                variable=cls.y, interval=SimpleInterval.from_data(0, 1)
+            ),
+            model,
+        )
+        u4 = leaf(
+            UniformDistribution(
+                variable=cls.y, interval=SimpleInterval.from_data(0.0, 2)
+            ),
+            model,
+        )
+
+        s1.add_subcircuit(p1, np.log(0.5))
+        s1.add_subcircuit(p2, np.log(0.5))
+
+        p1.add_subcircuit(u1)
+        p1.add_subcircuit(u3)
+
+        p2.add_subcircuit(u2)
+        p2.add_subcircuit(u4)
+        cls.model = model
+
+    def test_conditioning(self):
+        p = {self.x: 0.5}
+
+        marginal = self.model.marginal([self.y])
+
+        model, _ = self.model.conditional(p)
+        # model, _ = self.model.truncated(SimpleEvent.from_data({self.x: closed(0.3, 0.5)}).as_composite_set())
+
+        conditioned_marginal = model.marginal([self.y])
+
+        probability_event = SimpleEvent.from_data(
+            {self.y: closed(0.0, 1.0)}
+        ).as_composite_set()
+
+        p_marginal = marginal.probability(probability_event)
+        p_conditioned_marginal = conditioned_marginal.probability(probability_event)
+        self.assertGreater(p_conditioned_marginal, p_marginal)
+
+    def test_conditioning_with_symbolic(self):
+
+        model = copy.deepcopy(self.model)
+
+        s = Symbolic(name="s", domain=Set.from_iterable(SymbolEnum))
+        probabilities = MissingDict(float)
+        probabilities[hash(SymbolEnum.A)] = 7 / 20
+        probabilities[hash(SymbolEnum.B)] = 13 / 20
+
+        old_root = model.root
+        new_root = ProductUnit(probabilistic_circuit=model)
+        p_s = leaf(SymbolicDistribution(variable=s, probabilities=probabilities), model)
+        new_root.add_subcircuit(
+            old_root,
+        )
+        new_root.add_subcircuit(
+            p_s,
+        )
+
+        model.conditional({s: SymbolEnum.A})
+
+
+def test_subset_of_continuous_variables_expectation():
+    circuit = ProbabilisticCircuit()
+    circuit_root = SumUnit(probabilistic_circuit=circuit)
+    subcircuit_root = ProductUnit(probabilistic_circuit=circuit)
+    circuit_root.add_subcircuit(subcircuit_root, 1.0)
+    x_var = Continuous("x")
+    x_dist = make_dirac(x_var, 0)
+
+    subcircuit_root.add_subcircuit(leaf(x_dist, circuit))
+    y_var = Continuous("y")
+    y_dist = make_dirac(y_var, 0)
+    subcircuit_root.add_subcircuit(leaf(y_dist, circuit))
+    expectation = circuit.expectation([x_var])
+    assert expectation[x_var] == 0
+
+
+def test_subset_of_integer_variables_expectation():
+    circuit = ProbabilisticCircuit()
+    circuit_root = SumUnit(probabilistic_circuit=circuit)
+    subcircuit_root = ProductUnit(probabilistic_circuit=circuit)
+    circuit_root.add_subcircuit(subcircuit_root, 1.0)
+    x_var = Integer("x")
+    x_dist = make_dirac(x_var, 0)
+    subcircuit_root.add_subcircuit(leaf(x_dist, circuit))
+    y_var = Integer("y")
+    y_dist = make_dirac(y_var, 0)
+    subcircuit_root.add_subcircuit(leaf(y_dist, circuit))
+    assert circuit.expectation([x_var])[x_var] == 0
+
+
+class MixedLeafTruncationTestCase(unittest.TestCase):
+    """
+    Truncation over a composite event must work for circuits with mixed (continuous +
+    discrete) leaves.
+    """
+
+    x = Continuous("x")
+    n = Integer("n")
+
+    def build_mixed_circuit(self) -> ProbabilisticCircuit:
+        circuit = ProbabilisticCircuit()
+        root = SumUnit(probabilistic_circuit=circuit)
+
+        first_component = ProductUnit(probabilistic_circuit=circuit)
+        first_component.add_subcircuit(
+            leaf(
+                UniformDistribution(closed(0.0, 1.0).simple_sets[0], variable=self.x),
+                circuit,
+            )
+        )
+        first_component.add_subcircuit(
+            leaf(
+                IntegerDistribution(
+                    variable=self.n,
+                    probabilities=MissingDict(float, {0: 0.5, 1: 0.3, 2: 0.2}),
+                ),
+                circuit,
+            )
+        )
+        root.add_subcircuit(first_component, np.log(0.6))
+
+        second_component = ProductUnit(probabilistic_circuit=circuit)
+        second_component.add_subcircuit(
+            leaf(
+                UniformDistribution(closed(0.5, 2.0).simple_sets[0], variable=self.x),
+                circuit,
+            )
+        )
+        second_component.add_subcircuit(
+            leaf(
+                IntegerDistribution(
+                    variable=self.n,
+                    probabilities=MissingDict(float, {1: 0.4, 2: 0.4, 3: 0.2}),
+                ),
+                circuit,
+            )
+        )
+        root.add_subcircuit(second_component, np.log(0.4))
+        return circuit
+
+    def composite_event(self) -> Event:
+        return (
+            SimpleEvent.from_data(
+                {self.x: closed(0.0, 0.7), self.n: closed(0, 1)}
+            ).as_composite_set()
+            | SimpleEvent.from_data(
+                {self.x: closed(1.0, 1.8), self.n: closed(2, 3)}
+            ).as_composite_set()
+        )
+
+    def test_truncation_log_probability_matches_event_probability(self):
+        circuit = self.build_mixed_circuit()
+        event = self.composite_event()
+        expected_probability = circuit.probability(event)
+        _, log_probability = circuit.log_truncated(event)
+        self.assertAlmostEqual(np.exp(log_probability), expected_probability, places=9)
+
+    def test_truncated_circuit_places_all_mass_inside_event(self):
+        circuit = self.build_mixed_circuit()
+        event = self.composite_event()
+        truncated, _ = circuit.log_truncated(event)
+        self.assertAlmostEqual(truncated.probability(event), 1.0, places=9)
+
+
+# %% a leaf is its own only leaf
+
+
+class SingleLeafCircuitTestCase(unittest.TestCase):
+    """
+    A circuit whose root is itself a leaf, with no wrapping product or sum unit.
+    """
+
+    x = Continuous("x")
+
+    def setUp(self):
+        self.circuit = ProbabilisticCircuit()
+        self.leaf = leaf(
+            UniformDistribution(
+                variable=self.x, interval=SimpleInterval.from_data(0, 1)
+            ),
+            self.circuit,
+        )
+
+    def test_leaf_unit_lists_itself_as_its_own_leaf(self):
+        self.assertEqual(self.leaf.leaves, [self.leaf])
+
+    def test_circuit_rooted_at_a_single_leaf_lists_that_leaf(self):
+        self.assertEqual(self.circuit.leaves, [self.leaf])
+
+    def test_update_variables_renames_a_single_leaf_root(self):
+        renamed_x = Continuous("renamed_x")
+        self.circuit.update_variables({self.x: renamed_x})
+        self.assertEqual(self.leaf.distribution.variable, renamed_x)
+
+
+class NestedProductUnitSimplifyTestCase(unittest.TestCase):
+    """
+    A ProductUnit whose own child is another ProductUnit -- the same-type nesting
+    ProductUnit.simplify() is meant to flatten.
+    """
+
+    x = Continuous("x")
+    y = Continuous("y")
+    z = Continuous("z")
+
+    def setUp(self):
+        self.circuit = ProbabilisticCircuit()
+        self.outer = ProductUnit(probabilistic_circuit=self.circuit)
+        self.inner = ProductUnit(probabilistic_circuit=self.circuit)
+        self.leaf_x = leaf(
+            UniformDistribution(
+                variable=self.x, interval=SimpleInterval.from_data(0, 1)
+            ),
+            self.circuit,
+        )
+        self.leaf_y = leaf(
+            UniformDistribution(
+                variable=self.y, interval=SimpleInterval.from_data(0, 1)
+            ),
+            self.circuit,
+        )
+        self.leaf_z = leaf(
+            UniformDistribution(
+                variable=self.z, interval=SimpleInterval.from_data(0, 1)
+            ),
+            self.circuit,
+        )
+        self.inner.add_subcircuit(self.leaf_x)
+        self.inner.add_subcircuit(self.leaf_y)
+        self.outer.add_subcircuit(self.inner)
+        self.outer.add_subcircuit(self.leaf_z)
+
+    def test_simplify_flattens_the_nested_product_unit(self):
+        self.circuit.simplify()
+        self.assertEqual(
+            set(self.outer.subcircuits), {self.leaf_x, self.leaf_y, self.leaf_z}
+        )
+        self.assertIsNone(self.inner.probabilistic_circuit)
+        self.assertEqual(len(self.circuit.nodes()), 4)
+
+
+class SharedNestedUnitSimplifyTestCase(unittest.TestCase):
+    """
+    A same-type inner unit mounted as a child of two different outer units at once --
+    the shape relational grounding produces when Monte-Carlo mounting reuses one
+    grounded instance under every node whose local weighting agrees on it, rather than
+    building a separate copy per node.
+
+    Regression coverage for simplify()'s same-type merge unconditionally removing the
+    absorbed child: with a shared child, the first parent to merge it in deleted it out
+    from under every other parent still depending on it, silently dropping whatever
+    variables only the shared child modeled for those other parents.
+    """
+
+    x = Continuous("x")
+    y = Continuous("y")
+    z = Continuous("z")
+    w = Continuous("w")
+
+    def _build(self, outer_type, inner_type):
+        circuit = ProbabilisticCircuit()
+        shared_inner = inner_type(probabilistic_circuit=circuit)
+        leaf_x = leaf(
+            UniformDistribution(
+                variable=self.x, interval=SimpleInterval.from_data(0, 1)
+            ),
+            circuit,
+        )
+        leaf_y = leaf(
+            UniformDistribution(
+                variable=self.y, interval=SimpleInterval.from_data(0, 1)
+            ),
+            circuit,
+        )
+        shared_inner.add_subcircuit(leaf_x, log_weight=0.0)
+        shared_inner.add_subcircuit(leaf_y, log_weight=0.0)
+
+        leaf_z = leaf(
+            UniformDistribution(
+                variable=self.z, interval=SimpleInterval.from_data(0, 1)
+            ),
+            circuit,
+        )
+        leaf_w = leaf(
+            UniformDistribution(
+                variable=self.w, interval=SimpleInterval.from_data(0, 1)
+            ),
+            circuit,
+        )
+        outer_a = outer_type(probabilistic_circuit=circuit)
+        outer_a.add_subcircuit(shared_inner, log_weight=0.0)
+        outer_a.add_subcircuit(leaf_z, log_weight=0.0)
+        outer_b = outer_type(probabilistic_circuit=circuit)
+        outer_b.add_subcircuit(shared_inner, log_weight=0.0)
+        outer_b.add_subcircuit(leaf_w, log_weight=0.0)
+        return circuit, shared_inner, outer_a, outer_b, leaf_x, leaf_y, leaf_z, leaf_w
+
+    def test_simplifying_one_product_parent_does_not_orphan_the_shared_child_for_the_other(
+        self,
+    ):
+        _, _, outer_a, outer_b, leaf_x, leaf_y, leaf_z, leaf_w = self._build(
+            ProductUnit, ProductUnit
+        )
+        outer_a.simplify()
+        self.assertEqual(set(outer_a.subcircuits), {leaf_x, leaf_y, leaf_z})
+        outer_b.simplify()
+        self.assertEqual(set(outer_b.subcircuits), {leaf_x, leaf_y, leaf_w})
+
+    def test_simplifying_one_sum_parent_does_not_orphan_the_shared_child_for_the_other(
+        self,
+    ):
+        _, _, outer_a, outer_b, leaf_x, leaf_y, leaf_z, leaf_w = self._build(
+            SumUnit, SumUnit
+        )
+        outer_a.simplify()
+        self.assertEqual(set(outer_a.subcircuits), {leaf_x, leaf_y, leaf_z})
+        outer_b.simplify()
+        self.assertEqual(set(outer_b.subcircuits), {leaf_x, leaf_y, leaf_w})
+
+
+if __name__ == "__main__":
+    unittest.main()

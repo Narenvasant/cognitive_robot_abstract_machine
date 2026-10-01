@@ -1,0 +1,216 @@
+from __future__ import annotations
+
+import importlib
+import os
+import weakref
+from copy import deepcopy
+from dataclasses import dataclass
+from functools import lru_cache, wraps
+from pathlib import Path
+from typing import List
+
+from krrood.class_diagrams.mocking import MockedModule, MockedClass
+from platformdirs import user_cache_dir
+
+try:
+    from ament_index_python import PackageNotFoundError
+except ModuleNotFoundError:
+    PackageNotFoundError = None
+from xml.etree import ElementTree as ET
+
+from typing_extensions import Any, Tuple, ClassVar, Type
+
+
+def create_cache_dir(folder_name: str) -> Path:
+    """
+    Returns a directory inside the user's cache that downloaded and generated data can be
+    kept in, creating it if it does not exist yet.
+
+    :param folder_name: The name of the directory inside the package's cache.
+    :return: The path of the directory.
+    """
+    package_name = __package__.split(".", 1)[0]
+
+    cache_dir = Path(user_cache_dir(package_name)) / folder_name
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+class suppress_stdout_stderr(object):
+    """
+    A context manager for doing a "deep suppression" of stdout and stderr in
+    Python, i.e. will suppress all prints, even if the print originates in a
+    compiled C/Fortran sub-function.
+
+    This will not suppress raised exceptions, since exceptions are printed
+    to stderr just before a script exits, and after the context manager has
+    exited (at least, I think that is why it lets exceptions through).
+    Copied from https://stackoverflow.com/questions/11130156/suppress-stdout-stderr-print-from-python-functions
+    """
+
+    def __init__(self):
+        # Open a pair of null files
+        self.null_fds = [os.open(os.devnull, os.O_RDWR) for _ in range(2)]
+        # Save the actual stdout (1) and stderr (2) file descriptors.
+        self.save_fds = [os.dup(1), os.dup(2)]
+
+    def __enter__(self):
+        # Assign the null pointers to stdout and stderr.
+        # This one is not needed for URDF parsing output
+        # os.dup2(self.null_fds[0], 1)
+        os.dup2(self.null_fds[1], 2)
+
+    def __exit__(self, *_):
+        # Re-assign the real stdout/stderr back to (1) and (2)
+        # This one is not needed for URDF parsing output
+        # os.dup2(self.save_fds[0], 1)
+        os.dup2(self.save_fds[1], 2)
+        # Close all file descriptors
+        for fd in self.null_fds + self.save_fds:
+            os.close(fd)
+
+
+def hacky_urdf_parser_fix(
+    urdf: str, blacklist: Tuple[str] = ("transmission", "gazebo")
+) -> str:
+    # Parse input string
+    root = ET.fromstring(urdf)
+
+    # Iterate through each section in the blacklist
+    for section_name in blacklist:
+        # Find all sections with the given name and remove them
+        for elem in root.findall(f".//{section_name}"):
+            parent = root.find(f".//{section_name}/..")
+            if parent is not None:
+                parent.remove(elem)
+
+    # Turn back to string
+    return ET.tostring(root, encoding="unicode")
+
+
+def robot_name_from_urdf_string(urdf_string: str) -> str:
+    """
+    Returns the name defined in the robot tag, e.g., 'pr2' from <robot name="pr2"> ... </robot>.
+    :param urdf_string: URDF string
+    :return: Extracted name
+    """
+    return urdf_string.split('robot name="')[1].split('"')[0]
+
+
+def bpy_installed() -> bool:
+    try:
+        import bpy
+
+        return True
+    except ImportError:
+        return False
+
+
+def rclpy_installed() -> bool:
+    try:
+        import rclpy
+
+        return True
+    except ImportError:
+        return False
+
+
+def tracy_installed() -> bool:
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        pkg_name = "iai_tracy_description"
+
+        if get_package_share_directory(pkg_name):
+            return True
+        return False
+    except (ImportError, PackageNotFoundError, ValueError):
+        return False
+
+
+def daisy_installed() -> bool:
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        pkg_name = "iai_daisy_description"
+
+        if get_package_share_directory(pkg_name):
+            return True
+        return False
+    except (ImportError, PackageNotFoundError, ValueError):
+        return False
+
+
+def hsrb_installed() -> bool:
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        pkg_name = "hsr_description"
+
+        if get_package_share_directory(pkg_name):
+            return True
+        return False
+    except (ImportError, PackageNotFoundError, ValueError):
+        return False
+
+
+def type_string_to_type(type_string: str) -> type:
+    """
+    Convert a string representation of a type to the actual type.
+
+    :param type_string: The string representation of the type, e.g., 'module.submodule.ClassName'.
+    :return: The actual type.
+    """
+    module_path, class_name = type_string.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)
+
+
+def camel_case_split(word: str) -> List[str]:
+    """
+    :param word: The word to split
+    :return: A set of strings where each string is a camel case split of the original word
+    """
+    result = []
+    start = 0
+    for i, c in enumerate(word[1:], 1):
+        if c.isupper():
+            result.append(word[start:i])
+            start = i
+    result.append(word[start:])
+    return result
+
+
+@dataclass
+class MockedNodeClass(MockedClass):
+    """
+    Mocked class for Node in rclpy
+    """
+
+    ...
+
+
+@dataclass
+class MockedNodeModule(MockedModule):
+    """
+    Mocked module for rclpy.node.
+    """
+
+    Node: Type[MockedNodeClass] = MockedNodeClass
+    """
+    A mocked Node class.
+    """
+
+
+@dataclass
+class MockedRCLPY(MockedModule):
+    """
+    Mocked module for rclpy.
+    """
+
+    node: ClassVar[MockedNodeModule] = MockedNodeModule()
+
+
+mocked_rclpy = MockedRCLPY()
+"""
+A mocked rclpy module.
+"""

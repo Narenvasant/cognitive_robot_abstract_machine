@@ -1,0 +1,100 @@
+from __future__ import division
+
+from dataclasses import field, dataclass
+from typing import Optional, Type, Tuple
+
+import krrood.symbolic_math.symbolic_math as sm
+from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.world_description.connections import (
+    OmniDrive,
+)
+from semantic_digital_twin.world_description.world_entity import Connection
+from giskardpy.motion_statechart.context import MotionStatechartContext
+from giskardpy.motion_statechart.exceptions import UnexpectedWorldEntityCountError
+from giskardpy.motion_statechart.graph_node import MotionStatechartNode, NodeArtifacts
+from giskardpy.motion_statechart.tasks.joint_tasks import JointState
+
+
+@dataclass(eq=False, repr=False)
+class SetSeedConfiguration(MotionStatechartNode):
+    """
+    Overwrite the configuration of the world to allow starting the planning from a
+    different state.
+
+    CAUTION! don't use this to overwrite the robot's state outside standalone mode!
+    :param seed_configuration: maps joint name to float
+    :param group_name: if joint names are not unique, it will search in this group for
+        matches.
+    """
+
+    seed_configuration: JointState = field(kw_only=True)
+
+    def build_artifacts(self, context: MotionStatechartContext) -> NodeArtifacts:
+        """
+        Applying the configuration is what this node is for and it cannot fail, so it
+        counts as succeeded from the moment it runs.
+        """
+        return NodeArtifacts(observation=sm.Scalar.const_true())
+
+    def on_start(self, context: MotionStatechartContext):
+        self.seed_configuration.apply_to(context.world)
+
+
+@dataclass(eq=False, repr=False)
+class SetOdometry(MotionStatechartNode):
+    """
+    Sets the odometry of the robot to the given pose.
+    """
+
+    base_pose: HomogeneousTransformationMatrix = field(kw_only=True)
+    """
+    The pose of the robot base.
+    """
+
+    odom_connection: Optional[OmniDrive] = field(default=None, kw_only=True)
+    """
+    The odometry connection to use.
+
+    If it is None and there is only one drive in the world, it will be used.
+    """
+
+    _odom_joints: Tuple[Type[Connection], ...] = field(default=(OmniDrive,), init=False)
+
+    def build_artifacts(self, context: MotionStatechartContext) -> NodeArtifacts:
+        self.odom_connection = self._current_odom_connection(context)
+        return NodeArtifacts(observation=sm.Scalar.const_true())
+
+    def _current_odom_connection(self, context: MotionStatechartContext) -> OmniDrive:
+        """
+        The drive that moves the body this node sets the odometry of, as the world holds
+        it now.
+
+        A drive given at construction time is re-read from its child body, because a
+        world model change between then and now (re-parenting the body onto a carrier,
+        say) replaces the connection object while keeping the body.
+
+        :param context: The context holding the world to resolve against.
+        :return: The drive to write the odometry into.
+        """
+        if self.odom_connection is not None:
+            return self.odom_connection.child.parent_connection
+
+        drive_connections = context.world.get_connections_by_type(self._odom_joints)
+        if len(drive_connections) != 1:
+            raise UnexpectedWorldEntityCountError(
+                node=self,
+                expected_count=1,
+                actual_count=len(drive_connections),
+                entity_type=self._odom_joints,
+            )
+        return drive_connections[0]
+
+    def on_start(self, context: MotionStatechartContext):
+        parent_T_pose_ref = HomogeneousTransformationMatrix(
+            context.world.compute_forward_kinematics_np(
+                self.odom_connection.parent, self.base_pose.reference_frame
+            )
+        )
+        parent_T_pose = parent_T_pose_ref @ self.base_pose
+
+        self.odom_connection.origin = parent_T_pose

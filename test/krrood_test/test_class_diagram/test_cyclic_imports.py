@@ -1,0 +1,13 @@
+from krrood.class_diagrams.class_diagram import ClassDiagram
+from ..dataset.cyclic_imports import PoseAnnotation
+
+from ..dataset.example_classes import KRROODPose
+
+
+def test_unfinished_type_field_info():
+
+    diagram = ClassDiagram([KRROODPose, PoseAnnotation])
+
+    wrapped_cls = diagram.get_wrapped_class(PoseAnnotation)
+    f = [f for f in wrapped_cls.fields if f.field.name == "pose"][0]
+    assert f.contained_type is KRROODPose

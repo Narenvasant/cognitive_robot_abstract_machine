@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=42", "wheel", "pybind11>=2.10.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "random_events"
+dynamic = ["version"]
+dependencies = [
+    "numpy",
+    "plotly",
+    "typing_extensions",
+    "sortedcontainers",
+    "pybind11",
+    "setuptools-scm",
+    "krrood",
+]
+description = "Random random events for probabilistic reasoning"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "LGPL-3.0-only"}
+authors = [
+    {name = "Anonymous"}
+]
+keywords = [
+    "random events",
+    "probabilistic machine learning",
+    "probability theory",
+    "variables",
+    "reasoning under uncertainty"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["random_events*"]
+
+[tool.pybind11]
+include-dirs = ["src/random_events_lib/random_events_lib/include"]
+
+[tool.setuptools.dynamic]
+version = {attr = "random_events._version.__version__"}
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "jupyter",
+    "pillow",
+    "polytope",
+    "ortools",
+    "scipy",
+    "cvxopt",
+]
+
+[dependency-groups]
+workspace = [
+    "krrood",
+]

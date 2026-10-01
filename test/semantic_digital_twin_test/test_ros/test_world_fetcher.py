@@ -1,0 +1,326 @@
+import json
+import time
+
+import numpy as np
+
+from krrood.adapters.json_field import JSONField
+from krrood.adapters.json_serializer import from_json
+from semantic_digital_twin.adapters.ros.world_fetcher import (
+    FetchWorldServer,
+    fetch_world_from_service,
+)
+from semantic_digital_twin.adapters.ros.world_synchronizer import WorldSynchronizer
+from semantic_digital_twin.adapters.world_entity_kwargs_tracker import (
+    WorldEntityWithIDKwargsTracker,
+)
+from semantic_digital_twin.collision_checking.collision_rules import (
+    AvoidExternalCollisions,
+)
+from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.robots.pr2 import PR2
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Door,
+    Handle,
+    Shelf,
+    ShelfLayer,
+)
+from semantic_digital_twin.spatial_types import HomogeneousTransformationMatrix
+from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.connections import Connection6DoF
+from semantic_digital_twin.world_description.geometry import Scale
+from semantic_digital_twin.world_description.world_entity import Body
+from semantic_digital_twin.world_description.world_modification import (
+    WorldModelModificationBlock,
+)
+from std_srvs.srv import Trigger
+
+
+def create_dummy_world():
+    """
+    Create a simple world with two bodies and a connection.
+    """
+    world = World()
+    body_1 = Body(name=PrefixedName("body_1"))
+    body_2 = Body(name=PrefixedName("body_2"))
+    with world.modify_world():
+        world.add_kinematic_structure_entity(body_1)
+        world.add_kinematic_structure_entity(body_2)
+        world.add_connection(
+            Connection6DoF.create_with_dofs(parent=body_1, child=body_2, world=world)
+        )
+    return world
+
+
+def test_get_modifications_as_json_empty_world(rclpy_node):
+    """
+    Test that get_modifications_as_json returns an empty list for a world with no
+    modifications.
+    """
+    world = World()
+    fetcher = FetchWorldServer(node=rclpy_node, world=world)
+
+    modifications_json = fetcher.get_modifications_as_json()
+    modifications_list = json.loads(modifications_json)
+
+    assert modifications_list == []
+    fetcher.close()
+
+
+def test_service_callback_success(rclpy_node):
+    """
+    Test that the service callback returns success with the modifications JSON.
+    """
+    world = create_dummy_world()
+    fetcher = FetchWorldServer(node=rclpy_node, world=world)
+
+    # Create a mock request and response
+    request = Trigger.Request()
+    response = Trigger.Response()
+
+    # Call the service callback directly
+    result = fetcher.service_callback(request, response)
+
+    assert result.success is True
+
+    tracker = WorldEntityWithIDKwargsTracker()
+    kwargs = tracker.create_kwargs()
+
+    # Verify the message is valid JSON (expects new envelope format)
+    payload = json.loads(result.message)
+    modifications_json = payload["modifications"]
+    modifications_list = [from_json(d, **kwargs) for d in modifications_json]
+
+    assert [type(m) for b in modifications_list for m in b] == [
+        type(m)
+        for b in world.get_world_model_manager().model_modification_blocks
+        for m in b
+    ]
+
+    fetcher.close()
+
+
+def test_service_callback_with_multiple_modifications(rclpy_node):
+    """
+    Test that the service callback returns all modifications when multiple changes are
+    made.
+    """
+    world = World()
+    fetcher = FetchWorldServer(node=rclpy_node, world=world)
+
+    # Make multiple modifications
+    body_1 = Body(name=PrefixedName("body_1"))
+    body_2 = Body(name=PrefixedName("body_2"))
+    body_3 = Body(name=PrefixedName("body_3"))
+
+    with world.modify_world():
+        world.add_kinematic_structure_entity(body_1)
+
+    with world.modify_world():
+        world.add_kinematic_structure_entity(body_2)
+        world.add_kinematic_structure_entity(body_3)
+        world.add_connection(
+            Connection6DoF.create_with_dofs(parent=body_1, child=body_2, world=world)
+        )
+        world.add_connection(
+            Connection6DoF.create_with_dofs(parent=body_2, child=body_3, world=world)
+        )
+
+    request = Trigger.Request()
+    response = Trigger.Response()
+
+    result = fetcher.service_callback(request, response)
+
+    assert result.success is True
+    # Verify the message is valid JSON
+
+    tracker = WorldEntityWithIDKwargsTracker.from_world(world)
+    kwargs = tracker.create_kwargs()
+    payload = json.loads(result.message)
+    modifications_json = payload["modifications"]
+    modifications_list = [from_json(d, **kwargs) for d in modifications_json]
+    assert [type(m) for b in modifications_list for m in b] == [
+        type(m)
+        for b in world.get_world_model_manager().model_modification_blocks
+        for m in b
+    ]
+    fetcher.close()
+
+
+def test_world_fetching(rclpy_node):
+    world = create_dummy_world()
+    world.get_body_by_name("body_2").parent_connection.origin = (
+        HomogeneousTransformationMatrix.from_xyz_rpy(
+            1, 1, 1, reference_frame=world.get_body_by_name("body_1")
+        )
+    )
+    fetcher = FetchWorldServer(node=rclpy_node, world=world)
+
+    world2 = fetch_world_from_service(
+        rclpy_node,
+    )
+    assert [
+        type(b) for b in world2.get_world_model_manager().model_modification_blocks[0]
+    ] == [type(b) for b in world.get_world_model_manager().model_modification_blocks[0]]
+    np.testing.assert_array_almost_equal(
+        world2.get_body_by_name("body_2").global_transform.to_np(),
+        world.get_body_by_name("body_2").global_transform.to_np(),
+    )
+
+
+def test_semantic_annotation_modifications(rclpy_node):
+    """
+    If this test does not terminate after calling "client.call(Trigger.Request())" inside "fetch_world_from_service" doublecheck
+    if some fields in semantic annotations are not instantiated.
+    For instance having this field in the door semantic annotation causes the above issue:
+
+    entry_way: EntryWay = field(init=False)
+
+    Changing it to:
+
+    entry_way: Optional[EntryWay] = field(init=False, default=None)
+
+    resolves the issue
+    """
+    w1 = World(name="w1")
+    b1 = Body(name=PrefixedName("b1"))
+    v1 = Handle(root=b1)
+    v2 = Door(root=b1, handle=v1)
+
+    with w1.modify_world():
+        w1.add_body(b1)
+        w1.add_semantic_annotation(v1)
+        w1.add_semantic_annotation(v2)
+
+    fetcher = FetchWorldServer(node=rclpy_node, world=w1)
+
+    w2 = fetch_world_from_service(
+        rclpy_node,
+    )
+
+    assert [sa.name for sa in w1.semantic_annotations] == [
+        sa.name for sa in w2.semantic_annotations
+    ]
+
+
+def test_fetched_world_accepts_new_specification_spawns(rclpy_node):
+    """
+    A fetched world is replayed from modification blocks rather than parsed, so spawning
+    into it afterwards has to work exactly as it does in a directly built world.
+    """
+    shelf_scale = Scale(0.305, 0.85, 1.9)
+    FetchWorldServer(node=rclpy_node, world=create_dummy_world())
+
+    fetched_world = fetch_world_from_service(rclpy_node, timeout_seconds=30)
+
+    with fetched_world.modify_world():
+        shelf = Shelf.get_annotation_specification(
+            "shelf",
+            Shelf.get_default_root_kinematic_structure_entity_specification(
+                scale=shelf_scale, wall_thickness=0.035
+            ),
+        ).spawn(
+            fetched_world,
+            parent_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
+                1, 0, shelf_scale.z / 2, reference_frame=fetched_world.root
+            ),
+        )
+        shelf.add(
+            ShelfLayer.create_with_new_body_in_world(
+                world=fetched_world,
+                name="shelf_layer1",
+                world_root_T_self=HomogeneousTransformationMatrix.from_xyz_rpy(
+                    1, 0, 0.283, reference_frame=fetched_world.root
+                ),
+                scale=Scale(0.305, 0.85, 0.018),
+            )
+        )
+
+    assert fetched_world.is_kinematic_structure_entity_in_world_by_name("shelf_layer1")
+    assert [layer.root.name.name for layer in shelf.shelf_layers] == ["shelf_layer1"]
+
+
+def test_get_payload_as_json(rclpy_node, pr2_world_state_reset):
+    fetcher = FetchWorldServer(node=rclpy_node, world=pr2_world_state_reset)
+
+    expected_payload_length = sum(
+        len(block.modifications)
+        for block in pr2_world_state_reset.get_world_model_manager().model_modification_blocks
+    )
+
+    payload = json.loads(fetcher.get_payload_as_json())
+    # Each block's own `modifications` field is generically serialized by
+    # DataclassJSONSerializer, which tags a list with its collection type.
+    assert (
+        len(payload["modifications"][0]["modifications"][JSONField.ITEMS])
+        == expected_payload_length
+    )
+
+
+def test_pr2_semantic_annotation(rclpy_node, pr2_world_state_reset):
+    pr2 = pr2_world_state_reset.get_semantic_annotations_by_type(PR2)[0]
+    fetcher = FetchWorldServer(node=rclpy_node, world=pr2_world_state_reset)
+
+    pr2_world_copy = fetch_world_from_service(rclpy_node, timeout_seconds=10)
+
+    fetched_pr2 = pr2_world_copy.get_semantic_annotations_by_type(PR2)[0]
+
+    assert set(map(lambda x: x.id, fetched_pr2.get_end_effectors())) == set(
+        map(lambda x: x.id, pr2.get_end_effectors())
+    )
+
+    assert [sa.name for sa in pr2_world_state_reset.semantic_annotations] == [
+        sa.name for sa in pr2_world_copy.semantic_annotations
+    ]
+
+
+def test_pr2_collision_rules(rclpy_node, pr2_world_state_reset):
+    pr2 = pr2_world_state_reset.get_semantic_annotations_by_type(PR2)[0]
+    fetcher = FetchWorldServer(node=rclpy_node, world=pr2_world_state_reset)
+
+    pr2_world_copy = fetch_world_from_service(
+        rclpy_node,
+    )
+    synchronizer_1 = WorldSynchronizer(
+        node=rclpy_node,
+        _world=pr2_world_state_reset,
+    )
+    synchronizer_2 = WorldSynchronizer(
+        node=rclpy_node,
+        _world=pr2_world_copy,
+    )
+
+    assert len(pr2_world_state_reset.collision_manager.rules) == len(
+        pr2_world_copy.collision_manager.rules
+    )
+
+    time.sleep(1)
+
+    with pr2_world_state_reset.modify_world():
+        pr2_world_state_reset.collision_manager.add_temporary_rule(
+            AvoidExternalCollisions(robot=pr2)
+        )
+
+    time.sleep(1)
+    # temporary rules are not synced
+    assert len(pr2_world_state_reset.collision_manager.rules) - 1 == len(
+        pr2_world_copy.collision_manager.rules
+    )
+
+
+def test_fetched_robot_parts_keep_their_joint_states(rclpy_node, pr2_world_state_reset):
+    """
+    Joint states are attached to robot parts after the parts themselves exist, so they
+    are recorded as their own modifications.
+
+    A fetched world must replay those too, not just the modifications that created the
+    kinematic structure.
+    """
+    pr2 = pr2_world_state_reset.get_semantic_annotations_by_type(PR2)[0]
+    fetcher = FetchWorldServer(node=rclpy_node, world=pr2_world_state_reset)
+
+    pr2_world_copy = fetch_world_from_service(rclpy_node, timeout_seconds=10)
+
+    fetched_pr2 = pr2_world_copy.get_semantic_annotations_by_type(PR2)[0]
+    assert [joint_state.name for joint_state in fetched_pr2.torso.joint_states] == [
+        joint_state.name for joint_state in pr2.torso.joint_states
+    ]

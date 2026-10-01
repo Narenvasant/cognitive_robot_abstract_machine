@@ -1,0 +1,2825 @@
+from __future__ import absolute_import
+from __future__ import annotations
+
+import difflib
+import inspect
+import logging
+import threading
+import uuid
+from contextlib import contextmanager
+from copy import deepcopy, copy
+from dataclasses import dataclass, field, fields, is_dataclass
+from functools import wraps, cached_property
+from itertools import chain
+from uuid import UUID
+
+import numpy as np
+import rustworkx as rx
+import rustworkx.visualization
+from PIL.Image import Image
+from rustworkx import NoEdgeBetweenNodes
+from rustworkx.visualization import graphviz_draw
+from typing_extensions import (
+    Dict,
+    Tuple,
+    Optional,
+    TypeVar,
+    Union,
+    Callable,
+    Any,
+    Iterable,
+    Iterator,
+    TYPE_CHECKING,
+    get_args,
+)
+from typing_extensions import List
+from typing_extensions import Type, Set
+
+from krrood.adapters.json_serializer import list_like_classes
+from krrood.class_diagrams.attribute_introspector import DataclassOnlyIntrospector
+from krrood.patterns.caching import memoize, clear_memoization_cache
+from semantic_digital_twin.callbacks.callback import ModelChangeCallback
+from semantic_digital_twin.collision_checking.collision_manager import CollisionManager
+from semantic_digital_twin.collision_checking.pybullet_collision_detector import (
+    BulletCollisionDetector,
+)
+from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.datastructures.types import NpMatrix4x4
+from semantic_digital_twin.exceptions import (
+    DuplicateWorldEntityError,
+    WorldEntityNotFoundError,
+    AlreadyBelongsToAWorldError,
+    MissingWorldModificationContextError,
+    WorldEntityWithIDNotFoundError,
+    WorldEntityWithIDBelongsToAnotherWorld,
+    MissingReferenceFrameError,
+    MismatchingPublishChangesAttribute,
+    AtomicWorldModificationNotAtomic,
+    SemanticAnnotationCircularDependencyError,
+    WorldValidationError,
+    WorldIsNotATreeError,
+    WorldContainsOrphanedDegreeOfFreedom,
+    BrokenWorldModificationHistoryError,
+    MismatchingWorld,
+    InsufficientModificationHistoryError,
+    InvalidRollbackVersionError,
+)
+from semantic_digital_twin.mixin import HasSimulatorProperties
+from semantic_digital_twin.spatial_computations.forward_kinematics import (
+    ForwardKinematicsManager,
+)
+from semantic_digital_twin.spatial_computations.ik_solver import InverseKinematicsSolver
+from semantic_digital_twin.spatial_computations.raytracer import RayTracer
+from semantic_digital_twin.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Point3,
+)
+from semantic_digital_twin.spatial_types.derivatives import Derivatives
+from semantic_digital_twin.world_description.connections import (
+    Connection6DoF,
+    FixedConnection,
+    ActiveConnection,
+)
+from semantic_digital_twin.world_description.connections import HasUpdateState
+from semantic_digital_twin.world_description.degree_of_freedom import (
+    DegreeOfFreedom,
+)
+from semantic_digital_twin.world_description.visitors import (
+    CollisionBodyCollector,
+    ConnectionCollector,
+)
+from semantic_digital_twin.world_description.world_entity import (
+    Connection,
+    SemanticAnnotation,
+    WorldEntityWithID,
+    KinematicStructureEntity,
+    Region,
+    GenericKinematicStructureEntity,
+    GenericConnection,
+    Body,
+    WorldEntity,
+    GenericWorldEntity,
+    Actuator,
+)
+from semantic_digital_twin.world_description.world_modification import (
+    WorldModification,
+    WorldModelModificationBlock,
+    SetDofHasHardwareInterface,
+    AddDegreeOfFreedomModification,
+    RemoveDegreeOfFreedomModification,
+    AddKinematicStructureEntityModification,
+    RemoveKinematicStructureEntityModification,
+    AddConnectionModification,
+    RemoveConnectionModification,
+    AddSemanticAnnotationModification,
+    RemoveSemanticAnnotationModification,
+    AddActuatorModification,
+    RemoveActuatorModification,
+)
+from semantic_digital_twin.world_description.world_state import WorldState
+
+from semantic_digital_twin.pipeline.mesh_decomposition.base import MeshDecomposer
+from semantic_digital_twin.pipeline.mesh_decomposition.vhacd import VHACDMeshDecomposer
+
+if TYPE_CHECKING:
+    from semantic_digital_twin.spatial_types import GenericSpatialType
+    from semantic_digital_twin.robots.robot_parts import AbstractRobot
+
+
+logger = logging.getLogger("semantic_digital_twin")
+
+GenericSemanticAnnotation = TypeVar(
+    "GenericSemanticAnnotation", bound=SemanticAnnotation
+)
+
+RelocatableType = TypeVar("RelocatableType")
+
+FunctionStack = List[Tuple[Callable, Dict[str, Any]]]
+
+
+class ResetStateContextManager:
+    """
+    A context manager for resetting the state of a given `World` instance.
+
+    This class is designed to allow operations to be performed on a `World` object,
+    ensuring that its state can be safely returned to its previous condition upon
+    leaving the context. The original state of the `World` instance is restored even if
+    an exception occurs within the context, and the state change is notified.
+    """
+
+    def __init__(self, world: World):
+        self.world = world
+
+    def __enter__(self) -> None:
+        self.state = self.world.state._data.copy()
+
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[Exception],
+        exc_tb: Optional[type],
+    ) -> None:
+        self.world.state._data[:] = self.state
+        self.world.notify_state_change()
+
+
+@dataclass
+class WorldStateBatchContextManager:
+    """
+    Context manager collapsing many state changes of a `World` into a single
+    notification.
+
+    Writing a whole configuration one degree of freedom at a time otherwise recomputes
+    the forward kinematics and notifies every observer once per degree of freedom, which
+    turns one logical change into a burst of individual ones.
+
+    A batch interrupted by an error still announces what it wrote before the error,
+    because that state is already live and staying silent would leave the forward
+    kinematics and every observer stale.
+    """
+
+    publish_changes: bool = True
+    """
+    Whether the single notification of this batch publishes the changes it collected.
+    """
+
+    world: World = field(kw_only=True, repr=False)
+    """
+    The world whose state changes are collected.
+    """
+
+    def __enter__(self) -> WorldStateBatchContextManager:
+        if self.world._state_change_batch_depth == 0:
+            self.world._state_change_batch_publishes_changes = self.publish_changes
+        elif self.world._state_change_batch_publishes_changes != self.publish_changes:
+            raise MismatchingPublishChangesAttribute(
+                self.world._state_change_batch_publishes_changes, self.publish_changes
+            )
+        self.world._state_change_batch_depth += 1
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[Exception],
+        exc_tb: Optional[type],
+    ) -> None:
+        self.world._state_change_batch_depth -= 1
+        if self.world._state_change_batch_depth > 0:
+            return
+        has_collected_change = self.world._state_change_batch_has_collected_change
+        publish_changes = self.world._state_change_batch_publishes_changes
+        self.world._state_change_batch_has_collected_change = False
+        self.world._state_change_batch_publishes_changes = True
+        if not has_collected_change:
+            return
+        self.world.notify_state_change(publish_changes=publish_changes)
+
+
+@dataclass
+class WorldModelUpdateContextManager:
+    """
+    Context manager for updating the state of a given `World` instance.
+
+    This class manages that updates to the world within the context of this class only
+    trigger recomputations after all desired updates have been performed.
+    """
+
+    publish_changes: bool = True
+    """
+    Whether to publish the changes made to the world after exiting the context.
+    """
+
+    world: World = field(kw_only=True, repr=False)
+    """
+    The world to manage updates for.
+    """
+
+    _id: UUID = field(default_factory=uuid.uuid4)
+    """
+    Unique identifier for this context manager instance, used to track active world
+    model updates.
+    """
+
+    def __enter__(self):
+        self.world._world_lock.acquire()
+        model_manager = self.world._model_manager
+        if model_manager._current_modifications_will_be_published is None:
+            model_manager._current_modifications_will_be_published = (
+                self.publish_changes
+            )
+
+        if (
+            not model_manager._current_modifications_will_be_published
+            == self.publish_changes
+        ):
+            raise MismatchingPublishChangesAttribute(
+                model_manager._current_modifications_will_be_published,
+                self.publish_changes,
+            )
+
+        self.world.world_is_being_modified = True
+        model_manager._active_world_model_update_context_manager_ids.append(self._id)
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Whether deferred network publications should be flushed after the lock is released, will be set true when
+        # existing the last modification block.
+        run_pending_publications = False
+        try:
+            # If error, clean up before re-raising
+            if exc_val:
+                model_manager = self.world._model_manager
+                model_manager._active_world_model_update_context_manager_ids.remove(
+                    self._id
+                )
+                # the modifications applied before the error are not rolled back,
+                # so cached queries must be invalidated
+                clear_memoization_cache(self.world)
+                if not model_manager._active_world_model_update_context_manager_ids:
+                    # discard publications buffered before the error; they must not be sent
+                    model_manager.pending_publications.clear()
+                    if len(model_manager.current_model_modification_block):
+                        raise BrokenWorldModificationHistoryError(
+                            world=self.world, potential_cause=exc_val
+                        )
+                    model_manager.current_model_modification_block = (
+                        WorldModelModificationBlock()
+                    )
+                    self.world.world_is_being_modified = False
+                    model_manager._current_modifications_will_be_published = None
+                raise exc_val
+
+            self.world.delete_orphaned_dofs()
+            model_manager = self.world._model_manager
+            model_manager._active_world_model_update_context_manager_ids.remove(
+                self._id
+            )
+            # if there are still open context managers dont publish yet
+            if model_manager._active_world_model_update_context_manager_ids:
+                return
+
+            # only clean up caches in the last modification block
+            clear_memoization_cache(self.world)
+
+            model_manager.model_modification_blocks.append(
+                model_manager.current_model_modification_block
+            )
+            model_manager.current_model_modification_block = (
+                WorldModelModificationBlock()
+            )
+            try:
+                if exc_type is None:
+                    self.world._notify_model_change(
+                        publish_changes=self.publish_changes
+                    )
+                    run_pending_publications = True
+            finally:
+                self.world.world_is_being_modified = False
+                model_manager._current_modifications_will_be_published = None
+        finally:
+            # Claim the turn of this modification in the stream of publications before the
+            # world lock is released, so that a thread waiting for that lock cannot publish
+            # what it then reads before this modification has published its own changes.
+            with self.world._model_manager.publishing_in_order():
+                # keep outside the if block, as it needs to be released as many times as it was acquired
+                self.world._world_lock.release()
+                # Flush deferred publications only after the lock is fully released, so that
+                # the modification they describe is complete and readable by whoever reacts to them.
+                if run_pending_publications:
+                    self.world._model_manager.flush_pending_publications()
+
+
+def atomic_world_modification(func=None, modification: Type[WorldModification] = None):
+    """
+    Decorator for ensuring atomicity in world modification operations.
+
+    This decorator ensures that no other atomic world modification is in progress when the decorated function is executed.
+    It records the function call along with its arguments for potential replay or tracking purposes.
+    If an operation is attempted when the world is locked, it raises an appropriate exception.
+
+    Raises:
+        AtomicWorldModificationNotAtomic: If the world is already locked during the execution of another atomic operation.
+    """
+
+    def _decorate(func):
+
+        sig = inspect.signature(func)
+
+        @wraps(func)
+        def wrapper(current_world: World, *args, **kwargs):
+            if current_world._current_active_atomic_world_modification is not None:
+                raise AtomicWorldModificationNotAtomic(func, current_world)
+            if (
+                not current_world._model_manager._active_world_model_update_context_manager_ids
+            ):
+                raise MissingWorldModificationContextError(func)
+            current_world._current_active_atomic_world_modification = func
+
+            # bind args and kwargs
+            bound = sig.bind_partial(
+                current_world, *args, **kwargs
+            )  # use bind() if you require all args
+            bound.apply_defaults()  # fill in default values
+
+            # record function call
+            # Build a dict with all arguments (including positional), excluding 'self'
+            bound_args = dict(bound.arguments)
+            bound_args.pop("self", None)
+            recorded_modification = modification.from_kwargs(bound_args)
+
+            try:
+                result = func(current_world, *args, **kwargs)
+            finally:
+                current_world._current_active_atomic_world_modification = None
+            # only record the modification after the function succeeded, otherwise a
+            # caught exception leaves a phantom modification in the history
+            current_world.get_world_model_manager().current_model_modification_block.append(
+                recorded_modification
+            )
+            return result
+
+        return wrapper
+
+    if func is None:
+        return _decorate
+
+    return _decorate(func)
+
+
+@dataclass(frozen=True)
+class ModelRevision:
+    """
+    Identifies one state of the kinematic structure.
+
+    Two revisions comparing equal mean the structure has not changed in between, so
+    anything derived from it - compiled forward kinematics, for example - is still
+    valid.
+    """
+
+    version: int
+    """
+    :attr:`WorldModelManager.version`, which only advances when a modification block
+    ends.
+    """
+
+    modifications_in_open_block: int
+    """
+    How many modifications the currently open block has recorded so far.
+
+    Distinguishes revisions *within* a still-open block, where ``version`` cannot yet
+    have advanced.
+    """
+
+
+@dataclass
+class WorldModelManager:
+    """
+    Manages the world model version and modification blocks.
+    """
+
+    version: int = 0
+    """
+    The version of the model.
+
+    This increases whenever a change to the kinematic model is made. Mostly triggered by
+    adding/removing bodies and connections.
+    """
+
+    model_modification_blocks: List[WorldModelModificationBlock] = field(
+        default_factory=list, repr=False, kw_only=True
+    )
+    """
+    All atomic modifications applied to the world.
+
+    Tracked by @atomic_world_modification. The field itself is a list of lists. The
+    outer lists indicates when to trigger the model/state change callbacks. The inner
+    list is a block of modifications where change callbacks must not be called in
+    between.
+    """
+
+    current_model_modification_block: WorldModelModificationBlock = field(
+        default_factory=WorldModelModificationBlock, repr=False, init=False
+    )
+    """
+    The current modification block called within one context of
+    @atomic_world_modification.
+    """
+
+    model_change_callbacks: List[ModelChangeCallback] = field(
+        default_factory=list, repr=False, init=False
+    )
+    """
+    Callbacks to be called when the model of the world changes.
+    """
+
+    _active_world_model_update_context_manager_ids: List[UUID] = field(
+        init=False, default_factory=list, repr=False
+    )
+    """
+    List of active world model managers currently modifying this world.
+    """
+
+    _current_modifications_will_be_published: Optional[bool] = field(
+        init=False, default=None
+    )
+    """
+    Indicates if the current modifications will be published via a synchronizer.
+
+    If None, then there are no active contexts.
+    """
+
+    pending_publications: List[Callable[[], None]] = field(
+        init=False, default_factory=list, repr=False
+    )
+    """
+    Network publications deferred while the world is being modified.
+
+    They are flushed (executed) only after ``_world_lock`` has been released, so that
+    what they describe is complete by the time it leaves this process.
+    """
+
+    _publication_order_lock: threading.RLock = field(
+        init=False, default_factory=threading.RLock, repr=False
+    )
+    """
+    Serializes the publications leaving this world.
+
+    Reentrant, because flushing the deferred publications holds it while each of them
+    publishes.
+    """
+
+    @contextmanager
+    def publishing_in_order(self) -> Iterator[None]:
+        """
+        Claim the turn of the caller in the stream of publications of this world.
+
+        A modification claims its turn before it releases ``_world_lock``, so a thread
+        that was waiting for that lock cannot announce the state it then reads before
+        the model change it belongs to has been published.
+        """
+        with self._publication_order_lock:
+            yield
+
+    @property
+    def revision(self) -> ModelRevision:
+        """
+        :return: An identifier for the current state of the kinematic structure.
+        """
+        return ModelRevision(
+            version=self.version,
+            modifications_in_open_block=len(self.current_model_modification_block),
+        )
+
+    def update_model_version_and_notify_callbacks(self, **kwargs) -> None:
+        """
+        Notifies the system of a model change and updates necessary states, caches, and
+        forward kinematics expressions while also triggering registered callbacks for
+        model changes.
+        """
+        self.version += 1
+        for callback in list(self.model_change_callbacks):
+            callback.notify_model_change(**kwargs)
+
+    def flush_pending_publications(self) -> None:
+        """
+        Execute and clear all publications that were deferred during a world
+        modification.
+
+        Must be called *after* ``_world_lock`` is released, so that the modification the
+        publications describe is complete.
+        """
+        pending = self.pending_publications
+        self.pending_publications = []
+        for publish in pending:
+            publish()
+
+
+_LRU_CACHE_SIZE: int = 2048
+
+
+@dataclass
+class World(HasSimulatorProperties):
+    """
+    A class representing the world.
+
+    The world manages a set of kinematic structure entities and connections represented
+    as a tree-like graph. The nodes represent kinematic structure entities in the world,
+    and the edges represent joins between them.
+    """
+
+    kinematic_structure: rx.PyDAG[KinematicStructureEntity] = field(
+        default_factory=lambda: rx.PyDAG(multigraph=False), kw_only=True, repr=False
+    )
+    """
+    The kinematic structure of the world.
+
+    The kinematic structure is a tree shaped directed graph where the nodes represent
+    kinematic structure entities  in the world, and the edges represent connections
+    between them.
+    """
+
+    semantic_annotations: List[SemanticAnnotation] = field(
+        default_factory=list, repr=False
+    )
+    """
+    All semantic annotations the world is aware of.
+    """
+
+    degrees_of_freedom: List[DegreeOfFreedom] = field(default_factory=list)
+    """
+    All degrees of freedom in the world.
+    """
+
+    actuators: List[Actuator] = field(default_factory=list)
+    """
+    All actuators in the world.
+    """
+
+    state: WorldState = field(init=False)
+    """
+    2d array where rows are derivatives and columns are dof values for that derivative.
+    """
+
+    world_is_being_modified: bool = False
+    """
+    Is set to True, when a world.modify_world context is used.
+    """
+
+    _state_change_batch_depth: int = field(default=0, init=False, repr=False)
+    """
+    How many nested :meth:`batch_state_changes` contexts are currently open.
+    """
+
+    _state_change_batch_has_collected_change: bool = field(
+        default=False, init=False, repr=False
+    )
+    """
+    Whether a state change was notified while the current batch is open.
+    """
+
+    _state_change_batch_publishes_changes: bool = field(
+        default=True, init=False, repr=False
+    )
+    """
+    The ``publish_changes`` the currently open batch was entered with.
+    """
+
+    name: Optional[str] = None
+    """
+    Name of the world.
+
+    May act as default namespace for all bodies and semantic annotations in the world
+    which do not have a prefix.
+    """
+
+    collision_manager: CollisionManager = field(init=False)
+    """
+    Class that manages collision detection related stuff for this world.
+    """
+
+    mesh_decomposer: Optional[MeshDecomposer] = field(
+        default_factory=VHACDMeshDecomposer, kw_only=True
+    )
+    """
+    Decomposer used by the Bullet collision detector to split non-convex meshes into
+    convex parts.
+
+    Defaults to VHACD; pass ``None`` to skip decomposition (non-convex meshes will then
+    be treated as their convex hulls).
+    """
+
+    _current_active_atomic_world_modification: Optional[Callable] = field(
+        init=False, default=None
+    )
+    """
+    The function that is currently atomically modifying the world and hence locking it.
+
+    This acts like a flag that indicates if an atomic world operation is currently being
+    executed. See `atomic_world_modification` for more information.
+    """
+
+    _id: UUID = field(init=False, default_factory=uuid.uuid4)
+    """
+    Unique identifier for this world instance.
+    """
+
+    _model_manager: WorldModelManager = field(
+        default_factory=WorldModelManager, repr=False
+    )
+    """
+    Manages the world model version and modification blocks.
+    """
+
+    _forward_kinematic_manager: ForwardKinematicsManager = field(
+        init=False, default=None, repr=False
+    )
+    """
+    Manages forward kinematics computations for the world.
+    """
+
+    _world_entity_hash_table: Dict = field(init=False, default_factory=dict)
+    """
+    Lookup table to get a world entity by its hash.
+    """
+
+    _world_lock: threading.RLock = field(
+        default_factory=threading.RLock, init=False, repr=False
+    )
+    """
+    Lock used to prevent multiple threads from modifying the world at the same time.
+    """
+
+    def __post_init__(self):
+        self.state = WorldState(_world=self)
+        self._forward_kinematic_manager = ForwardKinematicsManager(_world=self)
+        self.collision_manager = CollisionManager(
+            _world=self,
+            collision_detector=BulletCollisionDetector(
+                _world=self, mesh_decomposer=self.mesh_decomposer
+            ),
+        )
+        self.collision_manager.add_to_world(self)
+
+    @classmethod
+    def create_with_root_body(
+        cls, root_body_name: str = "map", prefix: Optional[str] = None
+    ) -> World:
+        """
+        Creates a new instance of the World class with a root body.
+
+        :param root_body_name: The root body's name.
+        :param prefix: Optional namespace prefix for the root body's name.
+        """
+        root_body = Body(name=PrefixedName(root_body_name, prefix))
+        world = World()
+        with world.modify_world():
+            world.add_body(root_body)
+        return world
+
+    def force_root_name(self, name: PrefixedName) -> None:
+        """
+        Rename the world's root body.
+
+        :param name: The new name for the root body.
+        """
+        with self.modify_world():
+            self.root.update_name(name)
+
+    def __hash__(self):
+        return hash((id(self), self._model_manager.version))
+
+    def __str__(self):
+        return f"{self.__class__.__name__} v{self._model_manager.version}.{self.state.version}."
+
+    def validate(self) -> bool:
+        """
+        Validate the world.
+
+        The world must be a tree.
+        :return: True if the world is valid, raises a WorldValidationError otherwise.
+        """
+        if self.is_empty():
+            return True
+        if len(self.kinematic_structure_entities) != (len(self.connections) + 1):
+            raise WorldIsNotATreeError(world=self)
+        if not rx.is_weakly_connected(self.kinematic_structure):
+            raise WorldIsNotATreeError(world=self)
+        self._validate_dofs()
+        return True
+
+    def _validate_dofs(self):
+        actual_dofs = {
+            dof for connection in self.connections for dof in connection.dofs
+        }
+        if actual_dofs != set(self.degrees_of_freedom):
+            raise WorldContainsOrphanedDegreeOfFreedom(
+                world=self, actual_dofs=actual_dofs
+            )
+
+    # %% Properties
+    @property
+    @memoize
+    def root(self) -> Optional[KinematicStructureEntity]:
+        """
+        The root of the world is the unique node with in-degree 0.
+
+        :return: The root of the world.
+        """
+        if self.is_empty():
+            return None
+
+        possible_roots = [
+            node
+            for node in self.kinematic_structure_entities
+            if self.kinematic_structure.in_degree(node.index) == 0
+        ]
+        assert (
+            len(possible_roots) == 1
+        ), f"A World must have exactly one root. Found {len(possible_roots)} possible roots: {possible_roots}."
+
+        return possible_roots[0]
+
+    @property
+    def active_degrees_of_freedom(self) -> List[DegreeOfFreedom]:
+        """
+        The deduplicated, order-preserving list of active degrees of freedom across all
+        connections.
+        """
+        return list(
+            dict.fromkeys(
+                dof for connection in self.connections for dof in connection.active_dofs
+            )
+        )
+
+    @property
+    def passive_degrees_of_freedom(self) -> List[DegreeOfFreedom]:
+        """
+        The deduplicated, order-preserving list of passive degrees of freedom across all
+        connections.
+        """
+        return list(
+            dict.fromkeys(
+                dof
+                for connection in self.connections
+                for dof in connection.passive_dofs
+            )
+        )
+
+    @property
+    def regions(self) -> List[Region]:
+        """
+        :return: A list of all regions in the world.
+        """
+        return self.get_kinematic_structure_entity_by_type(Region)
+
+    @property
+    def robot_bodies_with_collision(self) -> List[Body]:
+        from semantic_digital_twin.robots.robot_parts import AbstractRobot
+
+        return [
+            body
+            for robot in self.get_semantic_annotations_by_type(AbstractRobot)
+            for body in robot.bodies_with_collision
+        ]
+
+    @property
+    def robot_body_to_robot_mapping(self) -> dict[Body, AbstractRobot]:
+        from semantic_digital_twin.robots.robot_parts import AbstractRobot
+
+        return {
+            body: robot
+            for robot in self.get_semantic_annotations_by_type(AbstractRobot)
+            for body in robot.bodies
+        }
+
+    @property
+    def bodies(self) -> List[Body]:
+        """
+        :return: A list of all bodies in the world.
+        """
+        return self.get_kinematic_structure_entity_by_type(Body)
+
+    @property
+    def bodies_with_collision(self) -> List[Body]:
+        return [b for b in self.bodies if b.has_collision()]
+
+    @property
+    def bodies_topologically_sorted(self) -> List[Body]:
+        return [
+            body
+            for body in self.kinematic_structure_entities_topologically_sorted
+            if isinstance(body, Body)
+        ]
+
+    @property
+    def connections_topologically_sorted(self) -> List[Connection]:
+        return [
+            kse.parent_connection
+            for kse in self.kinematic_structure_entities_topologically_sorted[1:]
+        ]
+
+    @property
+    def kinematic_structure_entities(self) -> List[KinematicStructureEntity]:
+        """
+        :return: A list of all bodies in the world.
+        """
+        return list(self.kinematic_structure.nodes())
+
+    @property
+    def kinematic_structure_entities_topologically_sorted(
+        self,
+    ) -> List[KinematicStructureEntity]:
+        """
+        Return a list of all kinematic_structure_entities in the world, sorted
+        topologically.
+        """
+        indices = rx.topological_sort(self.kinematic_structure)
+        return [self.kinematic_structure[index] for index in indices]
+
+    @property
+    def connections(self) -> List[Connection]:
+        """
+        :return: A list of all connections in the world.
+        """
+        return list(self.kinematic_structure.edges())
+
+    @property
+    def controlled_connections(self) -> List[ActiveConnection]:
+        """
+        A subset of the robot's connections that are controlled by a controller.
+        """
+        return [
+            connection for connection in self.connections if connection.is_controlled
+        ]
+
+    @property
+    def semantic_annotations_topologically_sorted(self) -> List[SemanticAnnotation]:
+        """
+        Return a list of all semantic annotations in the world, sorted topologically
+        based on their dependencies.
+        """
+        return self._topologically_sort_semantic_annotations(self.semantic_annotations)
+
+    def _topologically_sort_semantic_annotations(
+        self,
+        annotations: List[SemanticAnnotation],
+    ) -> List[SemanticAnnotation]:
+        """
+        Sort semantic annotations in topological order based on their dependencies.
+        Annotations with no dependencies come first, followed by annotations that depend
+        on them.
+
+        :param annotations: List of semantic annotations to sort.
+        :return: Sorted list of semantic annotations in dependency order.
+        """
+        annotation_set = set(annotations)
+        dependency_map = {}
+
+        for annotation in annotations:
+            deps = annotation._referenced_semantic_annotations()
+            # Only consider dependencies that are in our list
+            dependency_map[annotation] = deps & annotation_set
+
+        # Perform topological sort using Kahn's algorithm https://www.geeksforgeeks.org/dsa/topological-sorting-indegree-based-solution/
+        sorted_annotations = []
+        no_dependency_queue = [
+            ann for ann in annotations if len(dependency_map[ann]) == 0
+        ]
+
+        while no_dependency_queue:
+            current = no_dependency_queue.pop(0)
+            sorted_annotations.append(current)
+
+            # Find annotations that depend on the current one
+            for annotation in annotations:
+                if current not in dependency_map[annotation]:
+                    continue
+
+                dependency_map[annotation].remove(current)
+                if len(dependency_map[annotation]) == 0:
+                    no_dependency_queue.append(annotation)
+
+        if len(sorted_annotations) != len(annotations):
+            raise SemanticAnnotationCircularDependencyError(sorted_annotations)
+
+        return sorted_annotations
+
+    # %% Adding WorldEntities to the World
+    def add_connection(self, connection: Connection) -> None:
+        """
+        Add a connection and the entities it connects to the world.
+
+        :param connection: The connection to add.
+        """
+        self._raise_error_if_belongs_to_other_world(connection)
+        if not self.is_connection_in_world(connection):
+            self.add_kinematic_structure_entity(connection.parent)
+            self.add_kinematic_structure_entity(connection.child)
+            self._add_connection(connection)
+
+    @atomic_world_modification(modification=AddConnectionModification)
+    def _add_connection(self, connection: Connection):
+        """
+        Adds a connection to the kinematic structure.
+
+        The method updates the connection instance to associate it with the current
+        world instance and reflects the connection in the kinematic structure. Do not
+        call this function directly, use add_connection instead.
+
+        :param connection: The connection to be added to the kinematic structure.
+        """
+        connection.add_to_world(self)
+        self.kinematic_structure.add_edge(
+            connection.parent.index, connection.child.index, connection
+        )
+
+    def add_body(
+        self,
+        body: KinematicStructureEntity,
+    ):
+        return self.add_kinematic_structure_entity(body)
+
+    def add_region(
+        self,
+        region: KinematicStructureEntity,
+    ):
+        return self.add_kinematic_structure_entity(region)
+
+    def add_kinematic_structure_entity(
+        self,
+        kinematic_structure_entity: KinematicStructureEntity,
+    ):
+        """
+        Add a kinematic_structure_entity to the world if it does not exist already.
+
+        :param kinematic_structure_entity: The kinematic_structure_entity to add.
+        """
+        self._raise_error_if_belongs_to_other_world(kinematic_structure_entity)
+        if not self.is_kinematic_structure_entity_in_world(kinematic_structure_entity):
+            self._add_kinematic_structure_entity(kinematic_structure_entity)
+
+    @atomic_world_modification(modification=AddKinematicStructureEntityModification)
+    def _add_kinematic_structure_entity(
+        self, kinematic_structure_entity: KinematicStructureEntity
+    ):
+        """
+        Add a kinematic_structure_entity to the world.
+
+        Do not call this function directly, use add_kinematic_structure_entity instead.
+
+        :param kinematic_structure_entity: The kinematic_structure_entity to add.
+        """
+        kinematic_structure_entity.add_to_world(self)
+        kinematic_structure_entity.index = self.kinematic_structure.add_node(
+            kinematic_structure_entity
+        )
+
+    def add_degree_of_freedom(self, dof: DegreeOfFreedom) -> None:
+        """
+        Adds degree of freedom in the world.
+
+        This is used to register DoFs that are not created by the world, but are part of
+        the world model.
+        :param dof: The degree of freedom to register.
+        """
+        self._raise_error_if_belongs_to_other_world(dof)
+        if not self.is_degree_of_freedom_in_world(dof):
+            self._add_degree_of_freedom(dof)
+
+    @atomic_world_modification(modification=AddDegreeOfFreedomModification)
+    def _add_degree_of_freedom(self, dof: DegreeOfFreedom) -> None:
+        """
+        Adds a degree of freedom to the current system and initializes its state.
+
+        This method modifies the internal state of the system by adding a new degree of
+        freedom (DOF). It sets the initial position of the DOF based on its configured
+        lower and upper position limits, ensuring it respects both constraints. The DOF
+        is then added to the list of degrees of freedom in the system.
+
+        :param dof: The degree of freedom to be added to the system.
+        :return: None
+        """
+        dof.add_to_world(self)
+        self.state.add_degree_of_freedom(dof)
+        self.degrees_of_freedom.append(dof)
+
+    def add_semantic_annotation(self, semantic_annotation: SemanticAnnotation) -> None:
+        """
+        Adds a semantic annotation to the current list of semantic annotations if it
+        doesn't already exist.
+
+        :param semantic_annotation: The semantic annotation instance to be added. Its
+            name must be unique within the current context.
+        """
+        self._raise_error_if_belongs_to_other_world(semantic_annotation)
+        if self.is_semantic_annotation_in_world(semantic_annotation):
+            return
+        self._add_semantic_annotation(semantic_annotation)
+
+    def add_semantic_annotation_recursively(
+        self, semantic_annotation: SemanticAnnotation
+    ) -> None:
+        """
+        Recursively adds a semantic annotation to the current list of semantic
+        annotations if it doesn't already exist. Recursively traverses the semantic
+        annotation's fields and adds any nested semantic annotations as well. Fields are
+        added to the world first to ensure a valid modification history.
+
+        :param semantic_annotation: The semantic annotation instance to be added. Its
+            name must be unique within the current context.
+        """
+        self._raise_error_if_belongs_to_other_world(semantic_annotation)
+        if self.is_semantic_annotation_in_world(semantic_annotation):
+            return
+        introspector = DataclassOnlyIntrospector()
+
+        for field_ in introspector.discover(semantic_annotation.__class__):
+            value = getattr(semantic_annotation, field_.public_name)
+
+            if isinstance(value, list_like_classes):
+                for value_ in value:
+                    if not isinstance(value_, SemanticAnnotation):
+                        continue
+                    self.add_semantic_annotation_recursively(value_)
+            elif isinstance(value, SemanticAnnotation):
+                self.add_semantic_annotation_recursively(value)
+        self._add_semantic_annotation(semantic_annotation)
+
+    def add_semantic_annotations(
+        self,
+        semantic_annotations: List[SemanticAnnotation],
+    ) -> None:
+        """
+        Adds a list of semantic annotations to the current list of semantic annotations
+        if they don't already exist.
+
+        :param semantic_annotations: The list of semantic annotations to be added.
+        :param skip_duplicates: Whether to raise an error or not when a semantic
+            annotation already exists.
+        """
+        for semantic_annotation in semantic_annotations:
+            self.add_semantic_annotation(
+                semantic_annotation,
+            )
+
+    @atomic_world_modification(modification=AddSemanticAnnotationModification)
+    def _add_semantic_annotation(self, semantic_annotation: SemanticAnnotation):
+        """
+        The atomic method that adds a semantic annotation to the current list of
+        semantic annotations.
+        """
+        semantic_annotation.add_to_world(self)
+        self.semantic_annotations.append(semantic_annotation)
+        self._world_entity_hash_table[hash(semantic_annotation)] = semantic_annotation
+
+    def add_actuator(self, actuator: Actuator) -> None:
+        """
+        Adds an actuator in the world.
+
+        This is used to register Actuators that are not created by the world, but are
+        part of the world model.
+
+        :param actuator: The actuator to register.
+        """
+        if actuator._world is self and actuator in self.actuators:
+            return
+        if actuator._world is not None:
+            raise AlreadyBelongsToAWorldError(
+                world=actuator._world, type_trying_to_add=Actuator
+            )
+        self._add_actuator(actuator)
+
+    @atomic_world_modification(modification=AddActuatorModification)
+    def _add_actuator(self, actuator: Actuator) -> None:
+        """
+        Adds an actuator to the current system.
+
+        This method modifies the internal state of the system by adding a new actuator.
+        The actuator is then added to the list of actuators in the system.
+
+        :param actuator: The actuator to be added to the system.
+        :return: None
+        """
+        actuator.add_to_world(self)
+        self.actuators.append(actuator)
+
+    def _raise_error_if_belongs_to_other_world(self, world_entity: WorldEntity):
+        """
+        Raises an AlreadyBelongsToAWorldError if the world_entity already belongs to
+        another world.
+
+        :param world_entity:
+        """
+        if world_entity._world is not None and world_entity._world is not self:
+            raise AlreadyBelongsToAWorldError(
+                world=world_entity._world, type_trying_to_add=type(world_entity)
+            )
+
+    # %% Remove WorldEntities from the World
+    def remove_connection(self, connection: Connection) -> None:
+        """
+        Removes a connection.
+
+        Might create disconnected entities, so make sure to add a new connection or delete the child kinematic_structure_entity.
+
+        Removing a connection this world does not own does nothing and is not
+        recorded, so a history can never open with the removal of a connection
+        nothing added.
+
+        :param connection: The connection to be removed
+
+        .. note::
+
+            A connection whose parent or child was removed first has already left the
+            world with it, so removing it afterwards does nothing.
+        """
+        if connection._world is not self:
+            return
+        self._remove_connection(connection)
+
+    @atomic_world_modification(modification=RemoveConnectionModification)
+    def _remove_connection(self, connection: Connection) -> None:
+        parent_index = connection.parent.index
+        child_index = connection.child.index
+        if parent_index is not None and child_index is not None:
+            try:
+                self.kinematic_structure.remove_edge(parent_index, child_index)
+            except NoEdgeBetweenNodes:
+                pass
+        connection.remove_from_world()
+
+    def remove_kinematic_structure_entity(
+        self, kinematic_structure_entity: KinematicStructureEntity
+    ) -> None:
+        """
+        Removes a kinematic_structure_entity from the world.
+
+        Removing a kinematic_structure_entity this world does not own does nothing and
+        is not recorded, so a history can never open with the removal of a
+        kinematic_structure_entity nothing added.
+
+        :param kinematic_structure_entity: The kinematic_structure_entity to remove.
+        """
+        if kinematic_structure_entity._world is not self:
+            return
+        self._remove_kinematic_structure_entity(kinematic_structure_entity)
+
+    @atomic_world_modification(modification=RemoveKinematicStructureEntityModification)
+    def _remove_kinematic_structure_entity(
+        self, kinematic_structure_entity: KinematicStructureEntity
+    ) -> None:
+        """
+        Removes a kinematic_structure_entity from the world.
+
+        Do not call this function directly, use `remove_kinematic_structure_entity`
+        instead.
+
+        Connections still attached to it leave the world with it, as removing its node
+        removes their edges from the kinematic structure.
+
+        :param kinematic_structure_entity: The kinematic_structure_entity to remove.
+        """
+        index = kinematic_structure_entity.index
+        attached_edges = chain(
+            self.kinematic_structure.in_edges(index),
+            self.kinematic_structure.out_edges(index),
+        )
+        for _, _, connection in attached_edges:
+            connection.remove_from_world()
+        self.kinematic_structure.remove_node(index)
+        kinematic_structure_entity.remove_from_world()
+
+    def remove_degree_of_freedom(self, dof: DegreeOfFreedom) -> None:
+        """
+        Removes a degree of freedom from the world.
+
+        Removing a degree of freedom this world does not own does nothing and is not
+        recorded, so a history can never open with the removal of a degree of freedom
+        nothing added.
+
+        :param dof: The degree of freedom to remove.
+        """
+        if dof._world is not self:
+            return
+        self._remove_degree_of_freedom(dof)
+        clear_memoization_cache(self)
+
+    @atomic_world_modification(modification=RemoveDegreeOfFreedomModification)
+    def _remove_degree_of_freedom(self, dof: DegreeOfFreedom) -> None:
+        dof.remove_from_world()
+        self.degrees_of_freedom.remove(dof)
+        del self.state[dof.id]
+
+    def remove_semantic_annotation(
+        self, semantic_annotation: SemanticAnnotation
+    ) -> None:
+        """
+        Removes a semantic annotation from the current list of semantic annotations if
+        it exists.
+
+        Removing a semantic annotation this world does not own does nothing and is not
+        recorded, so a history can never open with the removal of a semantic annotation
+        nothing added.
+
+        :param semantic_annotation: The semantic annotation instance to be removed.
+        """
+        if semantic_annotation._world is not self:
+            return
+        self._remove_semantic_annotation(semantic_annotation)
+
+    @atomic_world_modification(modification=RemoveSemanticAnnotationModification)
+    def _remove_semantic_annotation(self, semantic_annotation: SemanticAnnotation):
+        """
+        The atomic method that removes a semantic annotation from the current list of
+        semantic annotations.
+        """
+        self.semantic_annotations.remove(semantic_annotation)
+        semantic_annotation.remove_from_world()
+
+    def remove_actuator(self, actuator: Actuator) -> None:
+        """
+        Removes an actuator from the current list of actuators if it exists.
+
+        Removing an actuator this world does not own does nothing and is not recorded,
+        so a history can never open with the removal of an actuator nothing added.
+
+        :param actuator: The actuator instance to be removed.
+        """
+        if actuator._world is not self:
+            return
+        self._remove_actuator(actuator)
+
+    @atomic_world_modification(modification=RemoveActuatorModification)
+    def _remove_actuator(self, actuator: Actuator) -> None:
+        """
+        The atomic method that removes an actuator from the current list of actuators.
+        """
+        actuator.remove_from_world()
+        self.actuators.remove(actuator)
+
+    def remove_branch_from_world(self, root: KinematicStructureEntity):
+        """
+        Removes the subtree rooted at ``root`` from the world.
+
+        Removes ``root`` together with all of its descendant kinematic structure
+        entities, every connection within the branch, and the branch's connection to its
+        parent. The removals are performed atomically.
+
+        :param root: The root entity of the branch to be removed.
+        """
+        kinematic_structure_entities = self.get_kinematic_structure_entities_of_branch(
+            root
+        )
+        connections = self.get_connections_of_branch(root)
+        parent_connection = root.parent_connection
+        connections = (
+            connections + [parent_connection]
+            if parent_connection is not None
+            else connections
+        )
+        with self.modify_world():
+            for connection in connections:
+                self.remove_connection(connection)
+            for kinematic_structure_entity in kinematic_structure_entities:
+                self.remove_kinematic_structure_entity(kinematic_structure_entity)
+
+    # %% Other Atomic World Modifications
+    @atomic_world_modification(modification=SetDofHasHardwareInterface)
+    def set_dofs_has_hardware_interface(
+        self, dofs: Iterable[DegreeOfFreedom], value: bool
+    ):
+        """
+        Sets whether the specified degrees of freedom (DOFs) have a hardware interface
+        or not.
+
+        This method allows controlling the presence of a hardware interface for multiple
+        DOFs at once. The modification is atomic, ensuring that all DOFs are updated as
+        a single operation and the state remains consistent. The method iterates through
+        the given DOFs and updates their `has_hardware_interface` attribute to the
+        provided value.
+
+        :param dofs: An iterable collection of DegreeOfFreedom instances whose
+            `has_hardware_interface` attribute is to be updated.
+        :param value: A boolean value indicating whether the DOFs should have a hardware
+            interface (True) or not (False).
+        """
+        for dof in dofs:
+            dof.has_hardware_interface = value
+
+    # %% Getter
+    def get_connection(
+        self, parent: KinematicStructureEntity, child: KinematicStructureEntity
+    ) -> Connection:
+        """
+        Retrieves the connection between a parent and child kinematic_structure_entity
+        in the kinematic structure.
+        """
+        return self.kinematic_structure.get_edge_data(parent.index, child.index)
+
+    @memoize
+    def get_connections_by_type(
+        self, connection_type: Type[GenericConnection]
+    ) -> List[GenericConnection]:
+        """
+        Retrieves the connections of a given type.
+
+        :param connection_type: The type of connection to retrieve.
+        :return: A list of connections of the given type.
+        """
+        return self._get_world_entity_by_type_from_iterable(
+            connection_type, self.connections
+        )
+
+    @memoize
+    def get_semantic_annotations_by_type(
+        self, semantic_annotation_type: Type[GenericSemanticAnnotation]
+    ) -> List[GenericSemanticAnnotation]:
+        """
+        Retrieves all semantic annotations of a specific type from the world.
+
+        :param semantic_annotation_type: The class (type) of the semantic annotations to
+            search for.
+        :return: A list of `SemanticAnnotation` objects that match the given type.
+        """
+        return self._get_world_entity_by_type_from_iterable(
+            semantic_annotation_type, self.semantic_annotations
+        )
+
+    @memoize
+    def get_kinematic_structure_entity_by_type(
+        self, entity_type: Type[GenericKinematicStructureEntity]
+    ) -> List[GenericKinematicStructureEntity]:
+        """
+        Retrieves all kinematic structure entities of a specific type from the world.
+
+        :param entity_type: The class (type) of the kinematic structure entities to
+            search for.
+        :return: A list of `KinematicStructureEntity` objects that match the given type.
+        """
+        return self._get_world_entity_by_type_from_iterable(
+            entity_type, self.kinematic_structure_entities
+        )
+
+    @staticmethod
+    def _get_world_entity_by_type_from_iterable(
+        world_entity_type: Type[GenericWorldEntity], iterable: Iterable[WorldEntity]
+    ) -> List[GenericWorldEntity]:
+        """
+        Helper function to retrieve all world entities of a specific type from an
+        iterable.
+
+        :param world_entity_type: The type of the world entity.
+        :param iterable: The iterable to search for the world entity, for example
+            self.connections or self.kinematic_structure_entities.
+        :return: A list of `WorldEntity` objects that match the given type.
+        """
+        return [entity for entity in iterable if isinstance(entity, world_entity_type)]
+
+    @memoize
+    def get_semantic_annotation_by_name(
+        self, name: Union[str, PrefixedName]
+    ) -> SemanticAnnotation:
+        semantic_annotation: SemanticAnnotation = (
+            self._get_world_entity_by_name_from_iterable(
+                name, self.semantic_annotations
+            )
+        )
+        return semantic_annotation
+
+    @memoize
+    def get_kinematic_structure_entity_by_name(
+        self, name: Union[str, PrefixedName]
+    ) -> KinematicStructureEntity:
+        return self._get_world_entity_by_name_from_iterable(
+            name, self.kinematic_structure_entities
+        )
+
+    @memoize
+    def get_kinematic_structure_entity_in_branch_by_name(
+        self, branch_root: KinematicStructureEntity, name: Union[str, PrefixedName]
+    ) -> KinematicStructureEntity:
+        kinematic_structure_entities = self.get_kinematic_structure_entities_of_branch(
+            branch_root
+        )
+        return self._get_world_entity_by_name_from_iterable(
+            name, kinematic_structure_entities
+        )
+
+    @memoize
+    def get_body_by_name(self, name: Union[str, PrefixedName]) -> Body:
+        return self._get_world_entity_by_name_from_iterable(name, self.bodies)
+
+    def get_bodies_by_global_position(
+        self, world_P_body: Point3, maximum_distance: float = 1e-6
+    ) -> list[Body]:
+        return [
+            body
+            for body in self.bodies
+            if body.global_pose.position.euclidean_distance(world_P_body)
+            <= maximum_distance
+        ]
+
+    @memoize
+    def get_body_in_branch_by_name(
+        self, branch_root: KinematicStructureEntity, name: Union[str, PrefixedName]
+    ) -> Body:
+        bodies = [
+            kse
+            for kse in self.get_kinematic_structure_entities_of_branch(branch_root)
+            if isinstance(kse, Body)
+        ]
+        return self._get_world_entity_by_name_from_iterable(name, bodies)
+
+    @memoize
+    def get_degree_of_freedom_by_name(
+        self, name: Union[str, PrefixedName]
+    ) -> DegreeOfFreedom:
+        return self._get_world_entity_by_name_from_iterable(
+            name, self.degrees_of_freedom
+        )
+
+    @memoize
+    def get_connection_by_name(self, name: Union[str, PrefixedName]) -> Connection:
+        return self._get_world_entity_by_name_from_iterable(name, self.connections)
+
+    def _get_world_entity_by_name_from_iterable(
+        self,
+        name: Union[str, PrefixedName],
+        world_entity_iterable: list[GenericWorldEntity],
+    ) -> GenericWorldEntity:
+        """
+        If more than one world entity matches the specified name, or if no world entity
+        is found, an exception is raised.
+
+        :param name: The name of the entity to retrieve. Can be a string or a
+            `PrefixedName` instance.
+        :param world_entity_iterable:
+        :return: The `WorldEntity` object that matches the given name.
+        :raises WorldEntityNotFoundError: If no world entity with the given name exists.
+        :raises DuplicateWorldEntityError: If multiple world entities with the given
+            name exist.
+        """
+        matches = self._get_world_entities_by_name_from_iterable(
+            name, world_entity_iterable
+        )
+        match matches:
+            case []:
+                raise WorldEntityNotFoundError(
+                    name,
+                    suggestions=self._suggest_world_entity_names(
+                        name, world_entity_iterable
+                    ),
+                )
+            case [entity]:
+                return entity
+            case _:
+                raise DuplicateWorldEntityError(matches)
+
+    @memoize
+    def get_semantic_annotations_by_name(
+        self, name: Union[str, PrefixedName]
+    ) -> List[SemanticAnnotation]:
+        return self._get_world_entities_by_name_from_iterable(
+            name, self.semantic_annotations
+        )
+
+    @memoize
+    def get_kinematic_structure_entities_by_name(
+        self, name: Union[str, PrefixedName]
+    ) -> List[KinematicStructureEntity]:
+        return self._get_world_entities_by_name_from_iterable(
+            name, self.kinematic_structure_entities
+        )
+
+    @memoize
+    def get_bodies_by_name(self, name: Union[str, PrefixedName]) -> List[Body]:
+        return self._get_world_entities_by_name_from_iterable(name, self.bodies)
+
+    @memoize
+    def get_degrees_of_freedom_by_name(
+        self, name: Union[str, PrefixedName]
+    ) -> List[DegreeOfFreedom]:
+        return self._get_world_entities_by_name_from_iterable(
+            name, self.degrees_of_freedom
+        )
+
+    @memoize
+    def get_connections_by_name(
+        self, name: Union[str, PrefixedName]
+    ) -> List[Connection]:
+        return self._get_world_entities_by_name_from_iterable(name, self.connections)
+
+    @staticmethod
+    def _suggest_world_entity_names(
+        name: Union[str, PrefixedName],
+        world_entity_iterable: Iterable[GenericWorldEntity],
+        max_suggestions: int = 3,
+    ) -> List[PrefixedName]:
+        """
+        Compute "did you mean" candidates for a failed lookup of `name`.
+
+        Entities whose bare name matches exactly (i.e. only the prefix differs) are
+        suggested first, followed by the closest spelling matches.
+
+        :param name: The name that was searched for but not found.
+        :param world_entity_iterable: The iterable that was searched.
+        :param max_suggestions: The maximum number of suggestions to return.
+        :return: The names of existing world entities that closely match `name`.
+        """
+        candidates = [world_entity.name for world_entity in world_entity_iterable]
+        searched_name = name.name if isinstance(name, PrefixedName) else name
+        suggestions = [
+            candidate for candidate in candidates if candidate.name == searched_name
+        ]
+        close_names = difflib.get_close_matches(
+            searched_name,
+            {candidate.name for candidate in candidates},
+            n=max_suggestions,
+        )
+        suggestions += [
+            candidate
+            for candidate in candidates
+            if candidate.name in close_names and candidate not in suggestions
+        ]
+        return suggestions[:max_suggestions]
+
+    @staticmethod
+    def _get_world_entities_by_name_from_iterable(
+        name: Union[str, PrefixedName],
+        world_entity_iterable: Iterable[GenericWorldEntity],
+    ) -> List[GenericWorldEntity]:
+        """
+        Retrieve a world entity by its name from an iterable of world entities.
+
+        This iterable would, for example, be self.connections or
+        self.kinematic_structure_entities. This method accepts either a string or a
+        `PrefixedName` instance. It searches through the provided iterable and returns
+        the list of world entities that matches the given name. If only a string was
+        provided, it matches against the name without prefix. If a `PrefixedName` was
+        provided, it matches against the full name including prefix.
+        :param name: The name of the world entity to search for.
+        :param world_entity_iterable: The iterable to search for the world entity, for
+            example self.connections or self.kinematic_structure_entities.
+        :return: The list of `WorldEntity` that match the given name.
+        """
+        match name:
+            case PrefixedName():
+                return [
+                    world_entity
+                    for world_entity in world_entity_iterable
+                    if world_entity.name == name
+                ]
+            case str():
+                return [
+                    world_entity
+                    for world_entity in world_entity_iterable
+                    if world_entity.name.name == name
+                ]
+
+    def get_degree_of_freedom_by_id(self, id: UUID) -> DegreeOfFreedom:
+        return self._get_world_entity_by_hash(hash(id))
+
+    def get_world_entity_with_id_by_id(self, id: UUID) -> WorldEntityWithID:
+        """
+        Get this world's entity with the given id.
+
+        :param id: The id of the entity to get.
+        :return: The entity of this world carrying that id.
+        :raises WorldEntityWithIDNotFoundError: If this world holds no such entity.
+        """
+        entity = self.find_world_entity_with_id(id)
+        if entity is None:
+            raise WorldEntityWithIDNotFoundError(id)
+        return entity
+
+    def find_world_entity_with_id(self, entity_id: UUID) -> Optional[WorldEntityWithID]:
+        """
+        Find this world's entity with the given id, if it holds one.
+
+        .. note:: Semantic annotations are searched in :attr:`semantic_annotations`
+            rather than in the hash table. Their hash describes their content instead
+            of their id, so annotations of the same type over the same kinematic
+            structure entities share one table key and all but the last one added are
+            missing from it.
+
+        :param entity_id: The id of the entity to find.
+        :return: The entity of this world carrying that id, or None if it holds none.
+        """
+        return next(
+            (
+                entity
+                for entity in chain(
+                    self._world_entity_hash_table.values(), self.semantic_annotations
+                )
+                if isinstance(entity, WorldEntityWithID) and entity.id == entity_id
+            ),
+            None,
+        )
+
+    def rebind_world_entities(self, obj: RelocatableType) -> RelocatableType:
+        """
+        Replace every world entity reachable from `obj` with this world's own instance
+        of it.
+
+        `obj` is typically built against a different `World`, for example the one this
+        world was :func:`~copy.deepcopy`'d from, whose bodies and connections this world
+        rebuilt as separate objects. Reading through such a foreign reference is
+        harmless, since execution reads and writes whichever world its context points
+        at, but modifying the model is not: `move_branch` and its kind require the
+        entities they are given to belong to the world being modified.
+
+        Walks `obj` recursively through dataclass fields, list like classes and dict values.
+        A :class:`~semantic_digital_twin.world_description.world_entity.WorldEntityWithID`
+        is looked up here by its id. Anything else is deep-copied, so `obj` and the
+        result never share mutable state.
+
+        An entity this world does not contain is left as it is: it is not this world's
+        state to rebind, and leaving it behaves exactly as not rebinding at all.
+
+        .. note:: An ``init=False`` field a dataclass derives from its other fields in
+            `__post_init__` is carried over as originally computed, not recomputed from
+            the rebound values.
+
+        :param obj: The object to rebind, or a value containing world entities.
+        :return: An equivalent, independent copy of `obj` referring to this world.
+        :raises WorldEntityWithIDBelongsToAnotherWorld: If this world's lookup answers with an
+            entity that reports belonging elsewhere, rather than letting it fail later
+            wherever it ends up being used.
+        """
+        if isinstance(obj, WorldEntityWithID):
+            try:
+                found = self.get_world_entity_with_id_by_id(obj.id)
+            except WorldEntityWithIDNotFoundError:
+                return obj
+            if found._world is not self:
+                raise WorldEntityWithIDBelongsToAnotherWorld(
+                    world=self, world_entity=found
+                )
+            return found
+        if isinstance(obj, list_like_classes):
+            return type(obj)(self.rebind_world_entities(item) for item in obj)
+        if isinstance(obj, dict):
+            return {
+                key: self.rebind_world_entities(value) for key, value in obj.items()
+            }
+        if is_dataclass(obj) and not isinstance(obj, type):
+            result = deepcopy(obj)
+            for f in fields(obj):
+                setattr(
+                    result, f.name, self.rebind_world_entities(getattr(obj, f.name))
+                )
+            return result
+        return deepcopy(obj)
+
+    def get_kinematic_structure_entity_by_id(
+        self, id: UUID
+    ) -> KinematicStructureEntity:
+        return self._get_world_entity_by_hash(hash(id))
+
+    def get_actuator_by_id(self, id: UUID) -> Actuator:
+        return self._get_world_entity_by_hash(hash(id))
+
+    def get_semantic_annotation_by_id(self, id: UUID) -> SemanticAnnotation:
+        matches = [s for s in self.semantic_annotations if s.id == id]
+        if not matches:
+            raise WorldEntityWithIDNotFoundError(id)
+        return matches[0]
+
+    def _get_world_entity_by_hash(self, entity_hash: int) -> GenericWorldEntity:
+        """
+        Retrieve a WorldEntity by its hash.
+
+        :param entity_hash: The hash of the entity to retrieve.
+        :return:
+        """
+        entity = self._world_entity_hash_table.get(entity_hash, None)
+        if entity is None:
+            raise WorldEntityNotFoundError(entity_hash)
+        return entity
+
+    # %% Existence Checks
+    def is_semantic_annotation_in_world(
+        self, semantic_annotation: SemanticAnnotation
+    ) -> bool:
+        return (
+            semantic_annotation._world == self
+            and semantic_annotation in self.semantic_annotations
+        )
+
+    def get_semantic_annotation_equal_to(
+        self, semantic_annotation: SemanticAnnotation
+    ) -> Optional[SemanticAnnotation]:
+        """
+        The annotation this world holds that describes the same thing, if it holds one.
+
+        An annotation is equal to another when it is of the same type and refers to the
+        same entities, so an annotation built separately can stand for one the world
+        already holds. Use this before adding a freshly built annotation, and wire up
+        the result rather than the argument, or the wiring lands on an annotation the
+        world does not hold.
+
+        :param semantic_annotation: The annotation to look for an equal of.
+        :return: The equal annotation this world holds, or ``None`` when it holds none.
+        """
+        return next(
+            (
+                held_annotation
+                for held_annotation in self.semantic_annotations
+                if held_annotation == semantic_annotation
+            ),
+            None,
+        )
+
+    def is_body_in_world(self, body: Body) -> bool:
+        return self._is_world_entity_with_hash_in_world_from_iterable(hash(body))
+
+    def is_kinematic_structure_entity_in_world(
+        self, kinematic_structure_entity: KinematicStructureEntity
+    ) -> bool:
+        return self._is_world_entity_with_hash_in_world_from_iterable(
+            hash(kinematic_structure_entity)
+        )
+
+    def is_connection_in_world(self, connection: Connection) -> bool:
+        return self._is_world_entity_with_hash_in_world_from_iterable(hash(connection))
+
+    def is_degree_of_freedom_in_world(self, degree_of_freedom: DegreeOfFreedom) -> bool:
+        return self._is_world_entity_with_hash_in_world_from_iterable(
+            hash(degree_of_freedom)
+        )
+
+    def is_actuator_in_world(self, actuator: Actuator) -> bool:
+        return self._is_world_entity_with_hash_in_world_from_iterable(hash(actuator))
+
+    def _is_world_entity_with_hash_in_world_from_iterable(
+        self, entity_hash: int
+    ) -> bool:
+        """
+        Check if a world entity with a given hash exists in the world based on a given
+        iterable.
+
+        :param entity_hash: The hash of the entity to retrieve.
+        :return: True if the entity exists, False otherwise.
+        """
+        return entity_hash in self._world_entity_hash_table
+
+    # %% World Merging
+    def merge_world_at_pose(
+        self, other: World, pose: HomogeneousTransformationMatrix
+    ) -> None:
+        """
+        Merge another world into the existing one, creates a 6DoF connection between the
+        root of this world and the root of the other world.
+
+        :param other: The world to be added.
+        :param pose: world_root_T_other_root, the pose of the other world's root with
+            respect to the current world's root
+        """
+        with self.modify_world():
+            other_root_id = other.root.id
+            root_connection = Connection6DoF.create_with_dofs(
+                parent=self.root, child=other.root, world=self
+            )
+            self.merge_world(other, root_connection)
+        root_connection = self.get_kinematic_structure_entity_by_id(
+            other_root_id
+        ).parent_connection
+        root_connection.origin = pose.copy_with_new_reference_frames(
+            new_reference_frame=self.root, new_child_frame=root_connection.child
+        )
+
+    def merge_world(
+        self,
+        other: World,
+        root_connection: Connection = None,
+    ) -> None:
+        """
+        Merge a world into the existing one by merging degrees of freedom, states,
+        connections, bodies and actuators. This removes all of them from `other`.
+
+        :param other: The world to be added.
+        :param root_connection: If provided, this connection will be used to connect the
+            two worlds. Otherwise, a new Connection6DoF will be created
+        :return: None
+        """
+        assert other is not self, "Cannot merge a world with itself."
+
+        with self.modify_world(), other.modify_world():
+            self_root = self.root
+            other_state = deepcopy(other.state)
+
+            other_root_id = other.root.id
+            other._clear_world_entities()
+            for modification in other._model_manager.model_modification_blocks:
+                modification.apply(self)
+
+            self.state.merge_state(other_state)
+
+            if root_connection is not None:
+                root_connection.update_references_for_world(self)
+
+            if not root_connection and self_root:
+                other_root = self.get_kinematic_structure_entity_by_id(other_root_id)
+                root_connection = Connection6DoF.create_with_dofs(
+                    parent=self_root, child=other_root, world=self
+                )
+
+            if root_connection:
+                self.add_connection(root_connection)
+
+            other.clear()
+
+    def _replace_with(self, other: World) -> None:
+        """
+        Replace all entities, kinematic structure, and state with those of `other`,
+        preserving registered callbacks and listeners.
+
+        :param other: The world instance whose content replaces the current world.
+        """
+        model_change_callbacks = list(self._model_manager.model_change_callbacks)
+        state_change_callbacks = list(self.state.state_change_callbacks)
+
+        with self._world_lock:
+            with self.modify_world(publish_changes=False):
+                self.clear()
+            self.merge_world(other)
+            self._model_manager.model_change_callbacks.extend(model_change_callbacks)
+            self.state.state_change_callbacks.extend(state_change_callbacks)
+            self._notify_model_change(publish_changes=False)
+
+    def is_kinematic_structure_entity_in_world_by_name(self, name: str) -> bool:
+        """
+        Checks if there is a kinematic structure entity with the given name in the
+        world.
+
+        :param name: Name to be checked
+        :return: True if the entity is in the world, False otherwise
+        """
+        return any(b.name.name == name for b in self.kinematic_structure_entities)
+
+    # %% Subgraph Targeting
+
+    def move_branch_with_fixed_connection(
+        self,
+        branch_root: KinematicStructureEntity,
+        new_parent: KinematicStructureEntity,
+        enable_unsafe_inside_world_block: bool = False,
+    ):
+        """
+        Destroys the connection between branch_root and its parent, and moves it to a
+        new parent using a new connection of the same type. The pose of body with
+        respect to root stays the same.
+
+        ..warning::
+
+            Move branch only works if the world structure is not currently fucked.
+
+        :param branch_root: The root of the branch to be moved.
+        :param new_parent: The new parent of the branch.
+        :param enable_unsafe_inside_world_block: See :meth:`move_branch`.
+        """
+        if not enable_unsafe_inside_world_block:
+            # Ensure FK is up to date before computing the relative pose, since this may be
+            # called mid-block, e.g. from a mount strategy inside a still-open modify_world block.
+            self.update_forward_kinematics()
+        new_parent_T_child = self.compute_forward_kinematics(
+            new_parent, branch_root, enable_unsafe_inside_world_block
+        )
+        self.remove_connection(branch_root.parent_connection)
+        self.add_connection(
+            FixedConnection(
+                parent=new_parent,
+                child=branch_root,
+                parent_T_connection_expression=new_parent_T_child,
+            )
+        )
+
+    def get_connections_of_branch(
+        self, root: KinematicStructureEntity
+    ) -> List[Connection]:
+        """
+        Collect all connections that are below root in the tree.
+
+        :param root: The root body of the branch
+        :return: List of all connections in the subtree rooted at the given body
+        """
+        visitor = ConnectionCollector(self)
+        self._travel_branch(root, visitor)
+        return visitor.connections
+
+    @memoize
+    def get_kinematic_structure_entities_of_branch(
+        self, root: KinematicStructureEntity
+    ) -> List[KinematicStructureEntity]:
+        """
+        Collect all bodies that are below root in the tree.
+
+        :param root: The root body of the branch
+        :return: List of all bodies in the subtree rooted at the given body (including
+            the root)
+        """
+        descendants_indices = rx.descendants(self.kinematic_structure, root.index)
+        return [root] + [
+            self.kinematic_structure[index] for index in descendants_indices
+        ]
+
+    def get_direct_child_bodies_with_collision(self, start_body: Body) -> Set[Body]:
+        """
+        Collect all child Bodies until a movable connection is found.
+
+        :param start_body: The starting body of the branch
+        :return: A set of Bodies that are moved directly by only this connection.
+        """
+        visitor = CollisionBodyCollector(self)
+        self._travel_branch(start_body, visitor)
+        return visitor.bodies
+
+    def _travel_branch(
+        self,
+        root_kinematic_structure_entity: KinematicStructureEntity,
+        visitor: rustworkx.visit.DFSVisitor,
+    ) -> None:
+        """
+        Apply a DFS Visitor to a subtree of the kinematic structure.
+
+        :param root_kinematic_structure_entity: Starting point of the search
+        :param visitor: This visitor to apply.
+        """
+        rx.dfs_search(
+            self.kinematic_structure, [root_kinematic_structure_entity.index], visitor
+        )
+
+    def move_branch(
+        self,
+        branch_root: KinematicStructureEntity,
+        new_parent: KinematicStructureEntity,
+        enable_unsafe_inside_world_block: bool = False,
+    ) -> None:
+        """
+        Move ``branch_root`` under ``new_parent``, recreating its parent connection so
+        the connection type (and, for active joints, the degree of freedom) is preserved
+        and the branch keeps its world pose. No-op if ``branch_root`` is already a child
+        of ``new_parent``.
+
+        Every connection keeps its degrees of freedom
+        (see :meth:`~...world_entity.Connection.copy_with_new_parent`), so the world state
+        layout is unchanged and memory views bound to it stay valid. A
+        :class:`Connection6DoF` carries its pose in those degrees of freedom, so instead of
+        recomputing a parent offset its origin is set to the world-preserving pose and its
+        derivatives are cleared.
+
+        :param branch_root: The root of the branch to be moved.
+        :param new_parent: The new parent of the branch.
+        :param enable_unsafe_inside_world_block: If ``True``, compute the preserved pose with
+            :meth:`_manually_compute_world_root_T_self` instead of the forward kinematics manager. This
+            skips the FK recompile and lets the move happen within a single still-open ``modify_world``
+            block (used when attaching freshly created entities). It is slower than the FK manager.
+        """
+        if branch_root._world != new_parent._world:
+            raise MismatchingWorld(branch_root._world, new_parent._world)
+
+        if branch_root.parent_kinematic_structure_entity == new_parent:
+            return
+
+        if not enable_unsafe_inside_world_block:
+            # Ensure FK is up to date before computing the relative pose; this recompile can be
+            # problematic in a large merge-world block, which is what the manual path is for.
+            self.update_forward_kinematics()
+
+        old_connection = branch_root.parent_connection
+
+        if isinstance(old_connection, Connection6DoF):
+            new_parent_T_branch_root = self.compute_forward_kinematics(
+                new_parent, branch_root, enable_unsafe_inside_world_block
+            )
+            # The pose lives entirely in the degrees of freedom, so the connection sits
+            # right on the new parent and the offset below is set from it afterwards.
+            new_connection = old_connection.copy_with_new_parent(
+                new_parent, HomogeneousTransformationMatrix()
+            )
+        else:
+            # Relocate the connection frame so the branch keeps its world pose, then let the connection
+            # copy itself under the new parent (preserving its type and degree of freedom).
+            new_parent_T_connection = HomogeneousTransformationMatrix(
+                (
+                    self.compute_forward_kinematics(
+                        new_parent,
+                        old_connection.parent,
+                        enable_unsafe_inside_world_block,
+                    )
+                    @ old_connection.parent_T_connection_expression
+                ).evaluate()
+            )
+            new_connection = old_connection.copy_with_new_parent(
+                new_parent, new_parent_T_connection
+            )
+        with self.modify_world():
+            self.add_connection(new_connection)
+            self.remove_connection(old_connection)
+
+        if isinstance(old_connection, Connection6DoF):
+            new_connection.origin = new_parent_T_branch_root
+            # The re-used degrees of freedom describe the pose relative to the old parent,
+            # so any motion they still carry is meaningless under the new one.
+            for degree_of_freedom in new_connection.passive_dofs:
+                self.state[degree_of_freedom.id].velocity = 0
+                self.state[degree_of_freedom.id].acceleration = 0
+                self.state[degree_of_freedom.id].jerk = 0
+            self.notify_state_change()
+
+    def move_branch_to_new_world(self, new_root: KinematicStructureEntity) -> World:
+        """
+        Copies the subgraph of the kinematic structure from the root body to a new world
+        and removes it from the old world.
+
+        :param new_root: The root body of the subgraph to be copied.
+        :return: A new `World` instance containing the copied subgraph.
+        """
+        new_world = World(name=self.name)
+        child_bodies = self.compute_descendent_child_kinematic_structure_entities(
+            new_root
+        )
+        root_connection = new_root.parent_connection
+
+        if not child_bodies:
+            with self.modify_world(), new_world.modify_world():
+                self.remove_connection(root_connection)
+                self.remove_kinematic_structure_entity(new_root)
+
+                new_world.add_kinematic_structure_entity(new_root)
+                return new_world
+
+        child_body_parent_connections = [
+            body.parent_connection for body in child_bodies
+        ]
+        child_body_dofs = [
+            dof
+            for connection in child_body_parent_connections
+            for dof in connection.dofs
+        ]
+
+        with self.modify_world(), new_world.modify_world():
+            for dof in child_body_dofs:
+                self.remove_degree_of_freedom(dof)
+                new_world.add_degree_of_freedom(dof)
+
+            # connections must be removed before the kinematic structure entities:
+            # removing a node makes rustworkx silently drop its edges, so a
+            # connection removed afterwards is recorded against entities its own
+            # history has already dropped, and can no longer be replayed
+            self.remove_connection(root_connection)
+            for connection in child_body_parent_connections:
+                self.remove_connection(connection)
+
+            self.remove_kinematic_structure_entity(new_root)
+            for child_body in child_bodies:
+                self.remove_kinematic_structure_entity(child_body)
+
+            for connection in child_body_parent_connections:
+                new_world.add_connection(connection)
+
+        return new_world
+
+    # %% Change Notifications
+    def notify_state_change(self, publish_changes: bool = True, **kwargs) -> None:
+        """
+        If you have changed the state of the world, call this function to trigger
+        necessary events and increase the state version.
+
+        Inside a :meth:`batch_state_changes` context the notification is collected and
+        emitted once when that context ends, with the ``publish_changes`` of that
+        context: the setters that write the state cannot know they are part of a batch,
+        so the batch is what decides whether its changes are published.
+        """
+        if self._state_change_batch_depth > 0:
+            self._state_change_batch_has_collected_change = True
+            return
+        if not self.is_empty():
+            self._forward_kinematic_manager.recompute()
+        self.state._notify_state_change(publish_changes=publish_changes, **kwargs)
+
+    def _notify_model_change(self, publish_changes: bool = True, **kwargs) -> None:
+        """
+        Notifies the system of a model change and updates the necessary states, caches,
+        and forward kinematics expressions while also triggering registered callbacks
+        for model changes.
+        """
+        self._model_manager.update_model_version_and_notify_callbacks(
+            publish_changes=publish_changes, **kwargs
+        )
+        self.notify_state_change(
+            publish_changes=publish_changes, force_republish=True, **kwargs
+        )
+
+        for callback in list(self.state.state_change_callbacks):
+            callback.update_previous_world_state()
+
+        self.validate()
+
+    def delete_orphaned_dofs(self):
+        actual_dofs = {
+            dof for connection in self.connections for dof in connection.dofs
+        }
+
+        removed_dofs = set(self.degrees_of_freedom) - actual_dofs
+
+        for dof in removed_dofs:
+            self.remove_degree_of_freedom(dof)
+
+    # %% Kinematic Structure Computations
+    @memoize
+    def compute_descendent_child_kinematic_structure_entities(
+        self, kinematic_structure_entity: KinematicStructureEntity
+    ) -> List[KinematicStructureEntity]:
+        """
+        Computes all child entities of a given KinematicStructureEntity in the world
+        recursively.
+
+        :param kinematic_structure_entity: The KinematicStructureEntity for which to
+            compute children.
+        :return: A list of all child KinematicStructureEntities.
+        """
+        children = self.compute_child_kinematic_structure_entities(
+            kinematic_structure_entity
+        )
+        for child in children:
+            children.extend(
+                self.compute_descendent_child_kinematic_structure_entities(child)
+            )
+        return children
+
+    @memoize
+    def compute_child_kinematic_structure_entities(
+        self, kinematic_structure_entity: KinematicStructureEntity
+    ) -> List[KinematicStructureEntity]:
+        """
+        Computes the child entities of a given KinematicStructureEntity in the world.
+
+        :param kinematic_structure_entity: The KinematicStructureEntity for which to
+            compute children.
+        :return: A list of child KinematicStructureEntities.
+        """
+        return list(
+            self.kinematic_structure.successors(kinematic_structure_entity.index)
+        )
+
+    def compute_parent_connection(
+        self, kinematic_structure_entity: KinematicStructureEntity
+    ) -> Optional[Connection]:
+        """
+        Computes the parent connection of a given KinematicStructureEntity in the world.
+
+        :param kinematic_structure_entity: The entityKinematicStructureEntity for which
+            to compute the parent connection.
+        :return: The parent connection of the given KinematicStructureEntity.
+        """
+        parent = self.compute_parent_kinematic_structure_entity(
+            kinematic_structure_entity
+        )
+        return (
+            None
+            if parent is None
+            else self.kinematic_structure.get_edge_data(
+                parent.index, kinematic_structure_entity.index
+            )
+        )
+
+    def compute_parent_kinematic_structure_entity(
+        self, kinematic_structure_entity: KinematicStructureEntity
+    ) -> Optional[KinematicStructureEntity]:
+        """
+        Computes the parent KinematicStructureEntity of a given KinematicStructureEntity
+        in the world.
+
+        :param kinematic_structure_entity: The KinematicStructureEntity for which to
+            compute the parent KinematicStructureEntity.
+        :return: The parent KinematicStructureEntity of the given
+            KinematicStructureEntity. If the given KinematicStructureEntity is the root,
+            None is returned.
+        """
+        parent = self.kinematic_structure.predecessors(kinematic_structure_entity.index)
+        return parent[0] if parent else None
+
+    @memoize
+    def compute_chain_of_connections(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> List[Connection]:
+        """
+        Computes the chain of connections between root and tip.
+
+        Can handle chains that start and end anywhere in the tree.
+        """
+        entity_chain = self.compute_chain_of_kinematic_structure_entities(root, tip)
+        return [
+            self.get_connection(entity_chain[i], entity_chain[i + 1])
+            for i in range(len(entity_chain) - 1)
+        ]
+
+    def is_body_controlled(self, body: KinematicStructureEntity) -> bool:
+        return self.is_controlled_connection_in_chain(self.root, body)
+
+    def is_controlled_connection_in_chain(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> bool:
+        root_part, tip_part = self.compute_split_chain_of_connections(root, tip)
+        connections = root_part + tip_part
+        return any(connection.is_controlled for connection in connections)
+
+    def compute_chain_reduced_to_controlled_connections(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> Tuple[KinematicStructureEntity, KinematicStructureEntity]:
+        """
+        Removes root and tip links until they are both connected with a controlled
+        connection. Useful for implementing collision avoidance.
+
+        1. Compute the kinematic chain of bodies between root and tip.
+        2. Remove all entries from link_a downward until one is connected with a connection from this semantic annotation.
+        2. Remove all entries from link_b upward until one is connected with a connection from this semantic annotation.
+
+        :param root: start of the chain
+        :param tip: end of the chain
+        :return: start and end link of the reduced chain
+        """
+        downward_chain, upward_chain = self.compute_split_chain_of_connections(
+            root=root, tip=tip
+        )
+        chain = downward_chain + upward_chain
+
+        new_root = next(
+            (conn for conn in chain if conn.is_controlled),
+            None,
+        )
+
+        new_tip = next(
+            (conn for conn in reversed(chain) if conn.is_controlled),
+            None,
+        )
+        assert (
+            new_root is not None and new_tip is not None
+        ), f"no controlled connection in chain between {root} and {tip}"
+
+        # if new_root is in the downward chain, we need to "flip" it by returning its child
+        new_root_body = new_root.parent if new_root in upward_chain else new_root.child
+
+        # if new_tip is in the downward chain, we need to "flip" it by returning its parent
+        new_tip_body = new_tip.parent if new_tip in downward_chain else new_tip.child
+        return new_root_body, new_tip_body
+
+    @memoize
+    def compute_split_chain_of_connections(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> Tuple[List[Connection], List[Connection]]:
+        """
+        Computes split chains of connections between 'root' and 'tip' bodies.
+
+        Returns tuple of two Connection lists: (root->common ancestor, tip->common ancestor). Returns empty lists if root==tip.
+
+        :param root: The starting `KinematicStructureEntity` object for the chain of connections.
+        :param tip: The ending `KinematicStructureEntity` object for the chain of connections.
+        :return: A tuple of two lists: the first list contains `Connection` objects from the `root` to
+            the common ancestor, and the second list contains `Connection` objects from the `tip` to the
+            common ancestor.
+        """
+        if root == tip:
+            return [], []
+        root_chain, common_ancestor, tip_chain = (
+            self.compute_split_chain_of_kinematic_structure_entities(root, tip)
+        )
+        root_chain = root_chain + [common_ancestor[0]]
+        tip_chain = [common_ancestor[0]] + tip_chain
+
+        root_connections = [
+            self.get_connection(root_chain[i + 1], root_chain[i])
+            for i in range(len(root_chain) - 1)
+        ]
+
+        tip_connections = [
+            self.get_connection(tip_chain[i], tip_chain[i + 1])
+            for i in range(len(tip_chain) - 1)
+        ]
+        return root_connections, tip_connections
+
+    @memoize
+    def compute_split_chain_of_kinematic_structure_entities(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> Tuple[
+        List[KinematicStructureEntity],
+        List[KinematicStructureEntity],
+        List[KinematicStructureEntity],
+    ]:
+        """
+        Computes the chain between root and tip.
+
+        Can handle chains that start and end anywhere in the tree. :param root: The root KinematicStructureEntity to start the chain from
+        :param tip: The tip KinematicStructureEntity to end the chain at
+        :return: tuple containing
+                    1. chain from root to the common ancestor (excluding common ancestor)
+                    2. list containing just the common ancestor
+                    3. chain from common ancestor to tip (excluding common ancestor)
+        """
+        if root == tip:
+            return [], [root], []
+
+        # Paths from the tree's true root to each endpoint (inclusive).
+        root_path = self._compute_chain_of_kinematic_structure_entities_indexes(
+            self.root, root
+        )
+        tip_path = self._compute_chain_of_kinematic_structure_entities_indexes(
+            self.root, tip
+        )
+
+        # Find the lowest common ancestor (LCA) index in the paths.
+        LCA_index = self._find_lowest_common_ancestor(root_path, tip_path)
+
+        # The last common ancestor is the last common node.
+        common_ancestor_node_index = root_path[LCA_index]
+        common_ancestor = self.kinematic_structure[common_ancestor_node_index]
+
+        # 1) From `root` up to just below lowest common ancestor.
+        up_from_root_index = list(reversed(root_path[LCA_index + 1 :]))
+        up_from_root = [self.kinematic_structure[index] for index in up_from_root_index]
+
+        # 3) From just below lowest common ancestor down to `tip` (in CA->tip order, excluding CA).
+        down_to_tip_index = tip_path[LCA_index + 1 :]
+        down_to_tip = [self.kinematic_structure[index] for index in down_to_tip_index]
+
+        return up_from_root, [common_ancestor], down_to_tip
+
+    def _find_lowest_common_ancestor(
+        self, root_path: List[int], tip_path: List[int]
+    ) -> int:
+        """
+        Find the index of the lowest common ancestor, which is the index where the two
+        paths diverge, minus 1.
+
+        :param root_path: The path from the root to the first entity.
+        :param tip_path: The path from the root to the second entity.
+        :return: The index where the paths diverge.
+        """
+        max_index = min(len(root_path), len(tip_path))
+        root_path = np.array(root_path[:max_index])
+        tip_path = np.array(tip_path[:max_index])
+        differing_indices = np.where(root_path != tip_path)[0]
+        divergence_index = (
+            differing_indices[0] if len(differing_indices) > 0 else max_index
+        )
+
+        return divergence_index - 1
+
+    @memoize
+    def compute_chain_of_kinematic_structure_entities(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> List[KinematicStructureEntity]:
+        """
+        Computes the chain between root and tip.
+
+        Can handle chains that start and end anywhere in the tree.
+        """
+        path_indeces = self._compute_chain_of_kinematic_structure_entities_indexes(
+            root, tip
+        )
+        return [self.kinematic_structure[index] for index in path_indeces]
+
+    @memoize
+    def _compute_chain_of_kinematic_structure_entities_indexes(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> List[int]:
+        """
+        Computes the chain between root and tip.
+
+        Can handle chains that start and end anywhere in the tree.
+        """
+        if root == tip:
+            return [root.index]
+        shortest_paths = rx.all_shortest_paths(
+            self.kinematic_structure, root.index, tip.index, as_undirected=False
+        )
+
+        assert len(shortest_paths), f"No path found from {root} to {tip}"
+
+        return shortest_paths[0]
+
+    # %% Forward Kinematics
+    def compute_forward_kinematics(
+        self,
+        root: KinematicStructureEntity,
+        tip: KinematicStructureEntity,
+        enable_unsafe_inside_world_block: bool = False,
+    ) -> HomogeneousTransformationMatrix:
+        """
+        Compute the forward kinematics from the root KinematicStructureEntity to the tip
+        KinematicStructureEntity.
+
+        Calculate the transformation matrix representing the pose of the tip
+        KinematicStructureEntity relative to the root KinematicStructureEntity.
+
+        :param root: Root KinematicStructureEntity, for which the kinematics are
+            computed.
+        :param tip: Tip KinematicStructureEntity, to which the kinematics are computed.
+        :param enable_unsafe_inside_world_block: Whether to use the forward kinematic
+            manager
+        :return: Transformation matrix representing the relative pose of the tip
+            KinematicStructureEntity with respect to the root KinematicStructureEntity.
+        """
+        if not enable_unsafe_inside_world_block:
+            return self._forward_kinematic_manager.compute(root, tip)
+        return self._manually_compute_entity_a_T_entity_b(root, tip)
+
+    def compose_forward_kinematics_expression(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> HomogeneousTransformationMatrix:
+        """
+        :param root: The root KinematicStructureEntity in the kinematic chain.
+            It determines the starting point of the forward kinematics calculation.
+        :param tip: The tip KinematicStructureEntity in the kinematic chain.
+            It determines the endpoint of the forward kinematics calculation.
+        :return: An expression representing the computed forward kinematics of the tip KinematicStructureEntity relative to the root KinematicStructureEntity.
+        """
+        return self._forward_kinematic_manager.compose_expression(root, tip)
+
+    def compute_forward_kinematics_np(
+        self, root: KinematicStructureEntity, tip: KinematicStructureEntity
+    ) -> NpMatrix4x4:
+        """
+        Compute the forward kinematics from the root KinematicStructureEntity to the tip
+        KinematicStructureEntity, root_T_tip and return it as a 4x4 numpy ndarray.
+
+        Calculate the transformation matrix representing the pose of the tip
+        KinematicStructureEntity relative to the root KinematicStructureEntity,
+        expressed as a numpy ndarray.
+
+        :param root: Root KinematicStructureEntity, for which the kinematics are
+            computed.
+        :param tip: Tip KinematicStructureEntity, to which the kinematics are computed.
+        :return: Transformation matrix representing the relative pose of the tip
+            KinematicStructureEntity with respect to the root KinematicStructureEntity.
+        """
+        return self._forward_kinematic_manager.compute_np(root, tip).copy()
+
+    def update_forward_kinematics(self) -> None:
+        """
+        Bring the forward kinematics of the world up to date.
+
+        The expressions are recompiled only when the kinematic structure has changed
+        since they were last built, which is what makes this affordable to call
+        defensively. The values are always recomputed, because degree-of-freedom state
+        can change without any model change and leaves no trace in
+        :class:`ModelRevision`.
+
+        ..warning::
+            Use this method if you need to live update the forward kinematic inside a with self.modify_world(): block.
+            Use with caution, as this only works if the world structure is not currently broken, and thus may lead to
+            crashes if its not the case.
+        """
+        if not self._forward_kinematic_manager.matches_world_structure:
+            self._forward_kinematic_manager.notify_model_change()
+        self._forward_kinematic_manager.recompute()
+
+    def _manually_compute_entity_a_T_entity_b(
+        self,
+        entity_a: KinematicStructureEntity,
+        entity_b: KinematicStructureEntity,
+    ) -> HomogeneousTransformationMatrix:
+        """
+        Computes the transform entity_a_T_entity_b without using the forward kinematics
+        manager.
+
+        :param entity_a: The entity which is going to be the reference frame of the
+            transform
+        :param entity_b: The entity which is going to be the child frame of the
+            transform
+        """
+        root_T_reference = (
+            HomogeneousTransformationMatrix()
+            if entity_a == self.root
+            else self._manually_compute_world_root_T_self(entity_a)
+        )
+        root_T_target = (
+            HomogeneousTransformationMatrix()
+            if entity_b == self.root
+            else self._manually_compute_world_root_T_self(entity_b)
+        )
+        return HomogeneousTransformationMatrix(
+            (root_T_reference.inverse() @ root_T_target).evaluate(),
+            reference_frame=entity_a,
+            child_frame=entity_b,
+        )
+
+    def _manually_compute_world_root_T_self(
+        self, entity: KinematicStructureEntity
+    ) -> HomogeneousTransformationMatrix:
+        """
+        Computes world_root_T_self without using the world's forward kinematics manager.
+
+        This is done to avoid having to recompile and compute the forwardkinematics in
+        this case. This can be used in cases were you need to calculate global poses for
+        Kinematic Structure Entities which have been added to the world in the currently
+        active World.modify_world() block.
+
+        :param entity: The entity to compute the root_T_entity for.
+        :return: The root_T_entity of the entity.
+        """
+        world = entity._world
+        future_root_T_self = entity.parent_connection.origin_expression
+        parent_entity = entity.parent_kinematic_structure_entity
+        while True:
+            if parent_entity == world.root:
+                break
+            future_root_T_self = (
+                parent_entity.parent_connection.origin_expression @ future_root_T_self
+            )
+            parent_entity = parent_entity.parent_kinematic_structure_entity
+        return future_root_T_self
+
+    # %% Inverse Kinematics
+    def compute_inverse_kinematics(
+        self,
+        root: KinematicStructureEntity,
+        tip: KinematicStructureEntity,
+        target: HomogeneousTransformationMatrix,
+        dt: float = 0.05,
+        max_iterations: int = 200,
+        translation_velocity: float = 0.2,
+        rotation_velocity: float = 0.2,
+    ) -> Dict[DegreeOfFreedom, float]:
+        """
+        Compute inverse kinematics using quadratic programming.
+
+        :param root: Root KinematicStructureEntity of the kinematic chain.
+        :param tip: Tip KinematicStructureEntity of the kinematic chain.
+        :param target: Desired tip pose relative to the root KinematicStructureEntity.
+        :param dt: Time step for integration.
+        :param max_iterations: Maximum number of iterations.
+        :param translation_velocity: Maximum translation velocity.
+        :param rotation_velocity: Maximum rotation velocity.
+        :return: Dictionary mapping DOF names to their computed positions.
+        """
+        ik_solver = InverseKinematicsSolver(self)
+        return ik_solver.solve(
+            root,
+            tip,
+            target,
+            dt,
+            max_iterations,
+            translation_velocity,
+            rotation_velocity,
+        )
+
+    # %% World Utils
+    def clear(self):
+        """
+        Clears all stored data and resets the state of the instance.
+        """
+        self._clear_world_entities()
+        self.state.clear()
+        self._world_entity_hash_table.clear()
+        self._model_manager.model_modification_blocks.clear()
+        self._model_manager.model_change_callbacks.clear()
+        self.state.state_change_callbacks.clear()
+        self.__post_init__()
+
+    def _clear_world_entities(self):
+        """
+        Clears all world entities from the world.
+
+        ..warning::
+            Super destructive, world will be unusable after this call.
+        """
+        # semantic_annotations need to be reversed because they are in order in which they are added, and they need to
+        # be removed in reverse order
+        for semantic_annotation in reversed(self.semantic_annotations):
+            self.remove_semantic_annotation(semantic_annotation)
+
+        # connections must be removed before the kinematic structure entities:
+        # removing a node makes rustworkx silently drop its edges, so the
+        # connections would never be detached from the world otherwise
+        for connection in self.connections:
+            self.remove_connection(connection)
+
+        for kinematic_structure_entity in self.kinematic_structure_entities:
+            self.remove_kinematic_structure_entity(kinematic_structure_entity)
+
+        # actuators reference degrees of freedom, so they go first
+        for actuator in copy(self.actuators):
+            self.remove_actuator(actuator)
+
+        for degree_of_freedom in copy(self.degrees_of_freedom):
+            self.remove_degree_of_freedom(degree_of_freedom)
+
+    def is_empty(self):
+        """
+        :return: Returns True if the world contains no kinematic_structure_entities, else False.
+        """
+        return not bool(len(self.kinematic_structure))
+
+    def transform(
+        self,
+        spatial_object: GenericSpatialType,
+        target_frame: KinematicStructureEntity,
+    ) -> GenericSpatialType:
+        """
+        Transform a given spatial object from its reference frame to a target frame.
+
+        How the transformation applies is the spatial type's own business -- see
+        :meth:`~semantic_digital_twin.spatial_types.spatial_types.SpatialType.transform`
+        -- so a type that needs more than a matrix multiplication says so itself.
+
+        :param spatial_object: The spatial object to be transformed.
+        :param target_frame: The target KinematicStructureEntity frame to which the spatial object should
+            be transformed.
+        :return: The spatial object, of the same type, expressed in the target frame.
+        """
+        if spatial_object.reference_frame is None:
+            raise MissingReferenceFrameError(spatial_object)
+        if spatial_object.reference_frame == target_frame:
+            return spatial_object
+        target_frame_T_reference_frame = self.compute_forward_kinematics(
+            root=target_frame, tip=spatial_object.reference_frame
+        )
+
+        return spatial_object.transform(target_frame_T_reference_frame)
+
+    def __deepcopy__(self, memo):
+        memo = {} if memo is None else memo
+        me_id = id(self)
+        if me_id in memo:
+            return memo[me_id]
+
+        new_world = World(name=self.name)
+        memo[me_id] = new_world
+
+        with new_world.modify_world():
+            for modification_block in self._model_manager.model_modification_blocks:
+                modification_block.update_references_for_world_and_apply(
+                    world=new_world
+                )
+
+            new_world.state.merge_state(self.state)
+
+        return new_world
+
+    def visualize_world_structure(self) -> Image:
+        """
+        Visualizes the kinematic structure of the world using Graphviz in a topological
+        way. This is not meant to be a beautiful visualization, but a functional way at
+        all to quickly inspect the structure.
+
+        Each node in the graph represents a KinematicStructureEntity, and each edge
+        represents a Connection between entities. The nodes are labeled with the names
+        of the entities, and the edges are labeled with the types of connections.
+
+        Plot by calling `world.plot_world_structure().show()`.
+
+        :return: An Image object containing the visualization of the world's kinematic
+            structure.
+        """
+        return graphviz_draw(
+            self.kinematic_structure,
+            node_attr_fn=lambda kinematic_structure_entity: {
+                "label": kinematic_structure_entity.name.name,
+                "style": "filled",
+                "fillcolor": "lightgray",
+            },
+            edge_attr_fn=lambda connection: {
+                "label": str(connection.__class__.__name__)
+            },
+        )
+
+    # %% Associations
+
+    def modify_world(
+        self, publish_changes: bool = True
+    ) -> WorldModelUpdateContextManager:
+        return WorldModelUpdateContextManager(
+            world=self, publish_changes=publish_changes
+        )
+
+    def batch_state_changes(
+        self, publish_changes: bool = True
+    ) -> WorldStateBatchContextManager:
+        """
+        Collect the state changes made inside the context into a single notification.
+
+        Use this when writing several degrees of freedom that belong to one logical
+        change, such as a whole configuration.
+
+        :param publish_changes: Whether the resulting notification publishes the
+            changes.
+        """
+        return WorldStateBatchContextManager(
+            world=self, publish_changes=publish_changes
+        )
+
+    def reset_state_context(self) -> ResetStateContextManager:
+        return ResetStateContextManager(self)
+
+    def get_world_model_manager(self) -> WorldModelManager:
+        return self._model_manager
+
+    def rollback_modification_blocks(
+        self, count: int = 1
+    ) -> List[WorldModelModificationBlock]:
+        """
+        Revert the most recently completed modification blocks, restoring the world to
+        the state it was in before they were applied.
+
+        Reverting a block is itself recorded as a new modification block (see
+        :meth:`WorldModification.revert`), so the history retains a full account of what
+        happened, including the rollback.
+
+        :param count: How many of the most recently completed modification blocks to
+            revert, starting with the most recent.
+        :return: The modification blocks that were rolled back, most recent first.
+        :raises InsufficientModificationHistoryError: If the history contains fewer than
+            ``count`` completed modification blocks.
+        """
+        model_modification_blocks = self._model_manager.model_modification_blocks
+        if count > len(model_modification_blocks):
+            raise InsufficientModificationHistoryError(
+                world=self,
+                requested_count=count,
+                available_count=len(model_modification_blocks),
+            )
+        # count == 0 has to be handled explicitly: model_modification_blocks[-0:] is
+        # model_modification_blocks[0:], i.e. the whole list, not an empty slice.
+        blocks_to_roll_back = (
+            list(reversed(model_modification_blocks[-count:])) if count else []
+        )
+        for block in blocks_to_roll_back:
+            with self.modify_world():
+                block.revert(self)
+        return blocks_to_roll_back
+
+    def rollback_to_version(self, version: int) -> List[WorldModelModificationBlock]:
+        """
+        Roll back the world's modification history to the given version, undoing every
+        modification block completed since.
+
+        :param version: The target :attr:`WorldModelManager.version` to roll back to,
+            e.g. taken from an earlier :attr:`WorldModelManager.revision`.
+        :return: The modification blocks that were rolled back, most recent first.
+        :raises InvalidRollbackVersionError: If ``version`` is not a version the world
+            has already reached.
+        """
+        current_version = self._model_manager.version
+        if not 0 <= version <= current_version:
+            raise InvalidRollbackVersionError(
+                world=self,
+                target_version=version,
+                current_version=current_version,
+            )
+        return self.rollback_modification_blocks(current_version - version)
+
+    @cached_property
+    def ray_tracer(self) -> RayTracer:
+        """
+        A ray tracer for the world.
+
+        :return: A ray tracer for the world.
+        """
+        return RayTracer(self)
+
+    def apply_control_commands(
+        self, commands: np.ndarray, dt: float, derivative: Derivatives
+    ) -> None:
+        """
+        Updates the state of a system by applying control commands at a specified
+        derivative level, followed by backward integration to update lower derivatives.
+
+        :param commands: Control commands to be applied at the specified derivative
+            level. The array length must match the number of free variables in the
+            system.
+        :param dt: Time step used for the integration of lower derivatives.
+        :param derivative: The derivative level to which the control commands are
+            applied.
+        """
+        self.state._apply_control_commands(commands, dt, derivative)
+        for connection in self.connections:
+            match connection:
+                case HasUpdateState():
+                    connection.update_state(dt)
+                case _:
+                    pass
+        self.notify_state_change()

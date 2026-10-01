@@ -1,0 +1,60 @@
+from enum import IntEnum
+
+import numpy as np
+import qpalm
+import scipy.sparse as sp
+
+from giskardpy.qp.exceptions import InfeasibleException
+from giskardpy.qp.qp_data import QPDataExplicit, QPDataTwoSidedInequality
+from giskardpy.qp.solvers.qp_solver import QPSolver
+
+
+class QPALMInfo(IntEnum):
+    SOLVED = 1  # status to indicate the problem is solved to optimality given the specified tolerances
+    DUAL_TERMINATED = 2  # status to indicate the problem has a dual objective that is higher than the specified bound
+    MAX_ITER_REACHED = (
+        -2
+    )  # status to indicate termination due to reaching the maximum number of iterations
+    PRIMAL_INFEASIBLE = -3  # status to indicate the problem is primal infeasible
+    DUAL_INFEASIBLE = -4  # status to indicate the problem is dual infeasible
+    TIME_LIMIT_REACHED = (
+        -5
+    )  # status to indicate the problem's runtime has exceeded the specified time limit
+    UNSOLVED = -10  # status to indicate the problem is unsolved.
+    ERROR = 0
+
+
+class QPSolverQPalm(QPSolver[QPDataTwoSidedInequality]):
+    """
+    min_x 0.5 x^T Q x + q^T x s.t.
+
+    lb <= Ax <= ub
+    https://github.com/kul-optec/QPALM
+    """
+
+    settings = qpalm.Settings()
+    settings.verbose = False
+    settings.eps_abs = 3e-5
+    settings.eps_rel = 1e-8
+    settings.nonconvex = False
+
+    def solver_call(self, qp_data: QPDataTwoSidedInequality) -> np.ndarray:
+        data = qpalm.Data(
+            qp_data.inequality_matrix.shape[1], qp_data.inequality_matrix.shape[0]
+        )
+
+        data.Q = sp.diags(qp_data.quadratic_weights, format="csc")
+        data.q = qp_data.linear_weights
+        data.A = qp_data.inequality_matrix
+        data.bmin = qp_data.inequality_lower_bounds
+        data.bmax = qp_data.inequality_upper_bounds
+        solver = qpalm.Solver(data, self.settings)
+        solver.solve()
+        if solver.info.status_val != QPALMInfo.SOLVED:
+            raise InfeasibleException(
+                solver_status=str(QPALMInfo(solver.info.status_val))
+            )
+        return solver.solution.x
+
+    def solver_call_explicit_interface(self, qp_data: QPDataExplicit) -> np.ndarray:
+        return self.solver_call(qp_data.to_two_sided_inequality())

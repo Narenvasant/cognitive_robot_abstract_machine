@@ -1,0 +1,1217 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from copy import deepcopy
+from dataclasses import dataclass, field
+from uuid import UUID
+
+import numpy as np
+from typing_extensions import TYPE_CHECKING, Union, Optional, Self
+
+from semantic_digital_twin.world_description.connection_properties import JointDynamics
+from semantic_digital_twin.world_description.degree_of_freedom import (
+    DegreeOfFreedom,
+    DegreeOfFreedomLimits,
+)
+from semantic_digital_twin.world_description.world_entity import (
+    Connection,
+    KinematicStructureEntity,
+)
+from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
+from semantic_digital_twin.datastructures.types import NpMatrix4x4
+from semantic_digital_twin.exceptions import MissingConnectionAxisError
+from semantic_digital_twin.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Vector3,
+    Point3,
+    Quaternion,
+)
+from semantic_digital_twin.spatial_types.derivatives import DerivativeMap
+
+if TYPE_CHECKING:
+    from semantic_digital_twin.world import World
+
+
+class HasUpdateState(ABC):
+    """
+    Mixin class for connections that need state updated which are not trivial
+    integrations.
+
+    Typically needed for connections that use active and passive degrees of freedom.
+    Look at OmniDrive for an example usage.
+    """
+
+    @abstractmethod
+    def update_state(self, dt: float) -> None:
+        """
+        Allows the connection to update the state of its dofs.
+
+        An integration update for active dofs will have happened before this method is
+        called. Write directly into self._world.state, but don't touch dofs that don't
+        belong to this connection.
+        :param dt: Time passed since last update.
+        """
+        pass
+
+
+@dataclass(eq=False)
+class FixedConnection(Connection):
+    """
+    Has 0 degrees of freedom.
+    """
+
+    @classmethod
+    def create_with_dofs(
+        cls,
+        world: World,
+        parent: KinematicStructureEntity,
+        child: KinematicStructureEntity,
+        *,
+        name: Optional[PrefixedName] = None,
+        parent_T_connection_expression: Optional[
+            HomogeneousTransformationMatrix
+        ] = None,
+        connection_T_child_expression: Optional[HomogeneousTransformationMatrix] = None,
+    ) -> Self:
+        return cls(
+            parent=parent,
+            child=child,
+            name=name,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+        )
+
+
+@dataclass(eq=False)
+class ActiveConnection(Connection, ABC):
+    """
+    Has one or more degrees of freedom that can be actively controlled, e.g., robot
+    joints.
+    """
+
+    @property
+    def has_hardware_interface(self) -> bool:
+        """
+        Whether this connection is linked to a controller and can therefore respond to
+        control commands.
+
+        E.g. the caster wheels of a PR2 are active, because they have a DOF, but they
+        are not directly controlled. Instead a the omni drive connection is directly
+        controlled and a low level controller translates these commands to commands for
+        the caster wheels.
+
+        A door hinge is also active but cannot be controlled.
+        """
+        return any(dof.has_hardware_interface for dof in self.active_dofs)
+
+    @has_hardware_interface.setter
+    def has_hardware_interface(self, value: bool) -> None:
+        for dof in self.active_dofs:
+            dof.has_hardware_interface = value
+
+    @property
+    def is_controlled(self):
+        return self.has_hardware_interface
+
+
+@dataclass(eq=False)
+class ActiveConnection1DOF(ActiveConnection, ABC):
+    """
+    Superclass for active connections with 1 degree of freedom.
+    """
+
+    axis: Vector3 = field(kw_only=True)
+    """
+    Connection moves along this axis, should be a unit vector.
+
+    The axis is defined relative to the local reference frame of the parent
+    KinematicStructureEntity.
+    """
+
+    multiplier: float = 1.0
+    """
+    Movement along the axis is multiplied by this value.
+
+    Useful if Connections share DoFs.
+    """
+
+    offset: float = 0.0
+    """
+    Movement along the axis is offset by this value.
+
+    Useful if Connections share DoFs.
+    """
+
+    raw_dof: DegreeOfFreedom = field(kw_only=True)
+    """
+    The degree of freedom whose raw, unscaled state this connection drives.
+
+    Use the :attr:`dof` property to obtain it with ``multiplier`` and ``offset``
+    applied.
+    """
+
+    dynamics: JointDynamics = field(default_factory=JointDynamics)
+    """
+    Dynamic properties of the joint.
+    """
+
+    @classmethod
+    def create_with_dofs(
+        cls,
+        world: World,
+        parent: KinematicStructureEntity,
+        child: KinematicStructureEntity,
+        *,
+        name: Optional[PrefixedName] = None,
+        parent_T_connection_expression: Optional[
+            HomogeneousTransformationMatrix
+        ] = None,
+        connection_T_child_expression: Optional[HomogeneousTransformationMatrix] = None,
+        multiplier: float = 1.0,
+        offset: float = 0.0,
+        dof_limits: Optional[DegreeOfFreedomLimits] = None,
+        axis: Vector3 | None = None,
+    ) -> Self:
+        """
+        Creates and returns an instance of the class with its single degree of freedom,
+        initializing a kinematic relationship between a parent and a child entity along
+        ``axis``.
+
+        :param world: The motion world in which to add the degree of freedom.
+        :param parent: The parent kinematic structure entity.
+        :param child: The child kinematic structure entity.
+        :param name: Optional specific name for the connection. If not provided, a
+            default name is generated based on the parent and child.
+        :param parent_T_connection_expression: Constant pose of the connection relative
+            to its parent.
+        :param connection_T_child_expression: Constant pose of the connection relative
+            to its child.
+        :param multiplier: A scaling factor applied to the DOF's motion. Defaults to
+            1.0.
+        :param offset: A constant offset value applied to the DOF's motion. Defaults to
+            0.0.
+        :param dof_limits: Optional limits for the generated degree of freedom.
+        :param axis: The axis vector defining the joint relation.
+        :return: An instance of the class representing the defined relationship with its
+            DOF added to the world.
+        """
+        if axis is None:
+            raise MissingConnectionAxisError(connection_type_name=cls.__name__)
+        name = name or cls._generate_default_name(parent=parent, child=child)
+        dof = DegreeOfFreedom(name=PrefixedName("dof", str(name)), limits=dof_limits)
+        world.add_degree_of_freedom(dof)
+        connection = cls(
+            name=name,
+            parent=parent,
+            child=child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            axis=axis,
+            multiplier=multiplier,
+            offset=offset,
+            raw_dof=dof,
+        )
+        return connection
+
+    @property
+    def dof(self) -> DegreeOfFreedom:
+        """
+        A reference to the Degree of Freedom associated with this connection.
+
+        .. warning:: WITH multiplier and offset applied.
+        """
+        result = deepcopy(self.raw_dof)
+        result.variables = self.raw_dof.variables * self.multiplier
+        if self.multiplier < 0:
+            # if multiplier is negative, we need to swap the limits
+            result.limits.lower, result.limits.upper = (
+                result.limits.upper,
+                result.limits.lower,
+            )
+        result.limits.lower = result.limits.lower * self.multiplier
+        result.limits.upper = result.limits.upper * self.multiplier
+
+        result.variables.position += self.offset
+        if result.limits.lower.position is not None:
+            result.limits.lower.position = result.limits.lower.position + self.offset
+        if result.limits.upper.position is not None:
+            result.limits.upper.position = result.limits.upper.position + self.offset
+        return result
+
+    @property
+    def active_dofs(self) -> list[DegreeOfFreedom]:
+        return [self.raw_dof]
+
+    @property
+    def position(self) -> float:
+        return (
+            self._world.state[self.raw_dof.id].position * self.multiplier + self.offset
+        )
+
+    @position.setter
+    def position(self, value: float) -> None:
+        self._world.state[self.raw_dof.id].position = (
+            value - self.offset
+        ) / self.multiplier
+        self._world.notify_state_change()
+
+    @property
+    def velocity(self) -> float:
+        return self._world.state[self.raw_dof.id].velocity * self.multiplier
+
+    @velocity.setter
+    def velocity(self, value: float) -> None:
+        self._world.state[self.raw_dof.id].velocity = value / self.multiplier
+        self._world.notify_state_change()
+
+    @property
+    def acceleration(self) -> float:
+        return self._world.state[self.raw_dof.id].acceleration * self.multiplier
+
+    @acceleration.setter
+    def acceleration(self, value: float) -> None:
+        self._world.state[self.raw_dof.id].acceleration = value / self.multiplier
+        self._world.notify_state_change()
+
+    @property
+    def jerk(self) -> float:
+        return self._world.state[self.raw_dof.id].jerk * self.multiplier
+
+    @jerk.setter
+    def jerk(self, value: float) -> None:
+        self._world.state[self.raw_dof.id].jerk = value / self.multiplier
+        self._world.notify_state_change()
+
+    def copy_for_world(self, world: World):
+        (
+            other_parent,
+            other_child,
+            parent_T_connection_expression,
+            connection_T_child_expression,
+        ) = self._find_references_in_world(world)
+
+        return self.__class__(
+            name=PrefixedName(self.name.name, self.name.prefix),
+            parent=other_parent,
+            child=other_child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            axis=self.axis,
+            multiplier=self.multiplier,
+            offset=self.offset,
+            raw_dof=world.get_degree_of_freedom_by_id(self.raw_dof.id),
+            dynamics=self.dynamics,
+        )
+
+    def copy_with_new_parent(
+        self,
+        new_parent: KinematicStructureEntity,
+        parent_T_connection_expression: HomogeneousTransformationMatrix,
+    ) -> Self:
+        # Reuse the same degree of freedom so the joint state is kept.
+        return self.__class__(
+            parent=new_parent,
+            child=self.child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=self.connection_T_child_expression,
+            axis=self.axis,
+            multiplier=self.multiplier,
+            offset=self.offset,
+            raw_dof=self.raw_dof,
+            dynamics=self.dynamics,
+        )
+
+
+@dataclass(eq=False)
+class PrismaticConnection(ActiveConnection1DOF):
+    """
+    Allows translation along an axis.
+    """
+
+    def add_to_world(self, world: World):
+        super().add_to_world(world)
+
+        translation_axis = self.axis * self.dof.variables.position
+        self._kinematics = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=translation_axis[0],
+            y=translation_axis[1],
+            z=translation_axis[2],
+            child_frame=self.child,
+        )
+
+
+@dataclass(eq=False)
+class RevoluteConnection(ActiveConnection1DOF):
+    """
+    Allows rotation about an axis.
+    """
+
+    def add_to_world(self, world: World):
+        super().add_to_world(world)
+
+        self._kinematics = HomogeneousTransformationMatrix.from_xyz_axis_angle(
+            axis=self.axis,
+            angle=self.dof.variables.position,
+            child_frame=self.child,
+        )
+
+
+@dataclass(eq=False)
+class ScrewConnection(ActiveConnection1DOF):
+    """
+    A screw pair: couples rotation about ``axis`` with translation along it into a
+    single degree of freedom.
+
+    Increasing the degree of freedom's position rotates the child counterclockwise about
+    ``axis`` (right-hand rule) and translates it along ``axis`` by ``screw_pitch *
+    position / (2 * pi)``, i.e. one full revolution advances the child by one
+    ``screw_pitch``. A right-handed thread whose ``axis`` points from the parent toward
+    the child therefore has a positive ``screw_pitch``: driving the degree of freedom
+    toward its upper limit unscrews the child.
+    """
+
+    screw_pitch: float = field(kw_only=True)
+    """
+    The distance between adjacent threads, measured parallel to ``axis`` in meters.
+
+    Assumes a single-start thread, where the child advances one ``screw_pitch`` along
+    ``axis`` per full revolution. See
+    https://wellfastener.com/blog/what-is-screw-pitch%EF%BC%9Fscrew-pitch-vs-lead/
+    for
+    the distinction between screw pitch and lead. Negative values model left-handed
+    threads.
+    """
+
+    def add_to_world(self, world: World):
+        super().add_to_world(world)
+
+        angle = self.dof.variables.position
+        translation_axis = self.axis * (self.screw_pitch * angle / (2 * np.pi))
+        self._kinematics = HomogeneousTransformationMatrix.from_xyz_axis_angle(
+            x=translation_axis[0],
+            y=translation_axis[1],
+            z=translation_axis[2],
+            axis=self.axis,
+            angle=angle,
+            child_frame=self.child,
+        )
+
+    def rotation_angle_for_travel_distance(self, travel_distance: float) -> float:
+        """
+        The rotation of the degree of freedom that translates the child by
+        ``travel_distance`` along ``axis``.
+
+        Allows expressing joint goals as travel distances, e.g. how far a cap should
+        move along its thread.
+
+        :param travel_distance: Signed translation along ``axis`` in meters.
+        :return: The signed rotation angle in radians.
+        """
+        return travel_distance * 2 * np.pi / self.screw_pitch
+
+    @classmethod
+    def create_with_dofs(
+        cls,
+        world: World,
+        parent: KinematicStructureEntity,
+        child: KinematicStructureEntity,
+        *,
+        name: Optional[PrefixedName] = None,
+        parent_T_connection_expression: Optional[
+            HomogeneousTransformationMatrix
+        ] = None,
+        connection_T_child_expression: Optional[HomogeneousTransformationMatrix] = None,
+        multiplier: float = 1.0,
+        offset: float = 0.0,
+        dof_limits: Optional[DegreeOfFreedomLimits] = None,
+        axis: Vector3 | None = None,
+        screw_pitch: float,
+    ) -> Self:
+        """
+        Creates and returns a screw connection with its single degree of freedom.
+
+        See :meth:`ActiveConnection1DOF.create_with_dofs`; additionally requires the
+        screw's ``screw_pitch``.
+
+        :param screw_pitch: The distance between adjacent threads along ``axis`` in
+            meters.
+        """
+        name = name or cls._generate_default_name(parent=parent, child=child)
+        dof = DegreeOfFreedom(name=PrefixedName("dof", str(name)), limits=dof_limits)
+        world.add_degree_of_freedom(dof)
+        connection = cls(
+            name=name,
+            parent=parent,
+            child=child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            axis=axis,
+            multiplier=multiplier,
+            offset=offset,
+            raw_dof=dof,
+            screw_pitch=screw_pitch,
+        )
+        return connection
+
+    def copy_for_world(self, world: World):
+        (
+            other_parent,
+            other_child,
+            parent_T_connection_expression,
+            connection_T_child_expression,
+        ) = self._find_references_in_world(world)
+
+        return self.__class__(
+            name=PrefixedName(self.name.name, self.name.prefix),
+            parent=other_parent,
+            child=other_child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            axis=self.axis,
+            multiplier=self.multiplier,
+            offset=self.offset,
+            raw_dof=world.get_degree_of_freedom_by_id(self.raw_dof.id),
+            screw_pitch=self.screw_pitch,
+            dynamics=self.dynamics,
+        )
+
+    def copy_with_new_parent(
+        self,
+        new_parent: KinematicStructureEntity,
+        parent_T_connection_expression: HomogeneousTransformationMatrix,
+    ) -> Self:
+        # Reuse the same degree of freedom so the joint state is kept.
+        return self.__class__(
+            parent=new_parent,
+            child=self.child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=self.connection_T_child_expression,
+            axis=self.axis,
+            multiplier=self.multiplier,
+            offset=self.offset,
+            raw_dof=self.raw_dof,
+            dynamics=self.dynamics,
+            screw_pitch=self.screw_pitch,
+        )
+
+
+@dataclass(eq=False)
+class Connection6DoF(Connection):
+    """
+    Has full 6 degrees of freedom, that cannot be actively controlled.
+
+    Useful for synchronizing with transformations from external providers.
+    """
+
+    x: DegreeOfFreedom = field(kw_only=True)
+    """
+    Displacement of child KinematicStructureEntity with respect to parent
+    KinematicStructureEntity along the x-axis.
+    """
+
+    y: DegreeOfFreedom = field(kw_only=True)
+    """
+    Displacement of child KinematicStructureEntity with respect to parent
+    KinematicStructureEntity along the y-axis.
+    """
+
+    z: DegreeOfFreedom = field(kw_only=True)
+    """
+    Displacement of child KinematicStructureEntity with respect to parent
+    KinematicStructureEntity along the z-axis.
+    """
+
+    qx: DegreeOfFreedom = field(kw_only=True)
+    qy: DegreeOfFreedom = field(kw_only=True)
+    qz: DegreeOfFreedom = field(kw_only=True)
+    qw: DegreeOfFreedom = field(kw_only=True)
+    """
+    Rotation of child KinematicStructureEntity with respect to parent
+    KinematicStructureEntity represented as a quaternion.
+    """
+
+    def add_to_world(self, world: World):
+        super().add_to_world(world)
+        parent_P_child = Point3(
+            x=self.x.variables.position,
+            y=self.y.variables.position,
+            z=self.z.variables.position,
+        )
+        parent_R_child = Quaternion(
+            x=self.qx.variables.position,
+            y=self.qy.variables.position,
+            z=self.qz.variables.position,
+            w=self.qw.variables.position,
+        ).to_rotation_matrix()
+        self._kinematics = HomogeneousTransformationMatrix.from_point_rotation_matrix(
+            point=parent_P_child,
+            rotation_matrix=parent_R_child,
+            child_frame=self.child,
+        )
+
+    @classmethod
+    def create_with_dofs(
+        cls,
+        world: World,
+        parent: KinematicStructureEntity,
+        child: KinematicStructureEntity,
+        *,
+        name: Optional[PrefixedName] = None,
+        parent_T_connection_expression: Optional[
+            HomogeneousTransformationMatrix
+        ] = None,
+        connection_T_child_expression: Optional[HomogeneousTransformationMatrix] = None,
+    ) -> Self:
+        """
+        Creates an instance of the class with automatically generated degrees of freedom
+        (DoFs) for the provided parent and child kinematic entities within the specified
+        world.
+
+        This method initializes and adds the required degrees of freedom to the world,
+        and sets their properties accordingly. It generates a name for the connection if
+        none is provided, and ensures valid initial state for relevant degrees of freedom.
+
+        :param world: The World object where the degrees of freedom are added and modified.
+        :param parent: The KinematicStructureEntity serving as the parent.
+        :param child: The KinematicStructureEntity serving as the child.
+        :param name: An optional PrefixedName for the connection. If None, it will be
+                     auto-generated based on the parent and child names.
+        :param parent_T_connection_expression: Optional transformation matrix specifying
+                                               the connection relationship between parent
+                                               and the connection.
+        :param connection_T_child_expression: Optional transformation matrix specifying
+                                              the connection relationship between the connection
+                                              and its child entities
+        :return: A new instance of the class representing the parent-child connection with
+                 automatically defined degrees of freedom.
+        """
+        name = name or cls._generate_default_name(parent=parent, child=child)
+
+        stringified_name = str(name)
+        x = DegreeOfFreedom(name=PrefixedName("x", stringified_name))
+        world.add_degree_of_freedom(x)
+        y = DegreeOfFreedom(name=PrefixedName("y", stringified_name))
+        world.add_degree_of_freedom(y)
+        z = DegreeOfFreedom(name=PrefixedName("z", stringified_name))
+        world.add_degree_of_freedom(z)
+        qx = DegreeOfFreedom(name=PrefixedName("qx", stringified_name))
+        world.add_degree_of_freedom(qx)
+        qy = DegreeOfFreedom(name=PrefixedName("qy", stringified_name))
+        world.add_degree_of_freedom(qy)
+        qz = DegreeOfFreedom(name=PrefixedName("qz", stringified_name))
+        world.add_degree_of_freedom(qz)
+        qw = DegreeOfFreedom(name=PrefixedName("qw", stringified_name))
+        world.add_degree_of_freedom(qw)
+        world.state[qw.id].position = 1.0
+
+        return cls(
+            parent=parent,
+            child=child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            name=name,
+            x=x,
+            y=y,
+            z=z,
+            qx=qx,
+            qy=qy,
+            qz=qz,
+            qw=qw,
+        )
+
+    @property
+    def passive_dofs(self) -> list[DegreeOfFreedom]:
+        return [self.x, self.y, self.z, self.qx, self.qy, self.qz, self.qw]
+
+    @property
+    def origin(self) -> HomogeneousTransformationMatrix:
+        return super().origin
+
+    @origin.setter
+    def origin(self, transformation: HomogeneousTransformationMatrix) -> None:
+        """
+        Set this connection's parent-to-child origin.
+
+        The origin is ``parent_T_connection_expression @ _kinematics @
+        connection_T_child_expression``, of which only ``_kinematics`` is DOF-backed;
+        the other two are fixed at connection creation. So ``transformation`` is first
+        converted into the parent frame and then un-composed with those constants, to
+        find the DOF state that makes the *resulting* origin equal ``transformation``,
+        rather than writing ``transformation`` in as ``_kinematics`` directly.
+
+        The degree-of-freedom writes and the notification they trigger are held
+        together under ``World._world_lock``. They form one logical pose
+        change, and an observer that reads or writes the state between them --
+        such as a running physics simulator syncing its own values back into
+        the world -- would otherwise see, and be able to overwrite, a pose that
+        is only half applied.
+
+        :param transformation: The desired parent-to-child origin. Must carry a
+            reference frame (:meth:`World.transform` raises
+            :class:`~semantic_digital_twin.exceptions.MissingReferenceFrameError`
+            otherwise); does not need to already be expressed in the parent frame. Other
+            spatial types (e.g. ``Pose``) must be converted with their own
+            ``to_homogeneous_matrix()`` before being assigned here.
+        """
+        local_kinematics = self._calculate_local_kinematics(
+            self._world.transform(transformation, self.parent)
+        )
+        position = local_kinematics.to_position()
+        orientation = local_kinematics.to_rotation_matrix().to_quaternion()
+        with self._world._world_lock:
+            self._world.state[self.x.id].position = position[0]
+            self._world.state[self.y.id].position = position[1]
+            self._world.state[self.z.id].position = position[2]
+            self._world.state[self.qx.id].position = orientation[0]
+            self._world.state[self.qy.id].position = orientation[1]
+            self._world.state[self.qz.id].position = orientation[2]
+            self._world.state[self.qw.id].position = orientation[3]
+            self._world.notify_state_change()
+
+    def copy_for_world(self, world: World) -> Connection6DoF:
+        """
+        Copies this 6DoF connection for another world.
+
+        Returns a new connection with references to the given world.
+        :param world: The world to copy this connection for.
+        :return: A copy of this connection for the given world.
+        """
+        (
+            other_parent,
+            other_child,
+            parent_T_connection_expression,
+            connection_T_child_expression,
+        ) = self._find_references_in_world(world)
+
+        return Connection6DoF(
+            name=deepcopy(self.name),
+            parent=other_parent,
+            child=other_child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            x=world.get_degree_of_freedom_by_id(self.x.id),
+            y=world.get_degree_of_freedom_by_id(self.y.id),
+            z=world.get_degree_of_freedom_by_id(self.z.id),
+            qx=world.get_degree_of_freedom_by_id(self.qx.id),
+            qy=world.get_degree_of_freedom_by_id(self.qy.id),
+            qz=world.get_degree_of_freedom_by_id(self.qz.id),
+            qw=world.get_degree_of_freedom_by_id(self.qw.id),
+        )
+
+    def copy_with_new_parent(
+        self,
+        new_parent: KinematicStructureEntity,
+        parent_T_connection_expression: HomogeneousTransformationMatrix,
+    ) -> Self:
+        # Reuse the same degrees of freedom so the world state layout is kept.
+        return self.__class__(
+            parent=new_parent,
+            child=self.child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=self.connection_T_child_expression,
+            x=self.x,
+            y=self.y,
+            z=self.z,
+            qx=self.qx,
+            qy=self.qy,
+            qz=self.qz,
+            qw=self.qw,
+        )
+
+
+@dataclass(eq=False)
+class WheeledDrive(ActiveConnection, HasUpdateState, ABC):
+    """
+    Superclass for connections that describe a drive, e.g., an omnidirectional drive or
+    a differential drive.
+    """
+
+    x: DegreeOfFreedom = field(kw_only=True)
+    """
+    Passive DoFs describing the measured odometry in x with respect to parent frame.
+    """
+
+    y: DegreeOfFreedom = field(kw_only=True)
+    """
+    Passive DoFs describing the measured odometry in y with respect to parent frame.
+    """
+
+    roll: DegreeOfFreedom = field(kw_only=True)
+    """
+    Passive DoF describing the measured odometry in roll using the IMU sensor.
+    """
+
+    pitch: DegreeOfFreedom = field(kw_only=True)
+    """
+    Passive DoF describing the measured odometry in pitch using the IMU sensor.
+    """
+
+    yaw: DegreeOfFreedom = field(kw_only=True)
+    """
+    Active DoF describing rotation around the robot's z-axis.
+    """
+
+    @property
+    def origin(self) -> HomogeneousTransformationMatrix:
+        return super().origin
+
+    @origin.setter
+    def origin(
+        self, transformation: Union[NpMatrix4x4, HomogeneousTransformationMatrix]
+    ) -> None:
+        """
+        Overwrites the origin of the connection.
+
+        The origin is ``parent_T_connection_expression @ _kinematics @
+        connection_T_child_expression``, of which only ``_kinematics`` is degree of
+        freedom backed, so ``transformation`` is un-composed with the other two to find
+        the drive's state that produces it.
+
+        .. warning:: Ignores z position, pitch, and roll values, because a drive cannot
+            reach them.
+
+        The degree-of-freedom writes and the notification they trigger are held
+        together under ``World._world_lock``. They form one logical pose
+        change, and an observer that reads or writes the state between them --
+        such as a running physics simulator syncing its own values back into
+        the world -- would otherwise see, and be able to overwrite, a pose that
+        is only half applied.
+
+        :param transformation: The desired parent-to-child origin.
+        """
+        local_kinematics = self._calculate_local_kinematics(transformation)
+        position = local_kinematics.to_position()
+        roll, pitch, yaw = local_kinematics.to_rotation_matrix().to_rpy()
+        with self._world._world_lock:
+            self._world.state[self.x.id].position = position.x
+            self._world.state[self.y.id].position = position.y
+            self._world.state[self.yaw.id].position = yaw
+            self._world.notify_state_change()
+
+
+@dataclass(eq=False)
+class OmniDrive(WheeledDrive):
+    """
+    A connection describing an omnidirectional drive.
+
+    It can rotate about its z-axis and drive on the x-y plane simultaneously.
+    - x/y: Passive dofs describing the measured odometry with respect to parent frame.
+        We assume that the robot can't fly, and we can't measure its z-axis position, so z=0.
+        The odometry sensors typically provide velocity measurements with respect to the child frame,
+        therefore the velocity values of x/y must stay 0.
+    - x_vel/y_vel: The measured and commanded velocity is represented with respect to the child frame with these
+        active dofs. It must be ensured that their position values stay 0.
+    - roll/pitch: Some robots, like the PR2, have sensors to measure pitch and roll using an IMU,
+        we therefore have passive dofs for them.
+    - yaw: Since the robot can only rotate about its z-axis, we don't need different dofs for position and velocity of yaw.
+        They are combined into one active dof.
+    """
+
+    x_velocity: DegreeOfFreedom = field(kw_only=True)
+    """
+    Active DoF describing the measured and commanded velocity in x.
+
+    Represented with respect to the child frame.
+    """
+
+    y_velocity: DegreeOfFreedom = field(kw_only=True)
+    """
+    Active DoF describing the measured and commanded velocity in y.
+
+    Represented with respect to the child frame.
+    """
+
+    def add_to_world(self, world: World):
+        super().add_to_world(world)
+        odom_T_bf = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=self.x.variables.position,
+            y=self.y.variables.position,
+            yaw=self.yaw.variables.position,
+        )
+        bf_T_bf_vel = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=self.x_velocity.variables.position, y=self.y_velocity.variables.position
+        )
+        bf_vel_T_bf = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=0,
+            y=0,
+            z=0,
+            roll=self.roll.variables.position,
+            pitch=self.pitch.variables.position,
+            yaw=0,
+        )
+        self._kinematics = odom_T_bf @ bf_T_bf_vel @ bf_vel_T_bf
+        self._kinematics.child_frame = self.child
+
+    @classmethod
+    def create_with_dofs(
+        cls,
+        world: World,
+        parent: KinematicStructureEntity,
+        child: KinematicStructureEntity,
+        *,
+        name: Optional[PrefixedName] = None,
+        parent_T_connection_expression: Optional[
+            HomogeneousTransformationMatrix
+        ] = None,
+        connection_T_child_expression: Optional[HomogeneousTransformationMatrix] = None,
+        translation_velocity_limits: float = 0.6,
+        rotation_velocity_limits: float = 0.5,
+    ) -> Self:
+        """
+        Creates an instance of the class with automatically generated degrees of freedom
+        (DOFs) for translation on the x and y axes, rotation along roll, pitch, and yaw
+        axes, and velocity limits for translation and rotation.
+
+        This method modifies the provided world to add all required degrees of freedom
+        and their limits, based on the provided settings. Names for the degrees of
+        freedom are auto-generated using the stringified version of the provided name or
+        its default setting.
+
+        :param world: The world where the configuration is being applied, and degrees of
+            freedom are added.
+        :param parent: The parent kinematic structure entity.
+        :param child: The child kinematic structure entity.
+        :param name: Name of the connection. If None, it will be auto-generated.
+        :param parent_T_connection_expression: Transformation matrix representing the
+            relative position/orientation of the child to the parent. Default is
+            Identity.
+        :param connection_T_child_expression: Transformation matrix representing the
+            relative position/orientation of the child to the connection. Default is
+            Identity.
+        :param translation_velocity_limits: The velocity limit applied to the
+            translation degrees of freedom (default is 0.6).
+        :param rotation_velocity_limits: The velocity limit applied to the rotation
+            degrees of freedom (default is 0.5).
+        :return: An instance of the class with the auto-generated DOFs incorporated.
+        """
+        name = name or cls._generate_default_name(parent=parent, child=child)
+        stringified_name = str(name)
+        lower_translation_limits = DerivativeMap()
+        lower_translation_limits.velocity = -translation_velocity_limits
+        upper_translation_limits = DerivativeMap()
+        upper_translation_limits.velocity = translation_velocity_limits
+        lower_rotation_limits = DerivativeMap()
+        lower_rotation_limits.velocity = -rotation_velocity_limits
+        upper_rotation_limits = DerivativeMap()
+        upper_rotation_limits.velocity = rotation_velocity_limits
+
+        x = DegreeOfFreedom(name=PrefixedName("x", stringified_name))
+        world.add_degree_of_freedom(x)
+        y = DegreeOfFreedom(name=PrefixedName("y", stringified_name))
+        world.add_degree_of_freedom(y)
+        roll = DegreeOfFreedom(name=PrefixedName("roll", stringified_name))
+        world.add_degree_of_freedom(roll)
+        pitch = DegreeOfFreedom(name=PrefixedName("pitch", stringified_name))
+        world.add_degree_of_freedom(pitch)
+        yaw = DegreeOfFreedom(
+            name=PrefixedName("yaw", stringified_name),
+            limits=DegreeOfFreedomLimits(
+                lower=lower_rotation_limits,
+                upper=upper_rotation_limits,
+            ),
+        )
+        world.add_degree_of_freedom(yaw)
+
+        x_vel = DegreeOfFreedom(
+            name=PrefixedName("x_vel", stringified_name),
+            limits=DegreeOfFreedomLimits(
+                lower=lower_translation_limits,
+                upper=upper_translation_limits,
+            ),
+        )
+        world.add_degree_of_freedom(x_vel)
+        y_vel = DegreeOfFreedom(
+            name=PrefixedName("y_vel", stringified_name),
+            limits=DegreeOfFreedomLimits(
+                lower=lower_translation_limits,
+                upper=upper_translation_limits,
+            ),
+        )
+        world.add_degree_of_freedom(y_vel)
+
+        return cls(
+            parent=parent,
+            child=child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            name=name,
+            x=x,
+            y=y,
+            roll=roll,
+            pitch=pitch,
+            yaw=yaw,
+            x_velocity=x_vel,
+            y_velocity=y_vel,
+        )
+
+    def copy_with_new_parent(
+        self,
+        new_parent: KinematicStructureEntity,
+        parent_T_connection_expression: HomogeneousTransformationMatrix,
+    ) -> Self:
+        # Reuse the same degrees of freedom so the odometry and the world state layout are kept.
+        return self.__class__(
+            parent=new_parent,
+            child=self.child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=self.connection_T_child_expression,
+            x=self.x,
+            y=self.y,
+            roll=self.roll,
+            pitch=self.pitch,
+            yaw=self.yaw,
+            x_velocity=self.x_velocity,
+            y_velocity=self.y_velocity,
+        )
+
+    @property
+    def active_dofs(self) -> list[DegreeOfFreedom]:
+        return [self.x_velocity, self.y_velocity, self.yaw]
+
+    @property
+    def passive_dofs(self) -> list[DegreeOfFreedom]:
+        return [self.x, self.y, self.roll, self.pitch]
+
+    def update_state(self, dt: float) -> None:
+        state = self._world.state
+        state[self.x_velocity.id].position = 0
+        state[self.y_velocity.id].position = 0
+
+        x_vel = state[self.x_velocity.id].velocity
+        y_vel = state[self.y_velocity.id].velocity
+        delta = state[self.yaw.id].position
+        x_velocity = np.cos(delta) * x_vel - np.sin(delta) * y_vel
+        state[self.x.id].position += x_velocity * dt
+        y_velocity = np.sin(delta) * x_vel + np.cos(delta) * y_vel
+        state[self.y.id].position += y_velocity * dt
+
+    def get_free_variable_names(self) -> list[UUID]:
+        return [self.x.id, self.y.id, self.yaw.id]
+
+    def copy_for_world(self, world: World) -> OmniDrive:
+        """
+        Copies this OmniDriveConnection for the provided world.
+
+        This finds the references for the parent and child in the new world and returns
+        a new connection with references to the new parent and child.
+        :param world: The world where the connection is copied.
+        :return: The connection with references to the new parent and child.
+        """
+        (
+            other_parent,
+            other_child,
+            parent_T_connection_expression,
+            connection_T_child_expression,
+        ) = self._find_references_in_world(world)
+
+        return OmniDrive(
+            name=deepcopy(self.name),
+            parent=other_parent,
+            child=other_child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            x=world.get_degree_of_freedom_by_id(self.x.id),
+            y=world.get_degree_of_freedom_by_id(self.y.id),
+            roll=world.get_degree_of_freedom_by_id(self.roll.id),
+            pitch=world.get_degree_of_freedom_by_id(self.pitch.id),
+            yaw=world.get_degree_of_freedom_by_id(self.yaw.id),
+            x_velocity=world.get_degree_of_freedom_by_id(self.x_velocity.id),
+            y_velocity=world.get_degree_of_freedom_by_id(self.y_velocity.id),
+        )
+
+
+@dataclass(eq=False)
+class DifferentialDrive(WheeledDrive):
+    """
+    A connection describing a differential drive.
+
+    It can rotate around its z-axis and drive in x-direction. It allows movement in the
+    x-y plane.
+    """
+
+    x_velocity: DegreeOfFreedom = field(kw_only=True)
+    """
+    Active DoF describing the measured and commanded velocity in x.
+
+    Represented with respect to the child frame.
+    """
+
+    def add_to_world(self, world: World):
+        super().add_to_world(world)
+        odom_T_bf = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=self.x.variables.position,
+            y=self.y.variables.position,
+            yaw=self.yaw.variables.position,
+        )
+        bf_T_bf_vel = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=self.x_velocity.variables.position,
+        )
+        bf_vel_T_bf = HomogeneousTransformationMatrix.from_xyz_rpy(
+            x=0,
+            y=0,
+            z=0,
+            roll=self.roll.variables.position,
+            pitch=self.pitch.variables.position,
+            yaw=0,
+        )
+        self._kinematics = odom_T_bf @ bf_T_bf_vel @ bf_vel_T_bf
+        self._kinematics.child_frame = self.child
+
+    @classmethod
+    def create_with_dofs(
+        cls,
+        world: World,
+        parent: KinematicStructureEntity,
+        child: KinematicStructureEntity,
+        *,
+        name: Optional[PrefixedName] = None,
+        parent_T_connection_expression: Optional[
+            HomogeneousTransformationMatrix
+        ] = None,
+        connection_T_child_expression: Optional[HomogeneousTransformationMatrix] = None,
+        translation_velocity_limits: float = 0.6,
+        rotation_velocity_limits: float = 0.5,
+    ) -> Self:
+        """
+        Creates an instance of the class with automatically generated DoFs for
+        translation on the x-axis, rotation along roll, pitch, and yaw axes, and
+        velocity limits for translation and rotation.
+
+        :param world: The world where the configuration is being applied, and degrees of
+            freedom are added.
+        :param parent: The parent kinematic structure entity.
+        :param child: The child kinematic structure entity.
+        :param name: Name of the connection. If None, it will be auto-generated.
+        :param parent_T_connection_expression: Transformation matrix representing the
+            relative position/orientation of the child to the parent. Default is
+            Identity.
+        :param connection_T_child_expression: Transformation matrix representing the
+            relative position/orientation of the child to the connection. Default is
+            Identity.
+        :param translation_velocity_limits: The velocity limit applied to the
+            translation degrees of freedom (default is 0.6).
+        :param rotation_velocity_limits: The velocity limit applied to the rotation
+            degrees of freedom (default is 0.5).
+        :return: An instance of the class with the auto-generated DOFs incorporated.
+        """
+        name = name or cls._generate_default_name(parent=parent, child=child)
+        stringified_name = str(name)
+        lower_translation_limits = DerivativeMap()
+        lower_translation_limits.velocity = -translation_velocity_limits
+        upper_translation_limits = DerivativeMap()
+        upper_translation_limits.velocity = translation_velocity_limits
+        lower_rotation_limits = DerivativeMap()
+        lower_rotation_limits.velocity = -rotation_velocity_limits
+        upper_rotation_limits = DerivativeMap()
+        upper_rotation_limits.velocity = rotation_velocity_limits
+
+        x = DegreeOfFreedom(name=PrefixedName("x", stringified_name))
+        world.add_degree_of_freedom(x)
+        y = DegreeOfFreedom(name=PrefixedName("y", stringified_name))
+        world.add_degree_of_freedom(y)
+        roll = DegreeOfFreedom(name=PrefixedName("roll", stringified_name))
+        world.add_degree_of_freedom(roll)
+        pitch = DegreeOfFreedom(name=PrefixedName("pitch", stringified_name))
+        world.add_degree_of_freedom(pitch)
+        yaw = DegreeOfFreedom(
+            name=PrefixedName("yaw", stringified_name),
+            limits=DegreeOfFreedomLimits(
+                lower=lower_rotation_limits,
+                upper=upper_rotation_limits,
+            ),
+        )
+        world.add_degree_of_freedom(yaw)
+
+        x_vel = DegreeOfFreedom(
+            name=PrefixedName("x_vel", stringified_name),
+            limits=DegreeOfFreedomLimits(
+                lower=lower_translation_limits,
+                upper=upper_translation_limits,
+            ),
+        )
+        world.add_degree_of_freedom(x_vel)
+
+        return cls(
+            parent=parent,
+            child=child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            name=name,
+            x=x,
+            y=y,
+            roll=roll,
+            pitch=pitch,
+            yaw=yaw,
+            x_velocity=x_vel,
+        )
+
+    def copy_with_new_parent(
+        self,
+        new_parent: KinematicStructureEntity,
+        parent_T_connection_expression: HomogeneousTransformationMatrix,
+    ) -> Self:
+        # Reuse the same degrees of freedom so the odometry and the world state layout are kept.
+        return self.__class__(
+            parent=new_parent,
+            child=self.child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=self.connection_T_child_expression,
+            x=self.x,
+            y=self.y,
+            roll=self.roll,
+            pitch=self.pitch,
+            yaw=self.yaw,
+            x_velocity=self.x_velocity,
+        )
+
+    @property
+    def active_dofs(self) -> list[DegreeOfFreedom]:
+        return [self.x_velocity, self.yaw]
+
+    @property
+    def passive_dofs(self) -> list[DegreeOfFreedom]:
+        return [self.x, self.y, self.roll, self.pitch]
+
+    def update_state(self, dt: float) -> None:
+        state = self._world.state
+        state[self.x_velocity.id].position = 0
+
+        x_vel = state[self.x_velocity.id].velocity
+        delta = state[self.yaw.id].position
+        x_velocity = np.cos(delta) * x_vel
+        state[self.x.id].position += x_velocity * dt
+        y_velocity = np.sin(delta) * x_vel
+        state[self.y.id].position += y_velocity * dt
+
+    def get_free_variable_names(self) -> list[UUID]:
+        return [self.x.id, self.y.id, self.yaw.id]
+
+    def copy_for_world(self, world: World) -> DifferentialDrive:
+        """
+        Copies this DiffDriveConnection for the provided world.
+
+        This finds the references for the parent and child in the new world and returns
+        a new connection with references to the new parent and child.
+        :param world: The world where the connection is copied.
+        :return: The connection with references to the new parent and child.
+        """
+        (
+            other_parent,
+            other_child,
+            parent_T_connection_expression,
+            connection_T_child_expression,
+        ) = self._find_references_in_world(world)
+
+        return DifferentialDrive(
+            name=deepcopy(self.name),
+            parent=other_parent,
+            child=other_child,
+            parent_T_connection_expression=parent_T_connection_expression,
+            connection_T_child_expression=connection_T_child_expression,
+            x=world.get_degree_of_freedom_by_id(self.x.id),
+            y=world.get_degree_of_freedom_by_id(self.y.id),
+            roll=world.get_degree_of_freedom_by_id(self.roll.id),
+            pitch=world.get_degree_of_freedom_by_id(self.pitch.id),
+            yaw=world.get_degree_of_freedom_by_id(self.yaw.id),
+            x_velocity=world.get_degree_of_freedom_by_id(self.x_velocity.id),
+        )

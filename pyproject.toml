@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cognitive-robot-abstract-machine"
+description = "Meta-package that wires local subprojects together"
+requires-python = ">=3.12,<3.13"
+license = "LGPL-3.0-only"
+dynamic = ["version"]
+readme = "README.md"
+authors = [{ name = "Anonymous" }]
+
+# Add dependencies on all workspace members by their distribution names
+# uv will resolve these to editable installs via [tool.uv.sources]
+dependencies = [
+  "giskardpy",
+  "physics_simulators",
+  "semantic_digital_twin",
+  "krrood",
+  "random-events",
+  "probabilistic_model",
+  "experiments",
+  "ipykernel>=7.2.0",
+  "lark-parser>=0.12.0",
+  "tqdm"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0,<8.0.0",
+    "pytest-asyncio>=0.23.0,<0.24.0",
+    "pytest-xdist",
+    "pytest-rerunfailures",
+    "objgraph",
+    "bokeh",
+    "mypy>=1.8",
+    "docformatter",
+]
+
+
+[tool.uv.workspace]
+members = [
+  "giskardpy",
+  "physics_simulators",
+  "semantic_digital_twin",
+  "krrood",
+  "random_events",
+  "probabilistic_model",
+  "experiments"
+]
+
+[tool.uv.sources]
+giskardpy             = { workspace = true }
+physics_simulators    = { workspace = true }
+semantic_digital_twin = { workspace = true }
+krrood                = { workspace = true }
+probabilistic_model   = { workspace = true }
+random_events         = { workspace = true }
+experiments           = { workspace = true }
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.dependencies]
+giskardpy = { path = "giskardpy", develop = true }
+physics_simulators = { path = "physics_simulators", develop = true }
+semantic_digital_twin = { path = "semantic_digital_twin", develop = true }
+krrood = { path = "krrood", develop = true }
+random_events = { path = "random_events", develop = true }
+probabilistic_model = { path = "probabilistic_model", develop = true }
+experiments = { path = "experiments", develop = true }
+
+[tool.setuptools]
+packages = ["cognitive_robot_abstract_machine"]
+package-dir = {"" = "."}
+
+[tool.setuptools.dynamic]
+version = {attr = "cognitive_robot_abstract_machine._version.__version__"}
+
+[tool.docformatter]
+make-summary-multi-line = true
+pre-summary-newline = true
+close-quotes-on-newline = true
+black = true
