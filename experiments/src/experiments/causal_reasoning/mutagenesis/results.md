@@ -102,7 +102,7 @@ One row per question, one column per pipeline. An answered cell says, in words, 
 |---|---|---|---|---|---|---|
 | How many branching atoms cause a molecule to be mutagenic, adjusting for the ind1 indicator? | answered: with 18 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.18. | answered: with 18 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.18. | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.18. | refused: the fitted table has no column for the queried variables. | answered: with 21 branching atoms, the molecule is mutagenic with probability 0.97, the highest of any setting; with 10 branching atoms it is only 0.39. | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.15. |
 | How many branching atoms cause a molecule to be mutagenic, adjusting for the number of atoms? | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. | answered: with 18 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. | refused: the fitted table has no column for the queried variables. | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.12. | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. |
-| How many branching atoms cause a molecule to be mutagenic, adjusting for the ind1 indicator and the number of atoms? | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. | answered: with 18 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. | refused: the fitted table has no column for the queried variables. | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.12. | answered: with 21 branching atoms, the molecule is mutagenic with probability 0.99, the highest of any setting; with 10 branching atoms it is only 0.16. |
+| How many branching atoms cause a molecule to be mutagenic, adjusting for the ind1 indicator and the number of atoms? | answered: with 18 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. | answered: with 18 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.13. | refused: the fitted table has no column for the queried variables. | answered: with 21 branching atoms, the molecule is mutagenic with probability 1.00, the highest of any setting; with 10 branching atoms it is only 0.12. | answered: with 21 branching atoms, the molecule is mutagenic with probability 0.99, the highest of any setting; with 10 branching atoms it is only 0.16. |
 | How many aromatic bonds cause a molecule to be mutagenic, adjusting for the ind1 indicator? | answered: with 17 aromatic bonds, the molecule is mutagenic with probability 1.00, the highest of any setting; with 6 aromatic bonds it is only 0.24. | answered: with 17 aromatic bonds, the molecule is mutagenic with probability 1.00, the highest of any setting; with 6 aromatic bonds it is only 0.24. | answered: with 17 aromatic bonds, the molecule is mutagenic with probability 1.00, the highest of any setting; with 6 aromatic bonds it is only 0.24. | refused: the fitted table has no column for the queried variables. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 0.93, the highest of any setting; with 6 aromatic bonds it is only 0.38. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 0.94, the highest of any setting; with 11 aromatic bonds it is only 0.64. |
 | How many aromatic bonds cause a molecule to be mutagenic, adjusting for the number of atoms? | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 1.00, the highest of any setting; with 6 aromatic bonds it is only 0.27. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 1.00, the highest of any setting; with 6 aromatic bonds it is only 0.27. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 1.00, the highest of any setting; with 6 aromatic bonds it is only 0.30. | refused: the fitted table has no column for the queried variables. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 0.86, the highest of any setting; with 6 aromatic bonds it is only 0.46. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 0.95, the highest of any setting; with 11 aromatic bonds it is only 0.59. |
 | How many aromatic bonds cause a molecule to be mutagenic, adjusting for the ind1 indicator and the number of atoms? | answered: with 17 aromatic bonds, the molecule is mutagenic with probability 1.00, the highest of any setting; with 6 aromatic bonds it is only 0.27. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 1.00, the highest of any setting; with 6 aromatic bonds it is only 0.27. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 1.00, the highest of any setting; with 6 aromatic bonds it is only 0.30. | refused: the fitted table has no column for the queried variables. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 0.69, the highest of any setting; with 6 aromatic bonds it is only 0.64. | answered: with 19 aromatic bonds, the molecule is mutagenic with probability 0.86, the highest of any setting; with 12 aromatic bonds it is only 0.64. |
@@ -113,7 +113,7 @@ One row per question, one column per pipeline. An answered cell says, in words, 
 | Does the ind1 indicator cause a molecule to be mutagenic, adjusting for its branching-atom count? | answered: with ind1 = True, the molecule is mutagenic with probability 0.94, the highest of any setting; with ind1 = False it is only 0.42. | answered: with ind1 = True, the molecule is mutagenic with probability 0.94, the highest of any setting; with ind1 = False it is only 0.42. | answered: with ind1 = True, the molecule is mutagenic with probability 0.95, the highest of any setting; with ind1 = False it is only 0.37. | refused: the fitted table has no column for the queried variables. | answered: with ind1 = True, the molecule is mutagenic with probability 0.79, the highest of any setting; with ind1 = False it is only 0.57. | answered: with ind1 = False, the molecule is mutagenic with probability 0.98, the highest of any setting; with ind1 = True it is only 0.97. |
 | Does the ind1 indicator cause atom 0 of a molecule to be carbon? | answered: with ind1 = True, atom 0 is carbon with probability 0.55, the highest of any setting; with ind1 = False it is only 0.43. | refused: the fitted table has no column for the queried variables. | answered: with ind1 = False, atom 0 is carbon with probability 1.00, the highest of any setting; with ind1 = True it is only 1.00. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. | answered: with ind1 = False, atom 0 is carbon with probability 0.49, the highest of any setting; with ind1 = True it is only 0.49. |
 | How many branching atoms cause atom 0 of a molecule to be terminal, with a single bond? | answered: with 10 branching atoms, atom 0 is terminal with probability 0.45, the highest of any setting; with 13 branching atoms it is only 0.23. | refused: the fitted table has no column for the queried variables. | refused: the effect has zero probability under every cause region. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. | answered: with 22 branching atoms, atom 0 is terminal with probability 0.44, the highest of any setting; with 7 branching atoms it is only 0.36. |
-| Does the element of atom 0 of a molecule cause it to be terminal, with a single bond? | answered: with atom 0 being of element cl, atom 0 is terminal with probability 1.00, the highest of any setting; with atom 0 being of element c it is only 0.00. | refused: the fitted table has no column for the queried variables. | refused: the effect has zero probability under every cause region. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. | answered: with atom 0 being of element cl, atom 0 is terminal with probability 0.76, the highest of any setting; with atom 0 being of element c it is only 0.29. |
+| Does the element of atom 0 of a molecule cause it to be terminal, with a single bond? | answered: with atom 0 being of element cl, atom 0 is terminal with probability 1.00, the highest of any setting; with atom 0 being of element c it is only 0.00. | refused: the fitted table has no column for the queried variables. | refused: the effect has zero probability under every cause region. | refused: the fitted table has no column for the queried variables. | refused: the fitted table has no column for the queried variables. | answered: with atom 0 being of element cl, atom 0 is terminal with probability 0.96, the highest of any setting; with atom 0 being of element c it is only 0.30. |
 
 A question about counts needs the counts: the scalars-only tree refuses it. A question whose effect is one atom's own attribute needs the atoms: the propositional tree refuses it, the unrolled tree answers it about whatever atom the molecules list at that position, and the relational circuit answers it about an exchangeable atom. What an answer about "atom 0" is worth is what the reordering below measures.
 
@@ -136,7 +136,7 @@ The most effective setting is an argmax over up to twenty sparse regions and mov
 | indicator_causes_mutagenicity_adjusting_branching_atom_count | - | 0.52 [0.38, 0.63] (False → True) | - | 0.52 [0.38, 0.63] (False → True) | - | 0.58 [0.44, 0.69] (False → True) | - | - | - | 0.22 [0.07, 0.36] (False → True) | - | 0.00 [-0.07, 0.07] (True → False) |
 | indicator_causes_carbon_atom_0 | - | 0.12 [-0.04, 0.27] (False → True) | - | - | - | 0.00 [-0.05, 0.04] (True → False) | - | - | - | - | - | 0.00 [-0.03, 0.03] (True → False) |
 | branching_atom_count_causes_terminal_atom_0 | -0.05 | -0.04 [-0.39, 0.32] (10 → 21) | - | - | - | - | - | - | - | - | 0.97 | 0.09 [-0.09, 0.27] (7 → 25) |
-| element_causes_terminal_atom_0 | - | 1.00 [0.86, 1.00] (c → cl) | - | - | - | - | - | - | - | - | - | 0.46 [0.26, 0.59] (c → cl) |
+| element_causes_terminal_atom_0 | - | 1.00 [0.86, 1.00] (c → cl) | - | - | - | - | - | - | - | - | - | 0.66 [0.49, 0.70] (c → cl) |
 
 ## What adjusting for changes
 
@@ -205,12 +205,12 @@ What each pipeline cost. *Models fitted* counts the plain model plus one support
 
 | pipeline | models fitted | training seconds | nodes | edges |
 |---|---|---|---|---|
-| relational circuit | 6 | 44.57 | 4663 | 4645 |
-| propositional tree | 5 | 10.76 | 3009 | 3004 |
-| unrolled tree | 6 | 83.32 | 72243 | 72237 |
-| scalars-only tree | 2 | 0.03 | 232 | 230 |
+| relational circuit | 6 | 44.60 | 4663 | 4645 |
+| propositional tree | 5 | 10.42 | 3009 | 3004 |
+| unrolled tree | 6 | 82.77 | 72243 | 72237 |
+| scalars-only tree | 2 | 0.02 | 232 | 230 |
 | regression adjustment | 12 | 2.04 | 0 | 0 |
-| neural adjustment | 15 | 1.97 | 0 | 0 |
+| neural adjustment | 15 | 2.06 | 0 | 0 |
 
 How well each explains molecules it never saw, on three views of one molecule: its own scalars, which every pipeline models; its scalars and counts; and the whole molecule, parts included, which only the pipelines that model the parts can score. The relational circuit scores a whole molecule as its class circuit over the scalars and counts times each part template over one part given the counts; the unrolled tree scores it as one row. *Held-out coverage* is the share of held-out molecules that lie inside the plain model's support at all, since a tree's leaves span only the value ranges they were fitted on, and a whole molecule is covered only if every one of its parts is. The *mean log-likelihood* is over the covered molecules only; the last column restricts it to the molecules every pipeline in the table covers, so the numbers are over the same rows.
 
@@ -244,20 +244,20 @@ Wall-clock time from asking to the answer or the refusal. The *first ask* of a c
 
 | question | relational circuit, first ask | relational circuit, asked again | propositional tree, first ask | propositional tree, asked again | unrolled tree, first ask | unrolled tree, asked again | scalars-only tree, first ask | scalars-only tree, asked again | regression adjustment, first ask | regression adjustment, asked again | neural adjustment, first ask | neural adjustment, asked again |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| branching_atom_count_causes_mutagenicity_adjusting_indicator_1 | 9.07 | 3.17 | 3.82 | 1.90 | 35.08 | 3.81 | 0.01 | 0.00 | 0.02 | - | 0.19 | - |
-| branching_atom_count_causes_mutagenicity_adjusting_atom_count | 12.70 | 12.88 | 14.05 | 13.88 | 19.42 | 19.31 | 0.00 | 0.00 | 0.02 | - | 0.15 | - |
-| branching_atom_count_causes_mutagenicity_adjusting_indicator_1_and_atom_count | 25.38 | 25.33 | 28.39 | 28.46 | 35.35 | 36.27 | 0.00 | 0.01 | 0.03 | - | 0.12 | - |
-| aromatic_bond_count_causes_mutagenicity_adjusting_indicator_1 | 8.61 | 2.15 | 3.66 | 1.02 | 27.74 | 3.44 | 0.00 | 0.00 | 0.02 | - | 0.33 | - |
-| aromatic_bond_count_causes_mutagenicity_adjusting_atom_count | 8.41 | 9.43 | 7.29 | 7.50 | 9.96 | 11.41 | 0.00 | 0.00 | 0.03 | - | 0.33 | - |
-| aromatic_bond_count_causes_mutagenicity_adjusting_indicator_1_and_atom_count | 16.26 | 16.76 | 14.65 | 14.73 | 21.03 | 20.91 | 0.01 | 0.00 | 0.02 | - | 0.33 | - |
-| double_bond_count_causes_mutagenicity_adjusting_indicator_1 | 8.70 | 1.49 | 2.92 | 0.47 | 16.32 | 2.34 | 0.00 | 0.00 | 0.02 | - | 0.32 | - |
-| double_bond_count_causes_mutagenicity_adjusting_atom_count | 5.07 | 5.43 | 2.87 | 3.24 | 4.55 | 4.50 | 0.00 | 0.00 | 0.02 | - | 0.32 | - |
-| double_bond_count_causes_mutagenicity_adjusting_indicator_1_and_atom_count | 7.99 | 8.11 | 5.54 | 5.51 | 7.53 | 8.35 | 0.00 | 0.00 | 0.02 | - | 0.02 | - |
-| indicator_causes_mutagenicity_adjusting_logp | 8.79 | 1.27 | 2.05 | 0.16 | 6.95 | 0.59 | 0.18 | 0.15 | 0.01 | - | 0.02 | - |
-| indicator_causes_mutagenicity_adjusting_branching_atom_count | 1.93 | 2.16 | 0.47 | 0.51 | 0.86 | 0.97 | 0.00 | 0.01 | 0.01 | - | 0.02 | - |
-| indicator_causes_carbon_atom_0 | 2.71 | 2.77 | 0.00 | 0.01 | 0.49 | 0.57 | 0.00 | 0.00 | 0.01 | - | 0.87 | - |
-| branching_atom_count_causes_terminal_atom_0 | 2.63 | 2.15 | 0.00 | 0.00 | 2.26 | 3.45 | 0.00 | 0.00 | 0.01 | - | 0.96 | - |
-| element_causes_terminal_atom_0 | 18.97 | 11.99 | 0.00 | 0.00 | 5.05 | 0.35 | 0.00 | 0.00 | 0.01 | - | 0.78 | - |
+| branching_atom_count_causes_mutagenicity_adjusting_indicator_1 | 9.19 | 2.60 | 4.01 | 1.90 | 33.01 | 4.35 | 0.00 | 0.00 | 0.06 | - | 0.23 | - |
+| branching_atom_count_causes_mutagenicity_adjusting_atom_count | 11.98 | 13.09 | 13.64 | 13.56 | 17.77 | 18.21 | 0.00 | 0.00 | 0.03 | - | 0.17 | - |
+| branching_atom_count_causes_mutagenicity_adjusting_indicator_1_and_atom_count | 23.51 | 25.01 | 27.97 | 27.26 | 34.12 | 33.99 | 0.00 | 0.01 | 0.03 | - | 0.14 | - |
+| aromatic_bond_count_causes_mutagenicity_adjusting_indicator_1 | 9.01 | 1.86 | 3.27 | 1.45 | 29.18 | 2.23 | 0.00 | 0.00 | 0.03 | - | 0.42 | - |
+| aromatic_bond_count_causes_mutagenicity_adjusting_atom_count | 8.29 | 8.83 | 7.00 | 7.17 | 10.10 | 10.79 | 0.01 | 0.00 | 0.03 | - | 0.39 | - |
+| aromatic_bond_count_causes_mutagenicity_adjusting_indicator_1_and_atom_count | 15.90 | 15.86 | 14.81 | 14.29 | 20.31 | 19.60 | 0.00 | 0.00 | 0.03 | - | 0.41 | - |
+| double_bond_count_causes_mutagenicity_adjusting_indicator_1 | 8.48 | 1.43 | 2.55 | 0.51 | 15.78 | 1.15 | 0.00 | 0.00 | 0.02 | - | 0.38 | - |
+| double_bond_count_causes_mutagenicity_adjusting_atom_count | 4.52 | 5.00 | 2.87 | 2.86 | 4.78 | 4.73 | 0.00 | 0.00 | 0.02 | - | 0.38 | - |
+| double_bond_count_causes_mutagenicity_adjusting_indicator_1_and_atom_count | 7.80 | 7.71 | 5.49 | 5.79 | 7.46 | 6.83 | 0.00 | 0.00 | 0.03 | - | 0.02 | - |
+| indicator_causes_mutagenicity_adjusting_logp | 7.99 | 1.16 | 2.55 | 0.12 | 6.71 | 0.48 | 0.15 | 0.13 | 0.02 | - | 0.02 | - |
+| indicator_causes_mutagenicity_adjusting_branching_atom_count | 1.97 | 2.37 | 0.47 | 0.50 | 0.81 | 1.62 | 0.00 | 0.00 | 0.02 | - | 0.02 | - |
+| indicator_causes_carbon_atom_0 | 2.58 | 2.11 | 0.00 | 0.00 | 1.22 | 0.49 | 0.00 | 0.00 | 0.01 | - | 1.04 | - |
+| branching_atom_count_causes_terminal_atom_0 | 2.61 | 2.42 | 0.00 | 0.00 | 2.88 | 2.87 | 0.01 | 0.00 | 0.01 | - | 0.95 | - |
+| element_causes_terminal_atom_0 | 18.89 | 11.72 | 0.00 | 0.00 | 4.23 | 0.28 | 0.00 | 0.00 | 0.01 | - | 0.99 | - |
 
 ## Does the order of the parts matter?
 
@@ -324,7 +324,7 @@ Per question, how many splits each pipeline answered, and the mean ± standard d
 | indicator_causes_mutagenicity_adjusting_branching_atom_count | 5 of 5 | - | 0.54 ± 0.04 | 5 of 5 | - | 0.54 ± 0.04 | 5 of 5 | - | 0.58 ± 0.03 | 0 of 5 | - | - | 5 of 5 | - | 0.22 ± 0.05 | 5 of 5 | - | 0.13 ± 0.12 |
 | indicator_causes_carbon_atom_0 | 5 of 5 | - | 0.08 ± 0.03 | 0 of 5 | - | - | 5 of 5 | - | 0.00 ± 0.00 | 0 of 5 | - | - | 0 of 5 | - | - | 5 of 5 | - | 0.00 ± 0.00 |
 | branching_atom_count_causes_terminal_atom_0 | 5 of 5 | -0.22 ± 0.25 | -0.08 ± 0.05 | 0 of 5 | - | - | 0 of 5 | - | - | 0 of 5 | - | - | 0 of 5 | - | - | 5 of 5 | 0.99 ± 0.01 | 0.15 ± 0.07 |
-| element_causes_terminal_atom_0 | 5 of 5 | - | 1.00 ± 0.00 | 0 of 5 | - | - | 0 of 5 | - | - | 0 of 5 | - | - | 0 of 5 | - | - | 5 of 5 | - | 0.44 ± 0.17 |
+| element_causes_terminal_atom_0 | 5 of 5 | - | 1.00 ± 0.00 | 0 of 5 | - | - | 0 of 5 | - | - | 0 of 5 | - | - | 0 of 5 | - | - | 5 of 5 | - | 0.48 ± 0.16 |
 
 ## How much training data it takes
 
@@ -358,12 +358,12 @@ Settled from 50 samples.
 
 | samples | answered | deviation from reference | seconds |
 |---|---|---|---|
-| 50 | answered | 0.000 | 18.8 |
-| 200 | answered | 0.000 | 12.5 |
-| 1,000 | answered | 0.000 | 11.5 |
+| 50 | answered | 0.000 | 18.2 |
+| 200 | answered | 0.000 | 11.3 |
+| 1,000 | answered | 0.000 | 11.6 |
 | 2,000 | answered | 0.000 | 12.0 |
-| 8,000 | answered | 0.000 | 12.0 |
-| 32,000 | answered | 0.000 | 12.0 |
+| 8,000 | answered | 0.000 | 11.2 |
+| 32,000 | answered | 0.000 | 11.1 |
 
 ### branching_atom_count_causes_terminal_atom_0
 
@@ -371,12 +371,12 @@ Settled from 50 samples.
 
 | samples | answered | deviation from reference | seconds |
 |---|---|---|---|
-| 50 | answered | 0.000 | 2.0 |
+| 50 | answered | 0.000 | 1.8 |
 | 200 | answered | 0.000 | 2.1 |
-| 1,000 | answered | 0.000 | 1.9 |
-| 2,000 | answered | 0.000 | 2.0 |
-| 8,000 | answered | 0.000 | 2.0 |
-| 32,000 | answered | 0.000 | 2.0 |
+| 1,000 | answered | 0.000 | 2.2 |
+| 2,000 | answered | 0.000 | 1.7 |
+| 8,000 | answered | 0.000 | 1.8 |
+| 32,000 | answered | 0.000 | 2.2 |
 
 
 ## What the results show
@@ -389,7 +389,7 @@ Settled from 50 samples.
 - The neural adjustment answered 14 of 14 questions.
 - On `branching_atom_count_causes_mutagenicity_adjusting_indicator_1`, the pipelines disagree on the most effective setting: the relational circuit and the propositional tree say 18 branching atoms (1.00, 1.00); the unrolled tree, the regression adjustment and the neural adjustment say 21 branching atoms (1.00, 0.97, 1.00).
 - On `branching_atom_count_causes_mutagenicity_adjusting_atom_count`, the pipelines disagree on the most effective setting: the relational circuit, the propositional tree, the regression adjustment and the neural adjustment say 21 branching atoms (1.00, 1.00, 1.00, 1.00); the unrolled tree says 18 branching atoms (1.00).
-- On `branching_atom_count_causes_mutagenicity_adjusting_indicator_1_and_atom_count`, the pipelines disagree on the most effective setting: the relational circuit, the propositional tree, the regression adjustment and the neural adjustment say 21 branching atoms (1.00, 1.00, 1.00, 0.99); the unrolled tree says 18 branching atoms (1.00).
+- On `branching_atom_count_causes_mutagenicity_adjusting_indicator_1_and_atom_count`, the pipelines disagree on the most effective setting: the relational circuit and the unrolled tree say 18 branching atoms (1.00, 1.00); the propositional tree, the regression adjustment and the neural adjustment say 21 branching atoms (1.00, 1.00, 0.99).
 - On `aromatic_bond_count_causes_mutagenicity_adjusting_indicator_1`, the pipelines disagree on the most effective setting: the relational circuit, the propositional tree and the unrolled tree say 17 aromatic bonds (1.00, 1.00, 1.00); the regression adjustment and the neural adjustment say 19 aromatic bonds (0.93, 0.94).
 - On `aromatic_bond_count_causes_mutagenicity_adjusting_atom_count`, every pipeline that answered finds 19 aromatic bonds the most effective setting (adjusted probabilities: relational circuit 1.00, propositional tree 1.00, unrolled tree 1.00, regression adjustment 0.86, neural adjustment 0.95).
 - On `aromatic_bond_count_causes_mutagenicity_adjusting_indicator_1_and_atom_count`, the pipelines disagree on the most effective setting: the relational circuit says 17 aromatic bonds (1.00); the propositional tree, the unrolled tree, the regression adjustment and the neural adjustment say 19 aromatic bonds (1.00, 1.00, 0.69, 0.86).
@@ -400,16 +400,16 @@ Settled from 50 samples.
 - On `indicator_causes_mutagenicity_adjusting_branching_atom_count`, the pipelines disagree on the most effective setting: the relational circuit, the propositional tree, the unrolled tree and the regression adjustment say ind1 = True (0.94, 0.94, 0.95, 0.79); the neural adjustment says ind1 = False (0.98).
 - On `indicator_causes_carbon_atom_0`, the pipelines disagree on the most effective setting: the relational circuit says ind1 = True (0.55); the unrolled tree and the neural adjustment say ind1 = False (1.00, 0.49).
 - On `branching_atom_count_causes_terminal_atom_0`, the pipelines disagree on the most effective setting: the relational circuit says 10 branching atoms (0.45); the neural adjustment says 22 branching atoms (0.44).
-- On `element_causes_terminal_atom_0`, every pipeline that answered finds atom 0 being of element cl the most effective setting (adjusted probabilities: relational circuit 1.00, neural adjustment 0.76).
+- On `element_causes_terminal_atom_0`, every pipeline that answered finds atom 0 being of element cl the most effective setting (adjusted probabilities: relational circuit 1.00, neural adjustment 0.96).
 - On the scalars, the scalars-only tree assigns the highest mean log-likelihood (-2.77, against relational circuit -3.05, propositional tree -3.05, unrolled tree -3.08) to the held-out molecules every pipeline covers; coverage: relational circuit 92.1%, propositional tree 92.1%, unrolled tree 92.1%, scalars-only tree 92.1%.
 - On the scalars and counts, the relational circuit assigns the highest mean log-likelihood (-9.01, against propositional tree -9.01, unrolled tree -9.38) to the held-out molecules every pipeline covers; coverage: relational circuit 84.2%, propositional tree 84.2%, unrolled tree 81.6%.
 - On the whole molecule, the relational circuit assigns the highest mean log-likelihood (-40.84, against unrolled tree -91.26) to the held-out molecules every pipeline covers; coverage: relational circuit 73.7%, unrolled tree 44.7%.
 - Over 20 reorderings, the relational circuit's adjusted effect probabilities ranged by up to 0.00 and its most effective region moved in 0.0% of the reorderings; its whole-molecule mean log-likelihood fell by up to 0.00 from the dataset's own order.
 - Over 20 reorderings, the unrolled tree's adjusted effect probabilities ranged by up to 1.00 and its most effective region moved in 95.0% of the reorderings; its whole-molecule mean log-likelihood fell by up to 56.50 from the dataset's own order.
-- The relational circuit takes 7.51 seconds per answered question on average once its models are fitted.
-- The propositional tree takes 7.03 seconds per answered question on average once its models are fitted.
-- The unrolled tree takes 9.37 seconds per answered question on average once its models are fitted.
-- The scalars-only tree takes 0.15 seconds per answered question on average once its models are fitted.
+- The relational circuit takes 7.23 seconds per answered question on average once its models are fitted.
+- The propositional tree takes 6.86 seconds per answered question on average once its models are fitted.
+- The unrolled tree takes 8.71 seconds per answered question on average once its models are fitted.
+- The scalars-only tree takes 0.13 seconds per answered question on average once its models are fitted.
 
 ## How many branching atoms cause a molecule to be mutagenic, adjusting for the ind1 indicator?
 
@@ -1573,8 +1573,8 @@ Refused: the fitted table has no column for the queried variables.
 
 | cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
 |---|---|---|---|---|---|
-| False | 1472 | 0.375 | 0.429 | 0.486 | [0.46, 0.51] |
-| True | 2456 | 0.625 | 0.522 | 0.485 | [0.47, 0.51] |
+| False | 1472 | 0.375 | 0.429 | 0.488 | [0.46, 0.51] |
+| True | 2456 | 0.625 | 0.522 | 0.488 | [0.47, 0.51] |
 
 EQL's own `cause` search settles on False: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.49).
 
@@ -1689,14 +1689,14 @@ Refused: the fitted table has no column for the queried variables.
 
 | cause region | n | P(region) | naive P(effect) | adjusted P(effect | do(cause)) | 95% interval |
 |---|---|---|---|---|---|
-| br † | 2 | 0.001 | 1.000 | 0.541 | [0.11, 0.92] |
-| c | 1915 | 0.488 | 0.000 | 0.293 | [0.27, 0.31] |
-| cl | 23 | 0.006 | 1.000 | 0.755 | [0.55, 0.89] |
-| f † | 8 | 0.002 | 1.000 | 0.602 | [0.29, 0.85] |
-| h | 1223 | 0.311 | 1.000 | 0.507 | [0.48, 0.54] |
-| i † | 1 | 0.000 | 1.000 | 0.502 | [0.06, 0.95] |
-| n | 275 | 0.070 | 0.000 | 0.301 | [0.25, 0.36] |
-| o | 481 | 0.122 | 0.942 | 0.595 | [0.55, 0.64] |
+| br † | 2 | 0.001 | 1.000 | 0.756 | [0.20, 0.97] |
+| c | 1915 | 0.488 | 0.000 | 0.299 | [0.28, 0.32] |
+| cl | 23 | 0.006 | 1.000 | 0.956 | [0.79, 0.99] |
+| f † | 8 | 0.002 | 1.000 | 0.781 | [0.44, 0.94] |
+| h | 1223 | 0.311 | 1.000 | 0.573 | [0.55, 0.60] |
+| i † | 1 | 0.000 | 1.000 | 0.716 | [0.11, 0.98] |
+| n | 275 | 0.070 | 0.000 | 0.304 | [0.25, 0.36] |
+| o | 481 | 0.122 | 0.942 | 0.791 | [0.75, 0.83] |
 
-EQL's own `cause` search settles on cl: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.76).
+EQL's own `cause` search settles on cl: the region most probable once the effect is required to hold, from which the query's samples are drawn (P(effect | do) = 0.96).
 
