@@ -17,11 +17,15 @@ from experiments.causal_reasoning.comparison.neural_baseline import (
     pooled_features,
 )
 from experiments.causal_reasoning.graspclutter6d.domain import scene_domain
+from experiments.causal_reasoning.comparison.pipelines import cause_variable_name
 from experiments.causal_reasoning.graspclutter6d.queries import (
+    CatalogueCausesGraspability,
+    CatalogueCausesOcclusion,
     CountCausesGraspability,
     OccludedObjectsCauseBlockedObject,
     SizeCausesBlockedObject,
 )
+from krrood.parametrization.parameterizer import UnderspecifiedParameters
 
 LEAF_SUPPORT = 1
 """
@@ -119,3 +123,60 @@ def test_its_answers_do_not_move_when_the_parts_are_reordered(synthetic_scenes):
             [effect.adjusted_probability for effect in fitted.ask(case).effects]
         )
     assert answers[0] == pytest.approx(answers[1], abs=1e-9)
+
+
+def input_columns(fitted: NeuralAdjustmentBaseline, case) -> list[str]:
+    """
+    The columns the network is fitted on for one question, read off the rows the
+    estimator assembles.
+
+    :param fitted: A fitted estimator.
+    :param case: The question to assemble the rows for.
+    :return: The column names, the cause column among them.
+    """
+    parameters = UnderspecifiedParameters(case.build())
+    schema = fitted.schema
+    cause_name = cause_variable_name(parameters)
+    [effect_variable] = parameters.effect_variables_from_causes_effect
+    [simple_event] = (
+        parameters.truncation_assignments_from_where_conditions.simple_sets
+    )
+    frame, _ = fitted._rows(
+        cause_name,
+        schema.part_attribute(cause_name),
+        [variable.name for variable in parameters.search_confounder_variables],
+        effect_variable,
+        simple_event[effect_variable],
+        schema.part_attribute(effect_variable.name),
+    )
+    return list(frame.columns)
+
+
+def test_the_catalogue_question_reads_nothing_derived_from_graspability(baseline):
+    columns = input_columns(
+        baseline,
+        CatalogueCausesGraspability(
+            confounder_name="extent", confounder_noun="spread (extent)"
+        ),
+    )
+
+    assert columns
+    assert not [column for column in columns if "graspability" in column]
+
+
+def test_a_question_about_a_part_reads_nothing_derived_from_its_effect(baseline):
+    columns = input_columns(baseline, SizeCausesBlockedObject())
+
+    assert columns
+    assert not [column for column in columns if "graspability" in column]
+
+
+def test_an_occlusion_effect_also_withholds_the_visibility_it_is_banded_from(baseline):
+    columns = input_columns(baseline, CatalogueCausesOcclusion())
+
+    assert columns
+    assert not [
+        column
+        for column in columns
+        if "occlusion" in column or "visibility" in column
+    ]

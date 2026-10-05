@@ -330,6 +330,15 @@ def attempt_domain() -> RelationalDomain:
         plural="attempts",
         effect_phrase="the target is lifted",
         part_nouns={PartField.NEIGHBOURS: "neighbour"},
+        outcome_part_attributes={
+            PartField.NEIGHBOURS: ("displacement", "disturbed")
+        },
+        derived_part_attributes={
+            PartField.NEIGHBOURS: {
+                "disturbed": "displacement",
+                "distance_band": "distance_to_target",
+            }
+        },
     )
 
 

@@ -390,4 +390,9 @@ def scene_domain() -> RelationalDomain:
         plural="scenes",
         effect_phrase="every object stays graspable",
         part_nouns={PartField.OBJECTS: "object", PartField.VIEWPOINTS: "viewpoint"},
+        outcome_part_attributes={PartField.OBJECTS: ("graspability",)},
+        derived_part_attributes={
+            PartField.OBJECTS: {"occlusion": "visibility"},
+            PartField.VIEWPOINTS: {"proximity": "distance"},
+        },
     )

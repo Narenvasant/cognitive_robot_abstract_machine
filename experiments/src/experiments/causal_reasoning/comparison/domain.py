@@ -125,6 +125,19 @@ class RelationalDomain:
     What an unrolled column holds at a position without a part.
     """
 
+    outcome_part_attributes: Dict[str, Tuple[str, ...]] = field(default_factory=dict)
+    """
+    Per exchangeable-part field, the attributes recorded after the example's outcome and
+    so caused by what a query asks about, such as how far a neighbour was shoved.
+    """
+
+    derived_part_attributes: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    """
+    Per exchangeable-part field, each attribute computed from another one, as the
+    computed attribute mapped to its source, such as an occlusion level mapped to the
+    visibility it is banded from.
+    """
+
     @property
     def part_fields(self) -> Tuple[str, ...]:
         """
@@ -158,6 +171,29 @@ class RelationalDomain:
         :return: The attributes of that field's parts and their types.
         """
         return get_type_hints(self.part_class(part_field))
+
+    def attributes_tied_to(self, part_field: str, attribute: str) -> Tuple[str, ...]:
+        """
+        An attribute together with every attribute a derivation ties it to, in either
+        direction, since reading the source of a computed attribute reveals it just as
+        reading the attribute itself does.
+
+        :param part_field: An exchangeable-part field.
+        :param attribute: One attribute of that field's parts.
+        :return: That attribute and the ones derivation ties it to.
+        """
+        derived = self.derived_part_attributes.get(part_field, {})
+        tied = {attribute}
+        while True:
+            grown = set(tied)
+            for computed, source in derived.items():
+                if computed in tied:
+                    grown.add(source)
+                if source in tied:
+                    grown.add(computed)
+            if grown == tied:
+                return tuple(sorted(tied))
+            tied = grown
 
     def part_noun(self, part_field: str) -> str:
         """

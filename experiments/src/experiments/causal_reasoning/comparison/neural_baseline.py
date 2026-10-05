@@ -206,6 +206,12 @@ class NeuralAdjustmentBaseline:
     What the fits so far cost, once :meth:`fit` ran; one network per question.
     """
 
+    last_iteration_count: Optional[int] = None
+    """
+    How many optimiser steps the network of the question asked last actually took, which
+    the optimiser can stop well short of :attr:`max_iterations`.
+    """
+
     @property
     def name(self) -> str:
         """
@@ -382,11 +388,13 @@ class NeuralAdjustmentBaseline:
         :return: The rows and, per row, whether the effect holds.
         """
         aggregated = self._aggregated_field(cause_name)
+        withheld = self._withheld_attributes(effect_part)
         kept = [
-            frame
+            self._without(frame, part_field, withheld.get(part_field, ()))
             for part_field, frame in self.pooled_frames.items()
             if part_field != aggregated
         ]
+        kept = [frame for frame in kept if not frame.empty]
         pooled = (
             pd.concat(kept, axis=1)
             if kept
@@ -403,7 +411,7 @@ class NeuralAdjustmentBaseline:
             return frame, effect.to_numpy()
         parts = self.part_frames[effect_part.part_field]
         rows = pooled.iloc[parts["example"].to_numpy()].reset_index(drop=True)
-        spoken_for = {effect_part.attribute}
+        spoken_for = set(withheld.get(effect_part.part_field, ()))
         if cause_part is not None:
             spoken_for.add(cause_part.attribute)
         for attribute in self.domain.part_attribute_types(effect_part.part_field):
@@ -424,6 +432,64 @@ class NeuralAdjustmentBaseline:
             parts[effect_part.attribute], effect_variable, effect_values
         )
         return rows, effect.to_numpy()
+
+    def _withheld_attributes(
+        self, effect_part: Optional[PartAttribute]
+    ) -> Dict[str, Tuple[str, ...]]:
+        """
+        The part attributes the network may not read, so that it cannot recover the
+        effect from its own inputs. These are the attributes the domain declares as
+        outcomes of the example, and, where the effect lives on a part, that attribute
+        together with the ones a derivation ties it to.
+
+        :param effect_part: The part attribute the effect is, if it is one.
+        :return: Per exchangeable-part field, the attributes to withhold.
+        """
+        withheld = {
+            part_field: set(attributes)
+            for part_field, attributes in self.domain.outcome_part_attributes.items()
+        }
+        for part_field in list(withheld):
+            for attribute in tuple(withheld[part_field]):
+                withheld[part_field].update(
+                    self.domain.attributes_tied_to(part_field, attribute)
+                )
+        if effect_part is not None:
+            tied = self.domain.attributes_tied_to(
+                effect_part.part_field, effect_part.attribute
+            )
+            withheld.setdefault(effect_part.part_field, set()).update(tied)
+        return {
+            part_field: tuple(sorted(attributes))
+            for part_field, attributes in withheld.items()
+        }
+
+    @staticmethod
+    def _without(
+        frame: pd.DataFrame, part_field: str, attributes: Sequence[str]
+    ) -> pd.DataFrame:
+        """
+        :param frame: One part field's pooled encoding, its columns already prefixed.
+        :param part_field: The field that encoding belongs to.
+        :param attributes: The attributes to drop every pooled column of.
+        :return: The encoding without those columns.
+        """
+        if not attributes:
+            return frame
+        prefixes = tuple(
+            f"{part_field}{POOLED_SEPARATOR}{attribute}" for attribute in attributes
+        )
+        dropped = [
+            column
+            for column in frame.columns
+            if any(
+                column == prefix
+                or column.startswith(f"{prefix}{POOLED_SEPARATOR}")
+                or column.startswith(f"{prefix}=")
+                for prefix in prefixes
+            )
+        ]
+        return frame.drop(columns=dropped)
 
     def _aggregated_field(self, cause_name: str) -> Optional[str]:
         """
@@ -475,6 +541,7 @@ class NeuralAdjustmentBaseline:
         constant = outcome.min() == outcome.max()
         if not constant:
             network.fit(encoder.design(frame), outcome)
+            self.last_iteration_count = int(network.n_iter_)
 
         def predict(rows: pd.DataFrame) -> np.ndarray:
             if constant:
