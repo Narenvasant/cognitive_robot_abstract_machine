@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import argparse
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
-from typing_extensions import Any, Callable, List, Optional, Sequence
+from typing_extensions import Any, Callable, List, Optional, Sequence, Tuple
 
 from experiments.causal_reasoning.comparison.dataset import ExampleDataset
 from experiments.causal_reasoning.comparison.evaluation import (
@@ -170,6 +170,11 @@ class RunSettings:
     an answer.
     """
 
+    selected_pipelines: Tuple[str, ...] = ()
+    """
+    The report names of the pipelines to run; all of them when empty.
+    """
+
     @staticmethod
     def add_arguments(parser: argparse.ArgumentParser, default_output: Path) -> None:
         """
@@ -186,6 +191,7 @@ class RunSettings:
         parser.add_argument("--orderings", type=int, default=20)
         parser.add_argument("--splits", type=int, default=0)
         parser.add_argument("--min-region-support", type=int, default=10)
+        parser.add_argument("--pipelines", nargs="+", default=[], metavar="NAME")
 
     @classmethod
     def from_arguments(cls, arguments: argparse.Namespace) -> RunSettings:
@@ -202,6 +208,7 @@ class RunSettings:
             ordering_count=arguments.orderings,
             split_count=arguments.splits,
             min_region_support=arguments.min_region_support,
+            selected_pipelines=tuple(arguments.pipelines),
         )
 
 
@@ -243,7 +250,9 @@ def run(experiment: Experiment, dataset: ExampleDataset, settings: RunSettings) 
     :param dataset: The examples.
     :param settings: The run's knobs.
     """
-    comparison = experiment.comparison
+    comparison = replace(
+        experiment.comparison, selected_pipelines=settings.selected_pipelines
+    )
     leaf_settings = dict(
         min_samples_per_leaf=settings.min_samples_per_leaf,
         plain_min_samples_per_leaf=settings.plain_min_samples_per_leaf,

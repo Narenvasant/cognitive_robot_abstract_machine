@@ -795,6 +795,11 @@ class Comparison:
     circuit holding them by position is compared when there are any.
     """
 
+    selected_pipelines: Tuple[str, ...] = ()
+    """
+    The report names of the pipelines to run; all of them when empty.
+    """
+
     summaries: Callable[[ExampleDataset], Dict[str, Dict[Any, EffectRate]]] = (
         lambda dataset: {}
     )
@@ -815,15 +820,31 @@ class Comparison:
             model may hold; the pipelines' own default if not given.
         :param plain_min_samples_per_leaf: The fewest training rows a leaf of the plain
             model may hold; the pipelines' own default if not given.
-        :return: Every pipeline, unfitted, with those settings.
+        :return: Every pipeline the comparison selects, unfitted, with those settings.
         """
-        configured = pipelines(self.domain, examples, self.positional_fields)
+        configured = self.selected(
+            pipelines(self.domain, examples, self.positional_fields)
+        )
         for pipeline in configured:
             if min_samples_per_leaf is not None:
                 pipeline.min_samples_per_leaf = min_samples_per_leaf
             if plain_min_samples_per_leaf is not None:
                 pipeline.plain_min_samples_per_leaf = plain_min_samples_per_leaf
         return configured
+
+    def selected(self, estimators: Sequence[Any]) -> List[Any]:
+        """
+        :param estimators: Pipelines or baselines, in the order they are compared in.
+        :return: Those of them :attr:`selected_pipelines` names, or all of them where it
+            names none.
+        """
+        if not self.selected_pipelines:
+            return list(estimators)
+        return [
+            estimator
+            for estimator in estimators
+            if estimator.name in self.selected_pipelines
+        ]
 
 
 def score_every_view(
@@ -902,7 +923,11 @@ def evaluate(
                 outcome.repeat_duration = asker.time_repeat(pipeline, outcome.case)
         report.pipelines.append(pipeline_report)
     for baseline_report in baseline_reports(
-        comparison.domain, training.examples, cases, min_region_support
+        comparison.domain,
+        training.examples,
+        cases,
+        min_region_support,
+        comparison.selected_pipelines,
     ):
         report.pipelines.append(baseline_report)
     report.shared_coverage_log_likelihoods = {
@@ -912,7 +937,11 @@ def evaluate(
     return report
 
 
-def baselines_of(domain: RelationalDomain, min_region_support: int) -> List[Any]:
+def baselines_of(
+    domain: RelationalDomain,
+    min_region_support: int,
+    selected: Sequence[str] = (),
+) -> List[Any]:
     """
     The estimators that are not circuits, which every comparison asks the same
     questions of.
@@ -920,6 +949,7 @@ def baselines_of(domain: RelationalDomain, min_region_support: int) -> List[Any]
     :param domain: The example and its parts.
     :param min_region_support: The fewest training rows a cause region may hold for its
         effect to be read as an answer.
+    :param selected: The report names to keep; all of them where it names none.
     :return: The estimators, unfitted.
     """
     from experiments.causal_reasoning.comparison.baselines import (
@@ -929,12 +959,15 @@ def baselines_of(domain: RelationalDomain, min_region_support: int) -> List[Any]
         NeuralAdjustmentBaseline,
     )
 
-    return [
+    built = [
         RegressionAdjustmentBaseline(
             domain=domain, min_region_support=min_region_support
         ),
         NeuralAdjustmentBaseline(domain=domain, min_region_support=min_region_support),
     ]
+    if not selected:
+        return built
+    return [baseline for baseline in built if baseline.name in selected]
 
 
 def baseline_reports(
@@ -942,6 +975,7 @@ def baseline_reports(
     examples: Sequence[Any],
     cases: Sequence[CausalQueryCase],
     min_region_support: int,
+    selected: Sequence[str] = (),
 ) -> List[PipelineReport]:
     """
     Ask every estimator that is not a circuit every question, as reports shaped like a
@@ -952,11 +986,12 @@ def baseline_reports(
     :param cases: The questions.
     :param min_region_support: The fewest training examples a cause region may hold
         for its effect to be read as an answer.
+    :param selected: The report names to keep; all of them where it names none.
     :return: One report per estimator.
     """
     return [
         _baseline_report(baseline, examples, cases)
-        for baseline in baselines_of(domain, min_region_support)
+        for baseline in baselines_of(domain, min_region_support, selected)
     ]
 
 
@@ -1891,7 +1926,9 @@ def ground_truth_study(
         for ordering, ordered in enumerate(orderings):
             estimators = comparison.pipelines(
                 ordered.examples, min_samples_per_leaf, plain_min_samples_per_leaf
-            ) + baselines_of(comparison.domain, min_region_support)
+            ) + baselines_of(
+                comparison.domain, min_region_support, comparison.selected_pipelines
+            )
             for estimator in estimators:
                 if ordering > 0 and getattr(estimator, "order_invariant", False):
                     continue
@@ -2012,7 +2049,7 @@ def monte_carlo_study(
     min_samples_per_leaf: Optional[float] = None,
     plain_min_samples_per_leaf: Optional[float] = None,
     min_region_support: int = 10,
-) -> MonteCarloReport:
+) -> Optional[MonteCarloReport]:
     """
     Fit the relational circuit once and ask it the same questions with grounding
     drawing more and more samples for the counts a query leaves open, to find how many
@@ -2030,19 +2067,23 @@ def monte_carlo_study(
         may hold; the pipeline's own default if not given.
     :param min_region_support: The fewest training rows a cause region may hold for its
         effect to be read as an answer.
-    :return: The study.
+    :return: The study, or ``None`` where the comparison runs no grounding pipeline for
+        it to draw samples with.
     """
     training, _ = dataset.split(train_fraction, np.random.default_rng(random_seed))
     asker = QuestionAsker(
         random_seed=random_seed, min_region_support=min_region_support
     )
-    [pipeline] = [
+    grounding = [
         candidate
         for candidate in comparison.pipelines(
             training.examples, min_samples_per_leaf, plain_min_samples_per_leaf
         )
         if isinstance(candidate, RelationalPipeline)
     ]
+    if not grounding:
+        return None
+    [pipeline] = grounding
     pipeline.fit(training.examples)
     report = MonteCarloReport(reference_sample_count=max(sample_counts))
     for sample_count in sorted(sample_counts):

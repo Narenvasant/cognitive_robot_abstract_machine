@@ -112,4 +112,6 @@ it fits. `graspclutter6d/comparison.md` compares the three datasets.
 
 Every run takes the same options, including `--orderings` for how many times the
 parts of an example are shuffled and `--output` for where the report goes. Pass
-`--help` to any `run_pipeline` for the full list.
+`--pipelines` with one or more report names to run only those, for example
+`--pipelines "neural adjustment"`, which is useful because a full scene run takes
+hours. Pass `--help` to any `run_pipeline` for the full list.
