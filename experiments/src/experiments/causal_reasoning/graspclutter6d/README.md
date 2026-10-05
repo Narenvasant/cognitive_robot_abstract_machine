@@ -421,3 +421,7 @@ The tests under `test/experiments_test/causal_reasoning_test/test_graspclutter6d
 pipelines and every study on synthetic scenes, and read one real scene's annotations from
 a trimmed copy checked in beside them, so they need neither the dataset nor network
 access.
+
+The deep set's inputs were corrected after `results.md` was written, so that the estimator
+can no longer read the effect it is asked about. Its columns were rerun on their own and
+are reported in `results_deep_set.md`; the other pipelines in `results.md` are unaffected.
