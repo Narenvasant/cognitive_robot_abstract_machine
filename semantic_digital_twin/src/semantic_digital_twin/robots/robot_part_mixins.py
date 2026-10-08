@@ -4,12 +4,15 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
+from itertools import product
 from types import NoneType
 from typing import Union, get_args, get_origin
 
+import numpy as np
 from typing_extensions import (
     Optional,
     TYPE_CHECKING,
+    Tuple,
     Type,
     TypeVar,
     Generic,
@@ -40,9 +43,12 @@ from semantic_digital_twin.robots.exceptions import (
     UndeclaredTopicError,
 )
 from semantic_digital_twin.robots.input_source import InputSource
+from semantic_digital_twin.spatial_types.spatial_types import Point3, Pose
 
 if TYPE_CHECKING:
     from rclpy.node import Node
+    from semantic_digital_twin.world_description.geometry import BoundingBox
+    from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger("semantic_digital_twin")
 
@@ -163,6 +169,130 @@ class HasTwoFingers(
             if not isinstance(finger, concrete_thumb_class)
         ]
         return finger
+
+    @property
+    def pads(self) -> Tuple[Body, Body]:
+        """
+        The two bodies that meet an object: the tips of the thumb and of the finger.
+        """
+        return self.thumb.tip, self.finger.tip
+
+    @property
+    def grasp_centre(self) -> Point3:
+        """
+        The point midway between the pads, in :attr:`tool_frame`.
+
+        A gripper's tool frame need not sit where its pads meet: on Tracy's Robotiq
+        2F-85 the two stand about 2cm apart. This is the point that actually takes hold
+        of something, so it is the one a grasp wants placed.
+        """
+        thumb_pad, finger_pad = (
+            self._pad_bounding_box(pad).center.to_np()[:3].ravel() for pad in self.pads
+        )
+        return Point3(*(thumb_pad + finger_pad) / 2, reference_frame=self.tool_frame)
+
+    def tool_frame_goal_for_grasp_centre(self, grasp_pose: Pose) -> Pose:
+        """
+        Express a grasp frame as the goal that puts :attr:`grasp_centre` on it.
+
+        :meth:`~semantic_digital_twin.robots.robot_parts.EndEffector.tool_frame_goal`
+        turns a grasp frame into a goal for the tool frame itself, which leaves the pads
+        wherever they happen to sit relative to it. A grasp aimed at an object's centre
+        that way closes the fingers beside the object rather than on it.
+
+        :param grasp_pose: The grasp frame to meet.
+        :return: The pose the tool frame has to reach, in ``grasp_pose``'s frame.
+        """
+        oriented = self.tool_frame_goal(grasp_pose)
+        rotation = oriented.rotation_matrix.to_np()[:3, :3]
+        position = (
+            grasp_pose.position.to_np()[:3].ravel()
+            - rotation @ self.grasp_centre.to_np()[:3].ravel()
+        )
+        return Pose(
+            position=Point3(*position, reference_frame=grasp_pose.reference_frame),
+            orientation=oriented.quaternion,
+            reference_frame=grasp_pose.reference_frame,
+        )
+
+    @property
+    def pad_separation(self) -> float:
+        """
+        How far apart the pads' facing surfaces stand right now, in metres, measured
+        along :attr:`closing_axis`: the widest object the gripper could close on as it
+        stands.
+
+        Negative where the pads already overlap, as a fully closed gripper's do.
+        """
+        thumb_reach, finger_reach = (
+            self._reach_along_closing_axis(pad) for pad in self.pads
+        )
+        if thumb_reach[0] > finger_reach[0]:
+            return thumb_reach[0] - finger_reach[1]
+        return finger_reach[0] - thumb_reach[1]
+
+    @property
+    def pad_depth(self) -> float:
+        """
+        How far a pad's facing surface lies inside its own tip frame, in metres, along
+        :attr:`closing_axis`.
+
+        The tip frames are what a controller can be given a goal on, while an object is
+        met by the surfaces; the two differ by this depth on either side.
+        """
+        return (self._fingertip_distance - self.pad_separation) / 2
+
+    def fingertip_distance_for(self, pad_separation: float) -> float:
+        """
+        :param pad_separation: How far apart the pads' facing surfaces are to stand, in
+            metres.
+        :return: The distance the tip frames have to stand apart to leave them there.
+        """
+        return pad_separation + 2 * self.pad_depth
+
+    @property
+    def _fingertip_distance(self) -> float:
+        """
+        How far apart the pads' own frames stand right now, along :attr:`closing_axis`.
+        """
+        thumb, finger = (
+            self._closing_axis_coordinate(
+                self._world.compute_forward_kinematics_np(self.tool_frame, pad)[:3, 3]
+            )
+            for pad in self.pads
+        )
+        return abs(thumb - finger)
+
+    def _pad_bounding_box(self, pad: Body) -> BoundingBox:
+        """
+        :param pad: One of the :attr:`pads`.
+        :return: Its collision bounding box, in :attr:`tool_frame`.
+        """
+        return pad.collision.as_bounding_box_collection_in_frame(
+            self.tool_frame
+        ).bounding_box()
+
+    def _reach_along_closing_axis(self, pad: Body) -> Tuple[float, float]:
+        """
+        :param pad: One of the :attr:`pads`.
+        :return: How far its bounding box reaches along :attr:`closing_axis`, as its
+            nearest and furthest coordinate on that axis.
+        """
+        box = self._pad_bounding_box(pad)
+        corners = product(
+            (box.min_x, box.max_x), (box.min_y, box.max_y), (box.min_z, box.max_z)
+        )
+        coordinates = [
+            self._closing_axis_coordinate(np.array(corner)) for corner in corners
+        ]
+        return min(coordinates), max(coordinates)
+
+    def _closing_axis_coordinate(self, point: np.ndarray) -> float:
+        """
+        :param point: A point in :attr:`tool_frame`.
+        :return: Where it lies along :attr:`closing_axis`.
+        """
+        return float(point @ self.closing_axis.to_np()[:3].ravel())
 
 
 @dataclass(eq=False)
