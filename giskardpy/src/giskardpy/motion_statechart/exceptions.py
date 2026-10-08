@@ -345,6 +345,33 @@ class UnsupportedObservationVariableError(NodeInitializationError):
 
 
 @dataclass
+class MotionDidNotEndError(MotionStatechartError):
+    """
+    Raised when a motion was ticked for every control cycle it was given without its end
+    condition ever becoming true.
+    """
+
+    goal: str
+    """
+    What the motion was asked to do.
+    """
+
+    control_cycles: int
+    """
+    How many control cycles it was ticked for.
+    """
+
+    def error_message(self) -> str:
+        return f"{self.goal} did not end within {self.control_cycles} control cycles."
+
+    def suggest_correction(self) -> str:
+        return (
+            "Give the motion more cycles, or check that its goal is reachable at all "
+            "from where the robot starts."
+        )
+
+
+@dataclass
 class NoProgressError(MotionStatechartError):
     """
     Raised when the watched tasks stopped approaching their goal for too long.
