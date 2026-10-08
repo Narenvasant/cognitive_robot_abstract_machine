@@ -304,6 +304,23 @@ class UnknownExecutionType(DataclassException):
 
 
 @dataclass
+class MissingSimulationError(DataclassException):
+    """
+    Raised when a plan is to be performed in a physically simulated world without one
+    having been given.
+    """
+
+    def error_message(self) -> str:
+        return "No simulation was given to perform the plan in."
+
+    def suggest_correction(self) -> str:
+        return (
+            "Enter a PhysicallySimulatedRobot environment with the started simulation, "
+            "so the executables know which world to step."
+        )
+
+
+@dataclass
 class PerceptionException(DataclassException, ABC):
     """
     Represents a custom exception specific to perception-related errors.

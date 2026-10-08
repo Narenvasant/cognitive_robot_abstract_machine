@@ -8,6 +8,7 @@ nodes that terminate the chart, which depend on the execution type.
 """
 
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 import pytest
@@ -50,15 +51,34 @@ from coraplex.datastructures.dataclasses import Context
 from coraplex.datastructures.enums import ExecutionType
 from coraplex.execution_environment import (
     ExecutionEnvironment,
+    PhysicallySimulatedRobot,
     real_robot,
     simulated_robot,
 )
-from coraplex.exceptions import ConditionNotSatisfied
+from coraplex.exceptions import ConditionNotSatisfied, MissingSimulationError
 from coraplex.plans.executables import GiskardExecutable
 from coraplex.plans.factories import execute_single
 from coraplex.robot_plans.actions.core.pick_up import ReachAction
 from coraplex.robot_plans.actions.core.robot_body import MoveTorsoAction
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Milk
+
+
+@dataclass
+class SimulationThatCountsItsSteps:
+    """
+    Stands in for a started simulation, counting the physics steps asked of it.
+    """
+
+    steps: List[timedelta] = field(default_factory=list)
+    """
+    Every period the physics was asked to advance by.
+    """
+
+    def step_simulation(self, duration: timedelta) -> None:
+        """
+        :param duration: Simulated time to advance.
+        """
+        self.steps.append(duration)
 
 
 @pytest.fixture
@@ -374,3 +394,52 @@ def test_a_motion_that_violates_collision_avoidance_fails_as_a_plan_failure(
             reach_action_executable.execute()
 
     assert failure.value.violation is violation
+
+
+# %% performing a plan in a physically simulated world
+
+
+def test_performing_in_physics_without_a_simulation_says_so(reach_action_executable):
+    """
+    The execution type alone does not say which world to step, so a plan asked to be
+    performed in physics without one cannot start.
+    """
+    with ExecutionEnvironment(ExecutionType.PHYSICALLY_SIMULATED):
+        with pytest.raises(MissingSimulationError):
+            reach_action_executable.execute()
+
+
+def test_a_physically_simulated_motion_is_given_the_same_time_limit(
+    reach_action_executable, monkeypatch
+):
+    """
+    Both simulated paths tick the same loop, so a motion performed in physics is given
+    up on by the same limit as one projected kinematically.
+    """
+    monkeypatch.setattr(GiskardExecutable, "simulation_time_limit", timedelta(0))
+
+    with PhysicallySimulatedRobot(simulation=SimulationThatCountsItsSteps()):
+        with pytest.raises(MotionExceededSimulationTimeLimit):
+            reach_action_executable.execute()
+
+
+def test_entering_a_physically_simulated_robot_hands_over_the_simulation():
+    simulation = SimulationThatCountsItsSteps()
+
+    with PhysicallySimulatedRobot(simulation=simulation):
+        assert GiskardExecutable.execution_type == ExecutionType.PHYSICALLY_SIMULATED
+        assert GiskardExecutable.simulation is simulation
+
+
+def test_leaving_a_physically_simulated_robot_restores_what_was_there_before():
+    """
+    One simulation nested inside another leaves the outer one performing again.
+    """
+    outer = SimulationThatCountsItsSteps()
+    inner = SimulationThatCountsItsSteps()
+
+    with PhysicallySimulatedRobot(simulation=outer):
+        with PhysicallySimulatedRobot(simulation=inner):
+            assert GiskardExecutable.simulation is inner
+        assert GiskardExecutable.simulation is outer
+    assert GiskardExecutable.simulation is None

@@ -92,6 +92,7 @@ class SpecializedMilk(Milk):
     "execution_type, expected_source",
     [
         (ExecutionType.SIMULATED, WorldPerception),
+        (ExecutionType.PHYSICALLY_SIMULATED, WorldPerception),
         (ExecutionType.NO_EXECUTION, WorldPerception),
         (ExecutionType.REAL, RoboKudoPerception),
     ],
