@@ -510,7 +510,7 @@ class MutagenesisDoQuery:
                     adjusted_circuit, region.event, effect_variable
                 ),
             )
-            for region in causal_circuit._extract_disjoint_regions_for_variable(
+            for region in causal_circuit.disjoint_support_regions_of(
                 cause_variable
             )
         ]
