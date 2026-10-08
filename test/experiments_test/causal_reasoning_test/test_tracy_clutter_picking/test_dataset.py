@@ -174,3 +174,15 @@ def test_hosted_attempts_are_fetched_from_their_repository(tmp_path):
 
     assert len(dataset.scenes) == 300
     assert {len(scene.neighbours) for scene in dataset.scenes} == {9}
+
+
+def test_the_success_rate_is_the_share_of_attempts_that_lifted(scenes):
+    dataset = ClutterPickDataset(scenes)
+
+    assert dataset.success_rate == pytest.approx(
+        sum(scene.lifted for scene in scenes) / len(scenes)
+    )
+
+
+def test_an_empty_dataset_has_no_successes():
+    assert ClutterPickDataset().success_rate == 0.0

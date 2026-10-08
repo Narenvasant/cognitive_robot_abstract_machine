@@ -54,6 +54,15 @@ class ClutterPickDataset:
         return cls(scenes=from_json(json.loads(path.read_text())))
 
     @property
+    def success_rate(self) -> float:
+        """
+        The share of the recorded attempts whose target came up.
+        """
+        if not self.scenes:
+            return 0.0
+        return sum(scene.lifted for scene in self.scenes) / len(self.scenes)
+
+    @property
     def recorded_neighbour_count(self) -> int:
         """
         How many neighbours every recorded attempt has.
