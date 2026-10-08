@@ -11,6 +11,36 @@ from typing_extensions import List
 
 
 @dataclass
+class MotionDidNotSettleError(DataclassException):
+    """
+    Raised when a motion run against the live simulation did not reach its goal within
+    the control cycles it was given.
+    """
+
+    goal: str
+    """
+    The Giskard task that did not finish.
+    """
+
+    control_cycles: int
+    """
+    How many control cycles it was given.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"{self.goal} did not reach its goal within {self.control_cycles} control "
+            "cycles"
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "Give the motion more cycles, or check that the goal is reachable at all "
+            "from where the arm starts."
+        )
+
+
+@dataclass
 class EpisodePlanningFailedError(DataclassException):
     """
     Raised when the motion planner could not produce a reach for one of a pick attempt's
