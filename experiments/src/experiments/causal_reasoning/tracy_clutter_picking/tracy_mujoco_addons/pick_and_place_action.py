@@ -5,8 +5,8 @@
 simulated robot, matching their own field interface (``object_designator``, ``arm``,
 ``grasp_description``/``target_location``) so a caller can compose them into a
 :func:`~coraplex.plans.factories.sequential` plan the same way, with each leaf motion
-run live by Giskard against the MuJoCo-mirrored world (see
-:class:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.live_motion.MotionRunner`).
+run live by Giskard against the MuJoCo-mirrored world (see :class:`~experiments.causal_r
+easoning.tracy_clutter_picking.tracy_mujoco_addons.live_motion.MotionRunner`).
 
 Unlike ``PickUpAction``/``PlaceAction``, neither action here kinematically attaches or
 detaches the object: the object is held only by real MuJoCo contact friction between the
@@ -45,24 +45,19 @@ from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.world_entity import Body
 
 
-def bounding_box_center_world(world: World, body: Body) -> numpy.ndarray:
+def centre_in_root(world: World, body: Body) -> numpy.ndarray:
     """
-    A body's own collision bounding box centre, in the world root frame.
-
     :param world: The world ``body`` belongs to.
     :param body: The body to measure.
-    :return: The centre.
+    :return: The centre of the body's own collision bounding box, in the world root
+        frame.
     """
-    bounding_box = body.collision[0].local_frame_bounding_box
-    center_local = numpy.array(
-        [
-            (bounding_box.min_x + bounding_box.max_x) / 2,
-            (bounding_box.min_y + bounding_box.max_y) / 2,
-            (bounding_box.min_z + bounding_box.max_z) / 2,
-        ]
+    return (
+        body.collision.as_bounding_box_collection_in_frame(world.root)
+        .bounding_box()
+        .center.to_np()[:3]
+        .ravel()
     )
-    root_transform_body = world.compute_forward_kinematics_np(world.root, body)
-    return root_transform_body[:3, :3] @ center_local + root_transform_body[:3, 3]
 
 
 @dataclass
@@ -97,6 +92,13 @@ class TopDownGraspGeometry:
     axis in the horizontal plane so the pads can meet an object across a chosen width.
     """
 
+    def _centre_in_root(self, body: Body) -> numpy.ndarray:
+        """
+        :param body: The body to measure.
+        :return: Its centre in the world root frame.
+        """
+        return centre_in_root(self.world, body)
+
     def finger_midpoint_offset(self) -> numpy.ndarray:
         """
         :return: The fixed offset from the arm's own tool frame to its gripper's own
@@ -106,8 +108,8 @@ class TopDownGraspGeometry:
         root_transform_tool = self.world.compute_forward_kinematics_np(
             self.world.root, gripper.tool_frame
         )
-        thumb_center = bounding_box_center_world(self.world, gripper.thumb.tip)
-        finger_center = bounding_box_center_world(self.world, gripper.finger.tip)
+        thumb_center = self._centre_in_root(gripper.thumb.tip)
+        finger_center = self._centre_in_root(gripper.finger.tip)
         finger_midpoint = (thumb_center + finger_center) / 2
         offset_in_root_frame = finger_midpoint - root_transform_tool[:3, 3]
         return root_transform_tool[:3, :3].T @ offset_in_root_frame
@@ -156,9 +158,7 @@ class TopDownGraspGeometry:
         :return: The tool frame pose that puts the finger midpoint there, top-down.
         """
         oriented = self.arm.end_effector.tool_frame_goal(self.grasp_frame(x, y, z))
-        rotation = numpy.array(
-            oriented.rotation_matrix.evaluate()[:3, :3], dtype=float
-        )
+        rotation = numpy.array(oriented.rotation_matrix.evaluate()[:3, :3], dtype=float)
         tool_frame_target = numpy.array([x, y, z]) - rotation @ (
             self.finger_midpoint_offset()
         )
@@ -269,8 +269,8 @@ class PickUpActionMujoco(MujocoArmAction):
     grasp_half_width: Optional[float] = None
     """
     Half the width the pads are to meet the object across, in metres, for an object
-    grasped across a known pair of faces; see
-    :meth:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.live_motion.MotionRunner.close_gripper_around`.
+    grasped across a known pair of faces; see :meth:`~experiments.causal_reasoning.tracy
+    _clutter_picking.tracy_mujoco_addons.live_motion.MotionRunner.close_gripper_around`.
 
     Defaults to reading it off the object's bounding box in the gripper frame.
     """
@@ -281,7 +281,7 @@ class PickUpActionMujoco(MujocoArmAction):
 
     def _run(self) -> None:
         geometry = self._geometry(self.arm)
-        body_center = bounding_box_center_world(self.world, self.object_designator)
+        body_center = centre_in_root(self.world, self.object_designator)
         pick_hover = geometry.tool_frame_pose(
             body_center[0], body_center[1], body_center[2] + self.hover_clearance
         )

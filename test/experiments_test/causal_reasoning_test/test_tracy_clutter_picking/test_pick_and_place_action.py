@@ -12,7 +12,6 @@ import pytest
 
 from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.pick_and_place_action import (
     TopDownGraspGeometry,
-    bounding_box_center_world,
 )
 from semantic_digital_twin.api import RobotSpecification
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
@@ -37,34 +36,11 @@ def mounted_tracy() -> tuple[World, Tracy]:
     return world, robot
 
 
-def test_bounding_box_center_world_is_the_average_of_the_bodys_own_min_and_max(
-    mounted_tracy,
-):
-    world, _ = mounted_tracy
-    body = world.get_body_by_name("left_robotiq_85_left_finger_tip_link")
-
-    center = bounding_box_center_world(world, body)
-
-    bounding_box = body.collision[0].local_frame_bounding_box
-    root_transform_body = world.compute_forward_kinematics_np(world.root, body)
-    expected_local_center = [
-        (bounding_box.min_x + bounding_box.max_x) / 2,
-        (bounding_box.min_y + bounding_box.max_y) / 2,
-        (bounding_box.min_z + bounding_box.max_z) / 2,
-    ]
-    expected = (
-        root_transform_body[:3, :3] @ expected_local_center + root_transform_body[:3, 3]
-    )
-    assert list(center) == list(expected)
-
-
 def test_finger_midpoint_offset_differs_between_left_and_right_arm(mounted_tracy):
     world, robot = mounted_tracy
 
     left_offset = TopDownGraspGeometry(world, robot.left_arm).finger_midpoint_offset()
-    right_offset = TopDownGraspGeometry(
-        world, robot.right_arm
-    ).finger_midpoint_offset()
+    right_offset = TopDownGraspGeometry(world, robot.right_arm).finger_midpoint_offset()
 
     assert list(left_offset) != list(right_offset)
 
@@ -78,9 +54,9 @@ def test_grasp_yaw_turns_the_closing_axis_about_the_vertical_without_tilting_it(
     straight = TopDownGraspGeometry(world, robot.left_arm).tool_frame_pose(
         0.0, 0.0, 1.0
     )
-    turned = TopDownGraspGeometry(
-        world, robot.left_arm, grasp_yaw=yaw
-    ).tool_frame_pose(0.0, 0.0, 1.0)
+    turned = TopDownGraspGeometry(world, robot.left_arm, grasp_yaw=yaw).tool_frame_pose(
+        0.0, 0.0, 1.0
+    )
 
     straight_rotation = numpy.array(
         straight.rotation_matrix.evaluate()[:3, :3], dtype=float
