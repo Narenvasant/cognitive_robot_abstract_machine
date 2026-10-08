@@ -223,7 +223,7 @@ def test_an_arm_reaches_a_pose_and_comes_to_rest_there(stepped_tracy, parked_tra
         start[0], start[1], start[2] + 0.1, reference_frame=world.root
     )
 
-    assert stepped_tracy.reach(arm, goal, turned_as_asked=False)
+    assert stepped_tracy.reach(arm, goal, hold_orientation=False)
 
     simulated = numpy.array(
         stepped_tracy.simulation.simulator.get_body_position(

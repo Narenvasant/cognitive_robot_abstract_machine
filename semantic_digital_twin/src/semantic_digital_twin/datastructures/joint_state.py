@@ -105,9 +105,8 @@ class JointState(SubclassJSONSerializer):
         name.
 
         Several connections of a mimic linkage follow one degree of freedom, each
-        through its own multiplier and offset, and only that one degree of freedom can
-        actually be driven. Commanding the connections themselves would have them fight
-        the linkage, so these are the positions to command instead.
+        through its own multiplier and offset, and only that degree of freedom can be
+        driven.
         """
         return {
             connection.raw_dof.name.name: (target - connection.offset)

@@ -109,9 +109,7 @@ class ExecutionType(Enum):
     PHYSICALLY_SIMULATED = auto()
     """
     Performed against a physically simulated world, where the robot's joints are driven
-    there by its servos. :attr:`SIMULATED` instead ticks the chart against the world's
-    own belief about where the robot is, so nothing is ever held by friction and a poor
-    grasp drops nothing.
+    to a goal by its servos, and an object is held by friction alone.
     """
 
     SEMI_REAL = auto()

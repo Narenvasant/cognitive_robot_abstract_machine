@@ -183,8 +183,7 @@ class HasTwoFingers(
         The point midway between the pads, in :attr:`tool_frame`.
 
         A gripper's tool frame need not sit where its pads meet: on Tracy's Robotiq
-        2F-85 the two stand about 2cm apart. This is the point that actually takes hold
-        of something, so it is the one a grasp wants placed.
+        2F-85 the two stand about 2cm apart.
         """
         thumb_pad, finger_pad = (
             self._pad_bounding_box(pad).center.to_np()[:3].ravel() for pad in self.pads
@@ -193,12 +192,9 @@ class HasTwoFingers(
 
     def tool_frame_goal_for_grasp_centre(self, grasp_pose: Pose) -> Pose:
         """
-        Express a grasp frame as the goal that puts :attr:`grasp_centre` on it.
-
+        Express a grasp frame as the goal that puts :attr:`grasp_centre` on it, where
         :meth:`~semantic_digital_twin.robots.robot_parts.EndEffector.tool_frame_goal`
-        turns a grasp frame into a goal for the tool frame itself, which leaves the pads
-        wherever they happen to sit relative to it. A grasp aimed at an object's centre
-        that way closes the fingers beside the object rather than on it.
+        puts the tool frame there.
 
         :param grasp_pose: The grasp frame to meet.
         :return: The pose the tool frame has to reach, in ``grasp_pose``'s frame.
@@ -235,10 +231,8 @@ class HasTwoFingers(
     def pad_depth(self) -> float:
         """
         How far a pad's facing surface lies inside its own tip frame, in metres, along
-        :attr:`closing_axis`.
-
-        The tip frames are what a controller can be given a goal on, while an object is
-        met by the surfaces; the two differ by this depth on either side.
+        :attr:`closing_axis`: a goal on the tip frames stands this much wider than the
+        surfaces on either side.
         """
         return (self._fingertip_distance - self.pad_separation) / 2
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from typing_extensions import Dict, Optional
+from typing_extensions import Optional
 
 import numpy as np
 
@@ -374,9 +374,7 @@ class SteppedMotion:
 
     Every control cycle's command lands in the world state, the simulation's servos take
     it as their set point, and the physics advances one cycle before the next command is
-    worked out. A goal is therefore reached in the physics, as hard and as fast as the
-    servos allow, rather than written into the world's own belief about where the robot
-    is.
+    worked out.
     """
 
     simulation: MujocoSim
@@ -427,9 +425,8 @@ class SteppedMotion:
         Run one task against the simulation until its own end condition is met.
 
         :param task: What the robot is to do.
-        :param avoid_collisions: Whether collision avoidance runs alongside. Turn it off
-            for a goal whose whole point is to touch something, which avoidance would
-            otherwise keep the robot away from.
+        :param avoid_collisions: Whether collision avoidance runs alongside; turn it off
+            for a goal that is meant to touch something.
         :raises MotionDidNotEndError: If the task never ended within
             :attr:`control_cycle_limit`.
         """
@@ -463,11 +460,6 @@ class SteppedMotion:
         Advance the physics until every one of ``joint_names`` has reached the set point
         the last command left it, or the timeout passes.
 
-        A motion ends once the controller is happy, which is before the servos have
-        caught up, and a joint pressing against something never catches up at all. The
-        answer is therefore reported rather than raised, so a caller squeezing an object
-        on purpose can carry on.
-
         :param joint_names: The joints to wait for.
         :param timeout: Simulated time to wait; :attr:`settling_timeout` if not given.
         :return: Whether every joint arrived; trivially so when none were named.
@@ -493,10 +485,8 @@ class SteppedMotion:
         self, goal_state: JointState, avoid_collisions: bool = True
     ) -> bool:
         """
-        Drive joints to the positions a state names and wait for them to arrive.
-
-        A mimic linkage's connections cannot be driven one by one, so the state is
-        commanded through the degrees of freedom that actually drive it.
+        Drive joints to the positions a state names, through the degrees of freedom that
+        drive them, and wait for them to arrive.
 
         :param goal_state: Where the joints are to end up.
         :param avoid_collisions: See :meth:`run`.
@@ -517,7 +507,7 @@ class SteppedMotion:
         :param avoid_collisions: See :meth:`run`.
         :return: Whether every joint of every arm arrived.
         """
-        parked: Dict[ActiveConnection1DOF, float] = {}
+        parked: dict[ActiveConnection1DOF, float] = {}
         for arm in arms:
             state = arm.get_joint_state_by_type(StaticJointState.PARK)
             parked.update(dict(zip(state.connections, state.target_values)))
@@ -529,7 +519,7 @@ class SteppedMotion:
         self,
         arm: Arm,
         goal_pose: Pose,
-        turned_as_asked: bool = True,
+        hold_orientation: bool = True,
         avoid_collisions: bool = True,
     ) -> bool:
         """
@@ -537,14 +527,13 @@ class SteppedMotion:
 
         :param arm: The arm to move.
         :param goal_pose: Where its tool frame is to end up.
-        :param turned_as_asked: Whether the goal's own orientation is held too, rather
-            than only its position. Leaving it unheld lets the arm turn the gripper
-            however suits it best.
+        :param hold_orientation: Whether the goal's orientation is held as well as its
+            position.
         :param avoid_collisions: See :meth:`run`.
         :return: Whether every joint of the arm arrived.
         """
         tool_frame = arm.end_effector.tool_frame
-        if turned_as_asked:
+        if hold_orientation:
             task = CartesianPose(
                 root_link=self.world.root, tip_link=tool_frame, goal_pose=goal_pose
             )
@@ -565,8 +554,7 @@ class SteppedMotion:
 
     def hold(self, duration: timedelta) -> None:
         """
-        Advance the physics with every set point left where it is, so the servos keep
-        pressing on whatever they are already pressing on.
+        Advance the physics with every set point left where it is.
 
         :param duration: Simulated time to hold for.
         """

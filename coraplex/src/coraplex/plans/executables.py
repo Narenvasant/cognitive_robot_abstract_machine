@@ -431,11 +431,8 @@ class GiskardExecutable(Executable):
     def _execute_physically_simulated(self) -> None:
         """
         Compiles the motion state chart and ticks it against a physically simulated
-        world, stepping the physics one control period between two ticks.
-
-        Every tick's command reaches the simulation's servos as their set point, so the
-        robot arrives where it was sent by being driven there rather than by the world
-        being told where it is.
+        world, stepping the physics one control period between two ticks so that every
+        tick's command reaches the simulation's servos as their set point.
 
         :raises MissingSimulationError: If no simulation was given to perform in.
         :raises MotionExceededSimulationTimeLimit: When the motion runs for longer than
@@ -467,8 +464,7 @@ class GiskardExecutable(Executable):
 
         :param executor: The executor to tick.
         :param qp_controller_config: The configuration it was built with.
-        :param pacer: What waits between two ticks; nothing waits if not given, which is
-            what a chart ticked against the world's own belief wants.
+        :param pacer: What waits between two ticks; nothing waits if not given.
         :raises MotionExceededSimulationTimeLimit: When the motion runs for longer than
             :attr:`simulation_time_limit`.
         """
