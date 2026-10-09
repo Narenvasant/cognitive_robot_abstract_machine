@@ -8,7 +8,6 @@ from itertools import product
 from types import NoneType
 from typing import Union, get_args, get_origin
 
-import numpy as np
 from typing_extensions import (
     Optional,
     TYPE_CHECKING,
@@ -185,9 +184,9 @@ class HasTwoFingers(
         a gripper's tool frame need not sit at.
         """
         thumb_pad, finger_pad = (
-            self._pad_bounding_box(pad).center.to_np()[:3].ravel() for pad in self.pads
+            self._pad_bounding_box(pad).center for pad in self.pads
         )
-        return Point3(*(thumb_pad + finger_pad) / 2, reference_frame=self.tool_frame)
+        return thumb_pad.midpoint(finger_pad)
 
     def tool_frame_goal_for_grasp_center(self, grasp_pose: Pose) -> Pose:
         """
@@ -199,13 +198,9 @@ class HasTwoFingers(
         :return: The pose the tool frame has to reach, in ``grasp_pose``'s frame.
         """
         oriented = self.tool_frame_goal(grasp_pose)
-        rotation = oriented.rotation_matrix.to_np()[:3, :3]
-        position = (
-            grasp_pose.position.to_np()[:3].ravel()
-            - rotation @ self.grasp_center.to_np()[:3].ravel()
-        )
         return Pose(
-            position=Point3(*position, reference_frame=grasp_pose.reference_frame),
+            position=grasp_pose.position
+            - oriented.rotation_matrix @ self.grasp_center.vector3,
             orientation=oriented.quaternion,
             reference_frame=grasp_pose.reference_frame,
         )
@@ -247,19 +242,14 @@ class HasTwoFingers(
         """
         thumb_pad, finger_pad = self.pads
         towards_thumb = (
-            self._world.compute_forward_kinematics_np(finger_pad, self.tool_frame)[
-                :3, :3
-            ]
-            @ self.closing_axis.to_np()[:3].ravel()
+            self._world.compute_forward_kinematics(finger_pad, self.tool_frame)
+            @ self.closing_axis
         )
         if self._reach_along_closing_axis(thumb_pad)[0] < (
             self._reach_along_closing_axis(finger_pad)[0]
         ):
             towards_thumb = -towards_thumb
-        return Point3(
-            *(towards_thumb * self.fingertip_distance_for(pad_separation)),
-            reference_frame=finger_pad,
-        )
+        return (towards_thumb * self.fingertip_distance_for(pad_separation)).point3
 
     def fingertip_distance_for(self, pad_separation: float) -> float:
         """
@@ -277,7 +267,7 @@ class HasTwoFingers(
         """
         thumb, finger = (
             self._closing_axis_coordinate(
-                self._world.compute_forward_kinematics_np(self.tool_frame, pad)[:3, 3]
+                self._world.compute_forward_kinematics(self.tool_frame, pad).position
             )
             for pad in self.pads
         )
@@ -303,16 +293,19 @@ class HasTwoFingers(
             (box.min_x, box.max_x), (box.min_y, box.max_y), (box.min_z, box.max_z)
         )
         coordinates = [
-            self._closing_axis_coordinate(np.array(corner)) for corner in corners
+            self._closing_axis_coordinate(
+                Point3(*corner, reference_frame=self.tool_frame)
+            )
+            for corner in corners
         ]
         return min(coordinates), max(coordinates)
 
-    def _closing_axis_coordinate(self, point: np.ndarray) -> float:
+    def _closing_axis_coordinate(self, point: Point3) -> float:
         """
         :param point: A point in :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.tool_frame`.
         :return: Where it lies along :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.closing_axis`.
         """
-        return float(point @ self.closing_axis.to_np()[:3].ravel())
+        return float(point.vector3.dot(self.closing_axis).to_np().item())
 
 
 @dataclass(eq=False)
