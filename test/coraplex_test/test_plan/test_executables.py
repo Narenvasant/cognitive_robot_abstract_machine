@@ -57,6 +57,7 @@ from coraplex.execution_environment import (
 )
 from coraplex.exceptions import ConditionNotSatisfied
 from coraplex.plans.executables import GiskardExecutable
+from coraplex.plans.attachment_nodes import ReAttachNode
 from coraplex.plans.factories import execute_single
 from coraplex.robot_plans.actions.core.pick_up import ReachAction
 from coraplex.robot_plans.actions.core.robot_body import MoveTorsoAction
@@ -433,3 +434,43 @@ def test_leaving_a_physically_simulated_robot_restores_what_was_there_before():
             assert GiskardExecutable.simulation is inner
         assert GiskardExecutable.simulation is outer
     assert GiskardExecutable.simulation is None
+
+
+# %% what holds a picked object
+
+
+def test_a_kinematically_simulated_pick_is_held_by_the_world(pr2_apartment_context):
+    """
+    Nothing in a world ticked against its own belief holds an object, so the object is
+    put under the gripper for it to be held at all.
+    """
+    world, _, context = pr2_apartment_context
+    milk = world.get_semantic_annotations_by_type(Milk)[0].root
+    gripper = context.robot.right_arm.end_effector.tool_frame
+    plan = execute_single(ReAttachNode(body=milk, new_parent=gripper), context=context)
+
+    with simulated_robot:
+        plan.perform()
+
+    assert milk.parent_connection.parent is gripper
+
+
+def test_a_physically_simulated_pick_is_held_by_its_own_grip(pr2_apartment_context):
+    """
+    The pads hold the object in physics, so putting it under the gripper as well would
+    hold it whether or not the grasp did.
+    """
+    world, _, context = pr2_apartment_context
+    milk = world.get_semantic_annotations_by_type(Milk)[0].root
+    stood_under = milk.parent_connection.parent
+    plan = execute_single(
+        ReAttachNode(
+            body=milk, new_parent=context.robot.right_arm.end_effector.tool_frame
+        ),
+        context=context,
+    )
+
+    with PhysicallySimulatedRobot(simulation=SimulationThatCountsItsSteps()):
+        plan.perform()
+
+    assert milk.parent_connection.parent is stood_under

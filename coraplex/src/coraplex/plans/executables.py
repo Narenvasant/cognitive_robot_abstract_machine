@@ -537,8 +537,11 @@ class MoveBranchExecutable(Executable):
 
     def execute(self) -> None:
         """
-        Move the branch and report the attached node's execution outcome.
+        Move the branch, unless a physically simulated world is holding the body by
+        contact already, in which case it is left where the physics puts it.
         """
+        if GiskardExecutable.execution_type == ExecutionType.PHYSICALLY_SIMULATED:
+            return
         with self.execution_scope():
             self.context.world.move_branch(self.body, self.new_parent)
 
