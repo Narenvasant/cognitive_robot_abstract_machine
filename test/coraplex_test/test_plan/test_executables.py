@@ -53,7 +53,7 @@ from coraplex.execution_environment import (
     ExecutionEnvironment,
     PhysicallySimulatedRobot,
     real_robot,
-    simulated_robot,
+    kinematically_simulated_robot,
 )
 from coraplex.exceptions import ConditionNotSatisfied
 from coraplex.plans.executables import GiskardExecutable
@@ -193,7 +193,9 @@ def test_prepare_for_execution_adds_a_single_end_motion(reach_action_executable)
     assert len(chart.get_nodes_by_type(EndMotion)) == 1
 
 
-@pytest.mark.parametrize("execution_environment", [real_robot, simulated_robot])
+@pytest.mark.parametrize(
+    "execution_environment", [real_robot, kinematically_simulated_robot]
+)
 def test_execution_does_not_add_condition_monitors(
     reach_action_executable, execution_environment
 ):
@@ -266,7 +268,9 @@ def test_prepare_for_execution_avoids_the_robot_colliding_with_itself(
     robot's ``AvoidSelfCollisions`` rule only shapes the collision matrix and never
     becomes a constraint on its own.
     """
-    with ExecutionEnvironment(ExecutionType.SIMULATED, collision_avoidance=True):
+    with ExecutionEnvironment(
+        ExecutionType.KINEMATICALLY_SIMULATED, collision_avoidance=True
+    ):
         reach_action_executable.prepare_for_execution()
 
     chart = reach_action_executable.motion_state_chart
@@ -280,7 +284,9 @@ def test_prepare_for_execution_leaves_out_collision_avoidance_when_not_asked_for
     """
     A run that does not ask for collision avoidance gets neither goal.
     """
-    with ExecutionEnvironment(ExecutionType.SIMULATED, collision_avoidance=False):
+    with ExecutionEnvironment(
+        ExecutionType.KINEMATICALLY_SIMULATED, collision_avoidance=False
+    ):
         reach_action_executable.prepare_for_execution()
 
     chart = reach_action_executable.motion_state_chart
@@ -311,7 +317,9 @@ def test_a_robot_keeps_moving_while_it_holds_a_body(_tiago_world_setup, holds_a_
         MoveTorsoAction(TorsoState.HIGH), context=Context(world, tiago)
     )
 
-    with ExecutionEnvironment(ExecutionType.SIMULATED, collision_avoidance=True):
+    with ExecutionEnvironment(
+        ExecutionType.KINEMATICALLY_SIMULATED, collision_avoidance=True
+    ):
         plan.perform()
 
 
@@ -325,7 +333,9 @@ def test_prepare_for_execution_watches_the_whole_motion_for_progress(
     A stalled run has to end by itself, so the chart carries a monitor watching the root
     goal and an abort path wired to it.
     """
-    with ExecutionEnvironment(ExecutionType.SIMULATED, collision_avoidance=False):
+    with ExecutionEnvironment(
+        ExecutionType.KINEMATICALLY_SIMULATED, collision_avoidance=False
+    ):
         reach_action_executable.prepare_for_execution()
 
     chart = reach_action_executable.motion_state_chart
@@ -357,7 +367,7 @@ def test_a_motion_that_stops_approaching_its_goal_is_given_up_on(
     plan.notify()
     executable = plan.parse()
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         with pytest.raises(MotionMadeNoProgress):
             executable.execute()
 
@@ -370,7 +380,7 @@ def test_a_motion_that_outlasts_the_simulation_time_limit_is_given_up_on(
     """
     monkeypatch.setattr(GiskardExecutable, "simulation_time_limit", timedelta(0))
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         with pytest.raises(MotionExceededSimulationTimeLimit):
             reach_action_executable.execute()
 
@@ -390,7 +400,7 @@ def test_a_motion_that_violates_collision_avoidance_fails_as_a_plan_failure(
 
     monkeypatch.setattr(Ros2Executor, "tick", violate_collision_avoidance)
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         with pytest.raises(MotionViolatedCollisionAvoidance) as failure:
             reach_action_executable.execute()
 
@@ -449,7 +459,7 @@ def test_a_kinematically_simulated_pick_is_held_by_the_world(pr2_apartment_conte
     gripper = context.robot.right_arm.end_effector.tool_frame
     plan = execute_single(ReAttachNode(body=milk, new_parent=gripper), context=context)
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         plan.perform()
 
     assert milk.parent_connection.parent is gripper

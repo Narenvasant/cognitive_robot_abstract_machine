@@ -105,14 +105,22 @@ class ExecutionType(Enum):
     """
 
     REAL = auto()
-    SIMULATED = auto()
+    KINEMATICALLY_SIMULATED = auto()
+    """
+    Performed against a world the robot is moved through kinematically, where reaching
+    a goal may be answered by writing the pose it was reached at into the world.
+
+    Nothing pushes back: a joint arrives wherever it was commanded and an object is held
+    by being attached to the gripper.
+    """
+
     PHYSICALLY_SIMULATED = auto()
     """
     Performed against a physically simulated world, where the robot's joints are driven
     to a goal by its servos and an object is held by friction alone.
 
-    Apart from :attr:`SIMULATED`, since a motion that may be answered by writing the
-    robot's own pose into the world cannot be answered that way here: see
+    Apart from :attr:`KINEMATICALLY_SIMULATED`, since a motion that may be answered by
+    writing the robot's own pose into the world cannot be answered that way here: see
     :class:`~coraplex.robot_plans.motions.navigation.MoveMotion`.
     """
 

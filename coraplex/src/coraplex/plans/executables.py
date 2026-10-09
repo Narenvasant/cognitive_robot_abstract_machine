@@ -385,7 +385,10 @@ class GiskardExecutable(Executable):
 
         try:
             match GiskardExecutable.execution_type:
-                case ExecutionType.SIMULATED | ExecutionType.PHYSICALLY_SIMULATED:
+                case (
+                    ExecutionType.KINEMATICALLY_SIMULATED
+                    | ExecutionType.PHYSICALLY_SIMULATED
+                ):
                     self._execute_simulation()
                 case ExecutionType.REAL:
                     self._execute_real()

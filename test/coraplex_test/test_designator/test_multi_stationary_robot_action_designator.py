@@ -8,7 +8,10 @@ from giskardpy.utils.utils_for_tests import compare_axis_angle, compare_orientat
 from coraplex.datastructures.dataclasses import Context
 from coraplex.datastructures.trajectory import PoseTrajectory
 
-from coraplex.execution_environment import PhysicallySimulatedRobot, simulated_robot
+from coraplex.execution_environment import (
+    PhysicallySimulatedRobot,
+    kinematically_simulated_robot,
+)
 from coraplex.plans.factories import execute_single, sequential
 from coraplex.robot_plans.actions.core.pick_up import (
     ReachAction,
@@ -150,7 +153,7 @@ def test_park_arms_multi(stationary_block_context):
 
     description = ParkArmsAction(context.robot.all_arms)
     plan = execute_single(description, context=context).plan
-    with simulated_robot:
+    with kinematically_simulated_robot:
         plan.perform()
 
     joints = []
@@ -189,7 +192,7 @@ def test_reach_action_multi(stationary_block_context):
         context=context,
     ).plan
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         plan.perform()
 
     end_effector_pose = left_arm.end_effector.tool_frame.global_transform
@@ -214,7 +217,7 @@ def test_move_gripper_multi(stationary_block_context):
         context=context,
     ).plan
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         plan.perform()
 
     arm = view.all_arms[0]
@@ -231,7 +234,7 @@ def test_move_gripper_multi(stationary_block_context):
         context=context,
     ).plan
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         plan.perform()
 
     for connection, target in close_state.items():
@@ -254,7 +257,7 @@ def test_grasping(stationary_block_context):
         [ParkArmsAction(context.robot.all_arms), description],
         context=context,
     ).plan
-    with simulated_robot:
+    with kinematically_simulated_robot:
         plan.perform()
 
     # The grasp sits at the box's own origin, so that is where the tool frame ends up.
@@ -281,7 +284,7 @@ def test_pick_up_multi(stationary_block_context):
         context=context,
     ).plan
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         plan.perform()
 
     assert (
@@ -327,7 +330,7 @@ def test_place_multi(stationary_block_context, place_position):
         context=context,
     ).plan
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         plan.perform()
 
     with pytest.raises(NoEdgeBetweenNodes):
@@ -373,7 +376,7 @@ def test_move_tcp_follows_sine_waypoints(stationary_block_context, anchor_positi
         ),
         context=context,
     )
-    with simulated_robot:
+    with kinematically_simulated_robot:
         plan.perform()
 
     tip_pose = right_arm.end_effector.tool_frame.global_transform

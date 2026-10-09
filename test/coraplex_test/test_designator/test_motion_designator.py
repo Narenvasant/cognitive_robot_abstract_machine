@@ -15,7 +15,7 @@ from coraplex.datastructures.enums import (
 from coraplex.execution_environment import (
     PhysicallySimulatedRobot,
     real_robot,
-    simulated_robot,
+    kinematically_simulated_robot,
 )
 from coraplex.plans.executables import MoveBranchExecutable
 from giskardpy.motion_statechart.monitors.overwrite_state_monitors import SetOdometry
@@ -105,7 +105,7 @@ def test_pick_up_motion(pr2_apartment_context):
         context=test_context,
     )
     assert pick_up.plan is not None
-    with simulated_robot:
+    with kinematically_simulated_robot:
         root.perform()
 
     pick_up_node = root.plan.get_nodes_by_designator_type(PickUpAction)[0]
@@ -151,7 +151,7 @@ def test_a_simulated_base_is_written_where_it_was_sent(pr2_apartment_context):
         Pose(Point3.from_iterable([1, 1, 1]), reference_frame=world.root)
     )
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         execute_single(motion, context=context)
 
         assert isinstance(motion.motion_chart, SetOdometry)
@@ -852,7 +852,7 @@ def test_stretch_base_motion_follows_the_execution_environment(
         assert motion.get_alternative_motion() is StretchMoveReal
         assert isinstance(motion.motion_chart, DifferentialDriveBaseGoal)
 
-    with simulated_robot:
+    with kinematically_simulated_robot:
         assert motion.get_alternative_motion() is StretchMoveSim
 
 
