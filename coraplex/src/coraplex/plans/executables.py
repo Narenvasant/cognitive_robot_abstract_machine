@@ -414,12 +414,16 @@ class GiskardExecutable(Executable):
         :raises MotionExceededSimulationTimeLimit: When the motion runs for longer than
             :attr:`simulation_time_limit`.
         """
-        qp_controller_config = QPControllerConfig.create_with_fast_simulation_defaults()
-        pacer = (
-            NoPacing()
-            if GiskardExecutable.simulation is None
-            else SteppedSimulationPacer(GiskardExecutable.simulation)
-        )
+        if GiskardExecutable.simulation is None:
+            qp_controller_config = (
+                QPControllerConfig.create_with_fast_simulation_defaults()
+            )
+            pacer = NoPacing()
+        else:
+            qp_controller_config = (
+                QPControllerConfig.create_with_physical_simulation_defaults()
+            )
+            pacer = SteppedSimulationPacer(GiskardExecutable.simulation)
         self._tick_until_done(
             Ros2Executor(
                 context=MotionStatechartContext(
