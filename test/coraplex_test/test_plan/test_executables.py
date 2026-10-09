@@ -474,3 +474,25 @@ def test_a_physically_simulated_pick_is_held_by_its_own_grip(pr2_apartment_conte
         plan.perform()
 
     assert milk.parent_connection.parent is stood_under
+
+
+def test_a_physically_simulated_place_is_released_by_its_own_grip(
+    pr2_apartment_context,
+):
+    """
+    Releasing is the same move the other way, and in physics the pads opening is what
+    lets the object go, so the model is left alone here too.
+    """
+    world, _, context = pr2_apartment_context
+    milk = world.get_semantic_annotations_by_type(Milk)[0].root
+    gripper = context.robot.right_arm.end_effector.tool_frame
+    with world.modify_world():
+        world.move_branch(milk, gripper)
+    plan = execute_single(
+        ReAttachNode(body=milk, new_parent=world.root), context=context
+    )
+
+    with PhysicallySimulatedRobot(simulation=SimulationThatCountsItsSteps()):
+        plan.perform()
+
+    assert milk.parent_connection.parent is gripper
