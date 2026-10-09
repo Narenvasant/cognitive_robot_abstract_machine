@@ -309,11 +309,7 @@ class PerceptionInterface(ABC):
         :return: The source to answer queries with.
         :raises UnknownExecutionType: If the execution type has no source.
         """
-        if execution_type in (
-            ExecutionType.SIMULATED,
-            ExecutionType.PHYSICALLY_SIMULATED,
-            ExecutionType.NO_EXECUTION,
-        ):
+        if execution_type in (ExecutionType.SIMULATED, ExecutionType.NO_EXECUTION):
             return WorldPerception()
         if execution_type == ExecutionType.REAL:
             return RoboKudoPerception(ros_node=ros_node)

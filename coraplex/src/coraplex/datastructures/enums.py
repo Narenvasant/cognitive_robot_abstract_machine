@@ -106,12 +106,6 @@ class ExecutionType(Enum):
 
     REAL = auto()
     SIMULATED = auto()
-    PHYSICALLY_SIMULATED = auto()
-    """
-    Performed against a physically simulated world, where the robot's joints are driven
-    to a goal by its servos, and an object is held by friction alone.
-    """
-
     SEMI_REAL = auto()
     NO_EXECUTION = auto()
 

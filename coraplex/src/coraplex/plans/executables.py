@@ -8,7 +8,6 @@ from typing_extensions import Callable, List, Dict, ClassVar, Optional, TYPE_CHE
 
 from coraplex.datastructures.enums import ExecutionType
 from coraplex.exceptions import (
-    MissingSimulationError,
     ConditionNotSatisfied,
     UnknownExecutionType,
 )
@@ -388,8 +387,6 @@ class GiskardExecutable(Executable):
             match GiskardExecutable.execution_type:
                 case ExecutionType.SIMULATED:
                     self._execute_simulation()
-                case ExecutionType.PHYSICALLY_SIMULATED:
-                    self._execute_physically_simulated()
                 case ExecutionType.REAL:
                     self._execute_real()
                 case _:
@@ -402,7 +399,8 @@ class GiskardExecutable(Executable):
     def _execute_simulation(self) -> None:
         """
         Compiles the motion state chart and ticks it in the world of the context until
-        it is done or gives up.
+        it is done or gives up, stepping the physics one control period between two
+        ticks where a simulation is being performed in.
 
         The chart's own stall monitor decides when a motion is hopeless, so a motion
         that keeps converging is never cut off for taking many ticks.
@@ -417,6 +415,11 @@ class GiskardExecutable(Executable):
             :attr:`simulation_time_limit`.
         """
         qp_controller_config = QPControllerConfig.create_with_fast_simulation_defaults()
+        pacer = (
+            NoPacing()
+            if GiskardExecutable.simulation is None
+            else SteppedSimulationPacer(GiskardExecutable.simulation)
+        )
         self._tick_until_done(
             Ros2Executor(
                 context=MotionStatechartContext(
@@ -424,39 +427,17 @@ class GiskardExecutable(Executable):
                     qp_controller_config=qp_controller_config,
                 ),
                 ros_node=self.context.ros_node,
+                pacer=pacer,
             ),
             qp_controller_config,
-        )
-
-    def _execute_physically_simulated(self) -> None:
-        """
-        Compiles the motion state chart and ticks it against a physically simulated
-        world, stepping the physics one control period between two ticks so that every
-        tick's command reaches the simulation's servos as their set point.
-
-        :raises MissingSimulationError: If no simulation was given to perform in.
-        :raises MotionExceededSimulationTimeLimit: When the motion runs for longer than
-            :attr:`simulation_time_limit`.
-        """
-        if GiskardExecutable.simulation is None:
-            raise MissingSimulationError()
-        qp_controller_config = QPControllerConfig.create_with_fast_simulation_defaults()
-        self._tick_until_done(
-            Executor(
-                context=MotionStatechartContext(
-                    world=self.context.world,
-                    qp_controller_config=qp_controller_config,
-                ),
-            ),
-            qp_controller_config,
-            SteppedSimulationPacer(GiskardExecutable.simulation),
+            pacer,
         )
 
     def _tick_until_done(
         self,
         executor: Executor,
         qp_controller_config: QPControllerConfig,
-        pacer: Optional[Pacer] = None,
+        pacer: Pacer,
     ) -> None:
         """
         Tick ``executor`` until the chart ends or gives up, recording the motions it
@@ -464,11 +445,11 @@ class GiskardExecutable(Executable):
 
         :param executor: The executor to tick.
         :param qp_controller_config: The configuration it was built with.
-        :param pacer: What waits between two ticks; nothing waits if not given.
+        :param pacer: What waits between two ticks, which the executor was built with so
+            that it carries the control rate.
         :raises MotionExceededSimulationTimeLimit: When the motion runs for longer than
             :attr:`simulation_time_limit`.
         """
-        pacer = NoPacing() if pacer is None else pacer
         time_limit = GiskardExecutable.simulation_time_limit
         maximum_ticks = (
             time_limit.total_seconds()

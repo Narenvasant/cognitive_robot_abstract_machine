@@ -24,13 +24,10 @@ from giskardpy.motion_statechart.tasks.cartesian_tasks import CartesianPosition
 from giskardpy.qp.qp_controller_config import QPControllerConfig
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.api import RobotSpecification
-from semantic_digital_twin.datastructures.definitions import (
-    GripperState,
-    StaticJointState,
-)
+from semantic_digital_twin.datastructures.definitions import StaticJointState
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.tracy import Tracy
-from semantic_digital_twin.spatial_types.spatial_types import Point3, Pose
+from semantic_digital_twin.spatial_types.spatial_types import Point3
 from semantic_digital_twin.utils import tracy_installed
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
@@ -209,61 +206,6 @@ def test_holding_advances_the_physics_without_a_new_command(stepped_tracy):
 
 def test_waiting_for_no_joints_is_already_settled(stepped_tracy):
     assert stepped_tracy.settled([])
-
-
-def test_an_arm_reaches_a_pose_and_comes_to_rest_there(stepped_tracy, parked_tracy):
-    """
-    Reaching both sends the arm and waits for it, so the pose holds once it returns.
-    """
-    world = stepped_tracy.world
-    arm = parked_tracy.left_arm
-    tool_frame = arm.end_effector.tool_frame
-    start = world.compute_forward_kinematics_np(world.root, tool_frame)[:3, 3]
-    goal = Pose.from_xyz_rpy(
-        start[0], start[1], start[2] + 0.1, reference_frame=world.root
-    )
-
-    assert stepped_tracy.reach(arm, goal, hold_orientation=False)
-
-    simulated = numpy.array(
-        stepped_tracy.simulation.simulator.get_body_position(
-            body_name=tool_frame.name.name
-        ).result
-    )
-    assert numpy.linalg.norm(simulated - goal.position.to_np()[:3].ravel()) <= 0.02
-
-
-def test_a_gripper_is_driven_through_the_one_joint_that_moves_its_fingers(
-    stepped_tracy, parked_tracy
-):
-    """
-    The fingers are a mimic linkage, so the state's own connections cannot be commanded
-    one by one; the joint that drives them is.
-    """
-    gripper = parked_tracy.left_arm.end_effector
-    closed = gripper.get_joint_state_by_type(GripperState.CLOSE)
-
-    assert len(closed.connections) > len(closed.degree_of_freedom_targets)
-    assert stepped_tracy.move_joints(closed, avoid_collisions=False)
-
-    [(joint_name, commanded)] = closed.degree_of_freedom_targets.items()
-    reached = stepped_tracy.simulation.simulator.get_joint_value(joint_name).result
-    assert reached == pytest.approx(commanded, abs=stepped_tracy.settled_threshold)
-
-
-def test_parking_the_arms_brings_every_joint_to_its_parked_position(
-    stepped_tracy, parked_tracy
-):
-    arm = parked_tracy.left_arm
-    parked = arm.get_joint_state_by_type(StaticJointState.PARK)
-
-    assert stepped_tracy.park_arms([arm], avoid_collisions=False)
-
-    for joint_name, commanded in parked.degree_of_freedom_targets.items():
-        reached = stepped_tracy.simulation.simulator.get_joint_value(joint_name).result
-        assert reached == pytest.approx(
-            commanded, abs=stepped_tracy.settled_threshold
-        ), joint_name
 
 
 # %% closing a gripper onto something

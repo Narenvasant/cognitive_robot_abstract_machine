@@ -95,11 +95,9 @@ class PhysicallySimulatedRobot(ExecutionEnvironment):
         >>>     SequentialPlan(context, PickUpActionDescription, ...)
     """
 
-    execution_type: ExecutionType = field(
-        default=ExecutionType.PHYSICALLY_SIMULATED, init=False
-    )
+    execution_type: ExecutionType = field(default=ExecutionType.SIMULATED, init=False)
     """
-    Always a physically simulated robot.
+    A simulated robot, which the simulation makes a physically simulated one.
     """
 
     simulation: MujocoSim = field(kw_only=True)

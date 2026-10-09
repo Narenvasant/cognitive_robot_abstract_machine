@@ -55,7 +55,7 @@ from coraplex.execution_environment import (
     real_robot,
     simulated_robot,
 )
-from coraplex.exceptions import ConditionNotSatisfied, MissingSimulationError
+from coraplex.exceptions import ConditionNotSatisfied
 from coraplex.plans.executables import GiskardExecutable
 from coraplex.plans.factories import execute_single
 from coraplex.robot_plans.actions.core.pick_up import ReachAction
@@ -399,16 +399,6 @@ def test_a_motion_that_violates_collision_avoidance_fails_as_a_plan_failure(
 # %% performing a plan in a physically simulated world
 
 
-def test_performing_in_physics_without_a_simulation_says_so(reach_action_executable):
-    """
-    The execution type alone does not say which world to step, so a plan asked to be
-    performed in physics without one cannot start.
-    """
-    with ExecutionEnvironment(ExecutionType.PHYSICALLY_SIMULATED):
-        with pytest.raises(MissingSimulationError):
-            reach_action_executable.execute()
-
-
 def test_a_physically_simulated_motion_is_given_the_same_time_limit(
     reach_action_executable, monkeypatch
 ):
@@ -427,7 +417,7 @@ def test_entering_a_physically_simulated_robot_hands_over_the_simulation():
     simulation = SimulationThatCountsItsSteps()
 
     with PhysicallySimulatedRobot(simulation=simulation):
-        assert GiskardExecutable.execution_type == ExecutionType.PHYSICALLY_SIMULATED
+        assert GiskardExecutable.execution_type == ExecutionType.SIMULATED
         assert GiskardExecutable.simulation is simulation
 
 

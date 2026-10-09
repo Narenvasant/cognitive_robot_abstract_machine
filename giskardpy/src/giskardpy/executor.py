@@ -21,15 +21,7 @@ from giskardpy.motion_statechart.goals.collision_avoidance import (
     ExternalCollisionAvoidance,
 )
 from giskardpy.motion_statechart.graph_node import EndMotion, Task
-from giskardpy.motion_statechart.tasks.cartesian_tasks import (
-    CartesianPose,
-    CartesianPosition,
-)
-from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList
-from semantic_digital_twin.datastructures.definitions import StaticJointState
-from semantic_digital_twin.datastructures.joint_state import JointState
-from semantic_digital_twin.spatial_types.spatial_types import Pose
-from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
+from giskardpy.motion_statechart.tasks.cartesian_tasks import CartesianPosition
 from semantic_digital_twin.world_description.world_entity import Body
 from giskardpy.motion_statechart.motion_statechart import MotionStatechart
 from giskardpy.motion_statechart.plotters.debug_expression_trajectory_plotter import (
@@ -481,77 +473,6 @@ class SteppedMotion:
             if max(self._distances_to(set_points).values()) < self.settled_threshold:
                 return True
         return False
-
-    def move_joints(
-        self, goal_state: JointState, avoid_collisions: bool = True
-    ) -> bool:
-        """
-        Drive joints to the positions a state names, through the degrees of freedom that
-        drive them, and wait for them to arrive.
-
-        :param goal_state: Where the joints are to end up.
-        :param avoid_collisions: See :meth:`run`.
-        :return: Whether every one of them arrived.
-        """
-        targets = goal_state.degree_of_freedom_targets
-        self.run(
-            JointPositionList(goal_state=JointState.from_str_dict(targets, self.world)),
-            avoid_collisions=avoid_collisions,
-        )
-        return self.settled(list(targets))
-
-    def park_arms(self, arms: list[Arm], avoid_collisions: bool = True) -> bool:
-        """
-        Drive arms to the configuration they are parked in.
-
-        :param arms: The arms to park.
-        :param avoid_collisions: See :meth:`run`.
-        :return: Whether every joint of every arm arrived.
-        """
-        parked: dict[ActiveConnection1DOF, float] = {}
-        for arm in arms:
-            state = arm.get_joint_state_by_type(StaticJointState.PARK)
-            parked.update(dict(zip(state.connections, state.target_values)))
-        return self.move_joints(
-            JointState.from_mapping(parked), avoid_collisions=avoid_collisions
-        )
-
-    def reach(
-        self,
-        arm: Arm,
-        goal_pose: Pose,
-        hold_orientation: bool = True,
-        avoid_collisions: bool = True,
-    ) -> bool:
-        """
-        Move an arm's tool frame to a pose and wait for the arm to come to rest there.
-
-        :param arm: The arm to move.
-        :param goal_pose: Where its tool frame is to end up.
-        :param hold_orientation: Whether the goal's orientation is held as well as its
-            position.
-        :param avoid_collisions: See :meth:`run`.
-        :return: Whether every joint of the arm arrived.
-        """
-        tool_frame = arm.end_effector.tool_frame
-        if hold_orientation:
-            task = CartesianPose(
-                root_link=self.world.root, tip_link=tool_frame, goal_pose=goal_pose
-            )
-        else:
-            task = CartesianPosition(
-                root_link=self.world.root,
-                tip_link=tool_frame,
-                goal_point=goal_pose.position,
-            )
-        self.run(task, avoid_collisions=avoid_collisions)
-        return self.settled(
-            [
-                connection.raw_dof.name.name
-                for connection in arm.active_connections
-                if isinstance(connection, ActiveConnection1DOF)
-            ]
-        )
 
     def close_gripper_around(
         self,
