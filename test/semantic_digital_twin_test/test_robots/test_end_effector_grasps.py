@@ -281,7 +281,7 @@ def test_the_pads_are_the_tips_of_the_thumb_and_the_finger(pr2_gripper):
     assert pr2_gripper.pads == (pr2_gripper.thumb.tip, pr2_gripper.finger.tip)
 
 
-def test_the_grasp_centre_lies_midway_between_the_pads(pr2_gripper):
+def test_the_grasp_center_lies_midway_between_the_pads(pr2_gripper):
     """
     The point a gripper takes hold at is between its pads, wherever its tool frame
     happens to sit.
@@ -295,17 +295,17 @@ def test_the_grasp_centre_lies_midway_between_the_pads(pr2_gripper):
     ]
 
     np.testing.assert_allclose(
-        pr2_gripper.grasp_centre.to_np()[:3].ravel(),
+        pr2_gripper.grasp_center.to_np()[:3].ravel(),
         (centres[0] + centres[1]) / 2,
         atol=1e-9,
     )
 
 
-def test_the_grasp_centre_is_read_in_the_frame_it_belongs_to(pr2_gripper):
-    assert pr2_gripper.grasp_centre.reference_frame is pr2_gripper.tool_frame
+def test_the_grasp_center_is_read_in_the_frame_it_belongs_to(pr2_gripper):
+    assert pr2_gripper.grasp_center.reference_frame is pr2_gripper.tool_frame
 
 
-def test_a_goal_for_the_grasp_centre_puts_the_pads_on_the_grasp(
+def test_a_goal_for_the_grasp_center_puts_the_pads_on_the_grasp(
     pr2_gripper, graspable_box
 ):
     """
@@ -314,16 +314,16 @@ def test_a_goal_for_the_grasp_centre_puts_the_pads_on_the_grasp(
     """
     grasp = graspable_box.grasp_candidates()[0].grasp_pose
 
-    goal = pr2_gripper.tool_frame_goal_for_grasp_centre(grasp)
+    goal = pr2_gripper.tool_frame_goal_for_grasp_center(grasp)
 
     reached = goal.to_np()
     centre_on_the_grasp = (
-        reached[:3, :3] @ pr2_gripper.grasp_centre.to_np()[:3].ravel() + reached[:3, 3]
+        reached[:3, :3] @ pr2_gripper.grasp_center.to_np()[:3].ravel() + reached[:3, 3]
     )
     np.testing.assert_allclose(centre_on_the_grasp, grasp.to_np()[:3, 3], atol=1e-9)
 
 
-def test_a_goal_for_the_grasp_centre_turns_the_gripper_the_same_way(
+def test_a_goal_for_the_grasp_center_turns_the_gripper_the_same_way(
     pr2_gripper, graspable_box
 ):
     """
@@ -331,10 +331,10 @@ def test_a_goal_for_the_grasp_centre_turns_the_gripper_the_same_way(
     """
     grasp = graspable_box.grasp_candidates()[0].grasp_pose
 
-    centred = pr2_gripper.tool_frame_goal_for_grasp_centre(grasp)
+    centered = pr2_gripper.tool_frame_goal_for_grasp_center(grasp)
 
     np.testing.assert_allclose(
-        centred.rotation_matrix.to_np(),
+        centered.rotation_matrix.to_np(),
         pr2_gripper.tool_frame_goal(grasp).rotation_matrix.to_np(),
         atol=1e-9,
     )
@@ -353,11 +353,11 @@ def test_a_gripper_whose_pads_straddle_its_tool_frame_is_sent_somewhere_else(
     ].left_arm.end_effector
     grasp = graspable_box.grasp_candidates()[0].grasp_pose
 
-    centred = gripper.tool_frame_goal_for_grasp_centre(grasp).to_np()[:3, 3]
+    centered = gripper.tool_frame_goal_for_grasp_center(grasp).to_np()[:3, 3]
 
-    offset = np.linalg.norm(gripper.grasp_centre.to_np()[:3])
+    offset = np.linalg.norm(gripper.grasp_center.to_np()[:3])
     assert offset > 0.0
-    assert np.linalg.norm(centred - gripper.tool_frame_goal(grasp).to_np()[:3, 3]) == (
+    assert np.linalg.norm(centered - gripper.tool_frame_goal(grasp).to_np()[:3, 3]) == (
         pytest.approx(offset)
     )
 
@@ -402,7 +402,7 @@ def test_every_two_finger_gripper_there_is_can_measure_its_own_pads(
         abstract_robot.from_world(world)
 
         for gripper in world.get_semantic_annotations_by_type(HasTwoFingers):
-            assert gripper.grasp_centre.reference_frame is gripper.tool_frame
+            assert gripper.grasp_center.reference_frame is gripper.tool_frame
             assert gripper.pad_depth > 0.0
             assert gripper.fingertip_distance_for(0.0) == pytest.approx(
                 2 * gripper.pad_depth

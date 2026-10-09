@@ -98,22 +98,6 @@ class JointState(SubclassJSONSerializer):
             ]
         )
 
-    @property
-    def degree_of_freedom_targets(self) -> Dict[str, float]:
-        """
-        The position every degree of freedom driving these connections has to take, by
-        name.
-
-        Several connections of a mimic linkage follow one degree of freedom, each
-        through its own multiplier and offset, and only that degree of freedom can be
-        driven.
-        """
-        return {
-            connection.raw_dof.name.name: (target - connection.offset)
-            / connection.multiplier
-            for connection, target in zip(self.connections, self.target_values)
-        }
-
     def apply_to(self, world: World) -> None:
         """
         Write the target values of this joint state into the world.

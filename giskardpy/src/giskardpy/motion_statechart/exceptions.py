@@ -351,9 +351,9 @@ class MotionDidNotEndError(MotionStatechartError):
     condition ever becoming true.
     """
 
-    goal: str
+    task: MotionStatechartNode
     """
-    What the motion was asked to do.
+    The node whose end condition never became true.
     """
 
     control_cycles: int
@@ -362,7 +362,10 @@ class MotionDidNotEndError(MotionStatechartError):
     """
 
     def error_message(self) -> str:
-        return f"{self.goal} did not end within {self.control_cycles} control cycles."
+        return (
+            f"{self.task.unique_name} did not end within {self.control_cycles} "
+            "control cycles."
+        )
 
     def suggest_correction(self) -> str:
         return (

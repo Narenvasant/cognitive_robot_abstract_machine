@@ -178,21 +178,20 @@ class HasTwoFingers(
         return self.thumb.tip, self.finger.tip
 
     @property
-    def grasp_centre(self) -> Point3:
+    def grasp_center(self) -> Point3:
         """
-        The point midway between the pads, in :attr:`tool_frame`.
-
-        A gripper's tool frame need not sit where its pads meet: on Tracy's Robotiq
-        2F-85 the two stand about 2cm apart.
+        The point midway between the pads, in
+        :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.tool_frame`, which
+        a gripper's tool frame need not sit at.
         """
         thumb_pad, finger_pad = (
             self._pad_bounding_box(pad).center.to_np()[:3].ravel() for pad in self.pads
         )
         return Point3(*(thumb_pad + finger_pad) / 2, reference_frame=self.tool_frame)
 
-    def tool_frame_goal_for_grasp_centre(self, grasp_pose: Pose) -> Pose:
+    def tool_frame_goal_for_grasp_center(self, grasp_pose: Pose) -> Pose:
         """
-        Express a grasp frame as the goal that puts :attr:`grasp_centre` on it, where
+        Express a grasp frame as the goal that puts :attr:`grasp_center` on it, where
         :meth:`~semantic_digital_twin.robots.robot_parts.EndEffector.tool_frame_goal`
         puts the tool frame there.
 
@@ -203,7 +202,7 @@ class HasTwoFingers(
         rotation = oriented.rotation_matrix.to_np()[:3, :3]
         position = (
             grasp_pose.position.to_np()[:3].ravel()
-            - rotation @ self.grasp_centre.to_np()[:3].ravel()
+            - rotation @ self.grasp_center.to_np()[:3].ravel()
         )
         return Pose(
             position=Point3(*position, reference_frame=grasp_pose.reference_frame),
@@ -215,8 +214,9 @@ class HasTwoFingers(
     def pad_separation(self) -> float:
         """
         How far apart the pads' facing surfaces stand right now, in metres, measured
-        along :attr:`closing_axis`: the widest object the gripper could close on as it
-        stands.
+        along
+        :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.closing_axis`: the
+        widest object the gripper could close on as it stands.
 
         Negative where the pads already overlap, as a fully closed gripper's do.
         """
@@ -231,8 +231,8 @@ class HasTwoFingers(
     def pad_depth(self) -> float:
         """
         How far a pad's facing surface lies inside its own tip frame, in metres, along
-        :attr:`closing_axis`: a goal on the tip frames stands this much wider than the
-        surfaces on either side.
+        :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.closing_axis`: a
+        goal on the tip frames stands this much wider than the surfaces on either side.
         """
         return (self._fingertip_distance - self.pad_separation) / 2
 
@@ -272,7 +272,8 @@ class HasTwoFingers(
     @property
     def _fingertip_distance(self) -> float:
         """
-        How far apart the pads' own frames stand right now, along :attr:`closing_axis`.
+        How far apart the pads' own frames stand right now, along
+        :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.closing_axis`.
         """
         thumb, finger = (
             self._closing_axis_coordinate(
@@ -285,7 +286,7 @@ class HasTwoFingers(
     def _pad_bounding_box(self, pad: Body) -> BoundingBox:
         """
         :param pad: One of the :attr:`pads`.
-        :return: Its collision bounding box, in :attr:`tool_frame`.
+        :return: Its collision bounding box, in :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.tool_frame`.
         """
         return pad.collision.as_bounding_box_collection_in_frame(
             self.tool_frame
@@ -294,7 +295,7 @@ class HasTwoFingers(
     def _reach_along_closing_axis(self, pad: Body) -> Tuple[float, float]:
         """
         :param pad: One of the :attr:`pads`.
-        :return: How far its bounding box reaches along :attr:`closing_axis`, as its
+        :return: How far its bounding box reaches along :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.closing_axis`, as its
             nearest and furthest coordinate on that axis.
         """
         box = self._pad_bounding_box(pad)
@@ -308,8 +309,8 @@ class HasTwoFingers(
 
     def _closing_axis_coordinate(self, point: np.ndarray) -> float:
         """
-        :param point: A point in :attr:`tool_frame`.
-        :return: Where it lies along :attr:`closing_axis`.
+        :param point: A point in :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.tool_frame`.
+        :return: Where it lies along :attr:`~semantic_digital_twin.robots.robot_parts.EndEffector.closing_axis`.
         """
         return float(point @ self.closing_axis.to_np()[:3].ravel())
 

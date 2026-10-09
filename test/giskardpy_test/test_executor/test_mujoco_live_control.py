@@ -15,7 +15,8 @@ import pytest
 
 from ...pytest_environment import runs_in_continuous_integration
 
-from giskardpy.executor import Executor, SteppedMotion, SteppedSimulationPacer
+from giskardpy.executor import Executor, SteppedSimulationPacer
+from giskardpy.stepped_motion import SteppedMotion
 from giskardpy.motion_statechart.context import MotionStatechartContext
 from giskardpy.motion_statechart.graph_node import EndMotion
 from giskardpy.motion_statechart.exceptions import MotionDidNotEndError
