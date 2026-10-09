@@ -264,3 +264,39 @@ def test_parking_the_arms_brings_every_joint_to_its_parked_position(
         assert reached == pytest.approx(
             commanded, abs=stepped_tracy.settled_threshold
         ), joint_name
+
+
+# %% closing a gripper onto something
+
+
+def test_closing_drives_the_pads_to_the_width_it_was_given(stepped_tracy, parked_tracy):
+    """
+    The pads end up as far apart as the body is wide, less the squeeze margin on each
+    side.
+    """
+    gripper = parked_tracy.left_arm.end_effector
+    nothing_there = Body(name=PrefixedName("nothing_there"))
+
+    stepped_tracy.close_gripper_around(
+        parked_tracy.left_arm, nothing_there, width=0.04, squeeze_margin=0.001
+    )
+
+    assert gripper.pad_separation == pytest.approx(0.038, abs=0.002)
+
+
+def test_closing_on_nothing_reports_no_grip(stepped_tracy, parked_tracy):
+    """
+    Both pads have to end up touching the body for the grip to count, and closing on
+    thin air touches nothing.
+    """
+    assert not stepped_tracy.close_gripper_around(
+        parked_tracy.left_arm, Body(name=PrefixedName("nothing_there")), width=0.04
+    )
+
+
+def test_a_wider_body_sends_the_fingertip_frames_further_apart(parked_tracy):
+    gripper = parked_tracy.left_arm.end_effector
+
+    assert gripper.fingertip_distance_for(0.06) - gripper.fingertip_distance_for(
+        0.03
+    ) == pytest.approx(0.03)
