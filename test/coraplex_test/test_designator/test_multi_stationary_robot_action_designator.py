@@ -2,11 +2,13 @@ import numpy as np
 import pytest
 from rustworkx import NoEdgeBetweenNodes
 
+from ...pytest_environment import runs_in_continuous_integration
+
 from giskardpy.utils.utils_for_tests import compare_axis_angle, compare_orientations
 from coraplex.datastructures.dataclasses import Context
 from coraplex.datastructures.trajectory import PoseTrajectory
 
-from coraplex.execution_environment import simulated_robot
+from coraplex.execution_environment import PhysicallySimulatedRobot, simulated_robot
 from coraplex.plans.factories import execute_single, sequential
 from coraplex.robot_plans.actions.core.pick_up import (
     ReachAction,
@@ -22,6 +24,7 @@ from coraplex.robot_plans.actions.core.robot_body import (
 from coraplex.testing import _make_sine_scan_poses
 from krrood.entity_query_language.factories import an, entity, variable
 
+from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.datastructures.definitions import (
     GripperState,
     StaticJointState,
@@ -378,3 +381,83 @@ def test_move_tcp_follows_sine_waypoints(stationary_block_context, anchor_positi
 
     assert np.allclose(tip_pose.position, expected.position, atol=0.01)
     assert np.allclose(tip_pose.quaternion, expected.quaternion, atol=0.01)
+
+
+# %% picking and placing in physics
+
+
+@pytest.fixture
+def physically_simulated_block_context(stationary_block_context):
+    """
+    The block world with its physics running, so a plan performed in it is carried out
+    by the robot's own servos.
+    """
+    world, view, context = stationary_block_context
+    if not isinstance(view, Tracy):
+        pytest.skip("only Tracy is set up with the servos a physical simulation needs")
+    simulation = MujocoSim(world=world, headless=True)
+    simulation.start_stepped_simulation()
+    yield world, view, context, simulation
+    simulation.stop_simulation()
+
+
+@pytest.mark.skipif(
+    not runs_in_continuous_integration(), reason="MuJoCo tests only run in CI"
+)
+def test_a_pick_in_physics_leaves_the_box_to_the_grip(
+    physically_simulated_block_context,
+):
+    """
+    Nothing puts the box under the gripper in the model, so whether it comes along at
+    all is up to the pads holding it.
+    """
+    world, _, context, simulation = physically_simulated_block_context
+    arm = left_or_only_arm(context.robot)
+    box = world.get_body_by_name("box1")
+    stood_on = box.parent_connection.parent
+    plan = sequential(
+        [
+            ParkArmsAction(context.robot.all_arms),
+            PickUpAction(graspable_annotation(world, box).grasp_candidates()[0], arm),
+        ],
+        context=context,
+    ).plan
+
+    with PhysicallySimulatedRobot(simulation=simulation):
+        plan.perform()
+
+    assert box.parent_connection.parent is stood_on
+    with pytest.raises(NoEdgeBetweenNodes):
+        world.get_connection(arm.end_effector.tool_frame, box)
+
+
+@pytest.mark.skipif(
+    not runs_in_continuous_integration(), reason="MuJoCo tests only run in CI"
+)
+def test_a_place_in_physics_leaves_the_box_to_the_release(
+    physically_simulated_block_context, place_position
+):
+    """
+    Nothing puts the box back under the world in the model either, so where it ends up
+    is where the pads opening leaves it.
+    """
+    world, _, context, simulation = physically_simulated_block_context
+    arm = left_or_only_arm(context.robot)
+    box = world.get_body_by_name("box1")
+    stood_on = box.parent_connection.parent
+    plan = sequential(
+        [
+            ParkArmsAction(context.robot.all_arms),
+            PickUpAction(graspable_annotation(world, box).grasp_candidates()[0], arm),
+            PlaceAction(
+                graspable_annotation(world, box),
+                Pose(place_position, reference_frame=world.root),
+            ),
+        ],
+        context=context,
+    ).plan
+
+    with PhysicallySimulatedRobot(simulation=simulation):
+        plan.perform()
+
+    assert box.parent_connection.parent is stood_on
