@@ -28,7 +28,7 @@ from giskardpy.motion_statechart.tasks.cartesian_tasks import (
 from giskardpy.motion_statechart.tasks.joint_tasks import JointPositionList
 from semantic_digital_twin.datastructures.definitions import StaticJointState
 from semantic_digital_twin.datastructures.joint_state import JointState
-from semantic_digital_twin.spatial_types.spatial_types import Point3, Pose
+from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from semantic_digital_twin.world_description.world_entity import Body
 from giskardpy.motion_statechart.motion_statechart import MotionStatechart
@@ -45,7 +45,6 @@ from semantic_digital_twin.world_description.world_state_trajectory_plotter impo
 
 if TYPE_CHECKING:
     from semantic_digital_twin.adapters.multi_sim import MujocoSim
-    from semantic_digital_twin.robots.robot_part_mixins import HasTwoFingers
     from semantic_digital_twin.robots.robot_parts import Arm
     from semantic_digital_twin.world import World
 
@@ -583,9 +582,7 @@ class SteppedMotion:
             CartesianPosition(
                 root_link=finger_pad,
                 tip_link=thumb_pad,
-                goal_point=self._closing_axis_point(
-                    gripper, finger_pad, gripper.fingertip_distance_for(pads_apart)
-                ),
+                goal_point=gripper.thumb_tip_goal(pads_apart),
             ),
             avoid_collisions=False,
         )
@@ -597,33 +594,6 @@ class SteppedMotion:
             ).result
             for pad in gripper.pads
         )
-
-    def _closing_axis_point(
-        self, gripper: HasTwoFingers, pad: Body, distance: float
-    ) -> Point3:
-        """
-        :param gripper: The gripper whose closing axis is followed.
-        :param pad: The pad the point is expressed in.
-        :param distance: How far along that axis the point lies, in metres.
-        :return: The point that far from ``pad`` towards the other pad.
-        """
-        pad_from_tool = self.world.compute_forward_kinematics_np(
-            pad, gripper.tool_frame
-        )[:3, :3]
-        towards_other_pad = pad_from_tool @ gripper.closing_axis.to_np()[:3].ravel()
-        other_pad = [one for one in gripper.pads if one is not pad][0]
-        if self._nearer_along(gripper, other_pad) < self._nearer_along(gripper, pad):
-            towards_other_pad = -towards_other_pad
-        return Point3(*(towards_other_pad * distance), reference_frame=pad)
-
-    @staticmethod
-    def _nearer_along(gripper: HasTwoFingers, pad: Body) -> float:
-        """
-        :param gripper: The gripper whose closing axis is followed.
-        :param pad: One of its pads.
-        :return: Where that pad lies along the closing axis.
-        """
-        return gripper._reach_along_closing_axis(pad)[0]
 
     def hold(self, duration: timedelta) -> None:
         """

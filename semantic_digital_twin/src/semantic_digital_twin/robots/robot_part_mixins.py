@@ -236,6 +236,31 @@ class HasTwoFingers(
         """
         return (self._fingertip_distance - self.pad_separation) / 2
 
+    def thumb_tip_goal(self, pad_separation: float) -> Point3:
+        """
+        Where the thumb's tip has to reach, in the finger's tip frame, to leave the pads
+        a given distance apart.
+
+        :param pad_separation: How far apart the pads' facing surfaces are to stand, in
+            metres.
+        :return: The goal for the thumb's tip.
+        """
+        thumb_pad, finger_pad = self.pads
+        towards_thumb = (
+            self._world.compute_forward_kinematics_np(finger_pad, self.tool_frame)[
+                :3, :3
+            ]
+            @ self.closing_axis.to_np()[:3].ravel()
+        )
+        if self._reach_along_closing_axis(thumb_pad)[0] < (
+            self._reach_along_closing_axis(finger_pad)[0]
+        ):
+            towards_thumb = -towards_thumb
+        return Point3(
+            *(towards_thumb * self.fingertip_distance_for(pad_separation)),
+            reference_frame=finger_pad,
+        )
+
     def fingertip_distance_for(self, pad_separation: float) -> float:
         """
         :param pad_separation: How far apart the pads' facing surfaces are to stand, in
