@@ -12,8 +12,13 @@ from coraplex.datastructures.dataclasses import Context
 from coraplex.datastructures.enums import (
     MovementType,
 )
-from coraplex.execution_environment import simulated_robot, real_robot
+from coraplex.execution_environment import (
+    PhysicallySimulatedRobot,
+    real_robot,
+    simulated_robot,
+)
 from coraplex.plans.executables import MoveBranchExecutable
+from giskardpy.motion_statechart.monitors.overwrite_state_monitors import SetOdometry
 from coraplex.plans.factories import sequential, execute_single
 from coraplex.plans.plan_node import MotionNode, ActionNode
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
@@ -134,6 +139,41 @@ def test_move_motion_chart(pr2_apartment_context):
 
     assert msc
     np.testing.assert_equal(msc.goal_pose.position.to_np(), np.array([1, 1, 1, 1]))
+
+
+def test_a_simulated_base_is_written_where_it_was_sent(pr2_apartment_context):
+    """
+    A robot simulated against the world's own belief about where it is can be put at a
+    pose by saying so.
+    """
+    world, _, context = pr2_apartment_context
+    motion = MoveMotion(
+        Pose(Point3.from_iterable([1, 1, 1]), reference_frame=world.root)
+    )
+
+    with simulated_robot:
+        execute_single(motion, context=context)
+
+        assert isinstance(motion.motion_chart, SetOdometry)
+
+
+def test_a_physically_simulated_base_is_driven_where_it_was_sent(
+    pr2_apartment_context,
+):
+    """
+    A robot whose wheels have to carry it cannot be put at a pose by saying so, which is
+    why performing in physics is told apart from performing against the world's own
+    belief.
+    """
+    world, _, context = pr2_apartment_context
+    motion = MoveMotion(
+        Pose(Point3.from_iterable([1, 1, 1]), reference_frame=world.root)
+    )
+
+    with PhysicallySimulatedRobot(simulation=None):
+        execute_single(motion, context=context)
+
+        assert isinstance(motion.motion_chart, CartesianPose)
 
 
 def test_move_tool_center_point_motion_uses_tight_threshold(pr2_apartment_context):

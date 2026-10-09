@@ -417,7 +417,7 @@ def test_entering_a_physically_simulated_robot_hands_over_the_simulation():
     simulation = SimulationThatCountsItsSteps()
 
     with PhysicallySimulatedRobot(simulation=simulation):
-        assert GiskardExecutable.execution_type == ExecutionType.SIMULATED
+        assert GiskardExecutable.execution_type == ExecutionType.PHYSICALLY_SIMULATED
         assert GiskardExecutable.simulation is simulation
 
 
