@@ -126,13 +126,17 @@ class HostedDataset:
         if self.path.exists():
             return self.path
         self.cache_directory.mkdir(parents=True, exist_ok=True)
+        # written beside the file and moved onto it once whole, so a download that
+        # stops halfway leaves nothing for the next run to mistake for the dataset
+        partial_path = self.path.with_name(f"{self.path.name}.partial")
         with requests.get(
             self.url, stream=True, timeout=self.download_timeout
         ) as response:
             response.raise_for_status()
-            with self.path.open("wb") as file:
+            with partial_path.open("wb") as file:
                 for chunk in response.iter_content(chunk_size=self.download_chunk_size):
                     file.write(chunk)
+        partial_path.replace(self.path)
         return self.path
 
     def load(self) -> ClutterPickDataset:
