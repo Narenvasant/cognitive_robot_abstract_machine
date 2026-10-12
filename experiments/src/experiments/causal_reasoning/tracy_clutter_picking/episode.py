@@ -1,7 +1,7 @@
 """
 One attempt to pick the target carton out of a layout's clutter, with MuJoCo standing in
 for Tracy and the target held by contact friction alone:
-:class:`~experiments.causal_reasoning.tracy_clutter_picking.pick_and_place_action.PickUpActionMujoco`
+:class:`~experiments.causal_reasoning.tracy_clutter_picking.pick_up_action.PickUpActionMujoco`
 run as an ordinary coraplex plan against a physically simulated robot.
 """
 
@@ -29,7 +29,7 @@ from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     EpisodePlanningFailedError,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.scene import MilkClutterWorld
-from experiments.causal_reasoning.tracy_clutter_picking.pick_and_place_action import (
+from experiments.causal_reasoning.tracy_clutter_picking.pick_up_action import (
     PickUpActionMujoco,
 )
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
