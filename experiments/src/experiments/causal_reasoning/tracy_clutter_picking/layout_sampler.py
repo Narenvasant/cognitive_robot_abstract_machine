@@ -8,7 +8,7 @@ import math
 from dataclasses import dataclass, field
 
 import numpy as np
-from typing_extensions import Dict, List, Tuple
+from typing_extensions import ClassVar, Dict, List, Tuple
 
 from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterEnvironment,
@@ -45,20 +45,59 @@ class EnvironmentDistribution:
     The friction coefficients an attempt in this environment draws from.
     """
 
+    friction_level_weights: Tuple[float, ...]
+    """
+    How much more often each level is drawn than the others, in the same order as
+    :attr:`friction_levels`.
+
+    Every level is given some weight rather than being left out of an environment:
+    adjusting for the environment can only answer for a friction that environment was
+    recorded at, so a level it never drew would quietly leave it out of the answer.
+    """
+
+    bin_slippery_weight: ClassVar[float] = 3.0
+    """
+    How much more often a bin draws one of the slippery levels than one of the rest.
+
+    Above one so the environment still decides how slippery an attempt is, which is what
+    makes it worth adjusting for at all; finite so a bin is still recorded at every
+    level.
+    """
+
+    @property
+    def friction_level_probabilities(self) -> Tuple[float, ...]:
+        """
+        :return: The chance of drawing each level, in the same order as
+            :attr:`friction_levels`.
+        """
+        total = sum(self.friction_level_weights)
+        return tuple(weight / total for weight in self.friction_level_weights)
+
     @classmethod
     def of_mock_environments(
         cls, ladder: FrictionLadder = FrictionLadder()
     ) -> Dict[ClutterEnvironment, EnvironmentDistribution]:
         """
         The mock's environments: a table leaves room between the cartons and holds any
-        material, a bin packs them tightly and holds the slippery ones.
+        material, a bin packs them tightly and mostly holds the slippery ones.
 
         :param ladder: The friction levels an attempt can be given.
         :return: Each environment's distribution, by environment.
         """
+        slippery = set(ladder.lowest_levels(3))
         return {
-            ClutterEnvironment.TABLE: cls(0.09, 0.14, tuple(ladder.levels)),
-            ClutterEnvironment.BIN: cls(0.065, 0.09, ladder.lowest_levels(3)),
+            ClutterEnvironment.TABLE: cls(
+                0.09, 0.14, tuple(ladder.levels), tuple(1.0 for _ in ladder.levels)
+            ),
+            ClutterEnvironment.BIN: cls(
+                0.065,
+                0.09,
+                tuple(ladder.levels),
+                tuple(
+                    cls.bin_slippery_weight if level in slippery else 1.0
+                    for level in ladder.levels
+                ),
+            ),
         }
 
 
@@ -145,9 +184,10 @@ class ClutterLayoutSampler:
             objects=objects,
             target_index=int(self.random_state.integers(len(objects))),
             friction_coefficient=float(
-                distribution.friction_levels[
-                    self.random_state.integers(len(distribution.friction_levels))
-                ]
+                self.random_state.choice(
+                    distribution.friction_levels,
+                    p=distribution.friction_level_probabilities,
+                )
             ),
             grasp_yaw=float(
                 self.grasp_face_yaws[
