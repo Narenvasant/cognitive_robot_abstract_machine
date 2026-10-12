@@ -286,18 +286,18 @@ class ClutterPickScene:
     """
 
 
-@dataclass
+@dataclass(eq=False)
 class ClutterPickSceneAggregations(AggregationStatistic[ClutterPickScene]):
     """
     Aggregation statistics of a :class:`ClutterPickScene` over its neighbours.
     """
 
-    @aggregation_statistic("neighbours")
+    @aggregation_statistic(variable(ClutterPickScene).neighbours)
     def crowding_count(self) -> int:
         """
         How many neighbours stand adjacent to the target.
         """
-        band = variable(ClutteredObject, self.instance.neighbours).distance_band
+        band = variable(ClutteredObject, self.role_taker.neighbours).distance_band
         [result] = (
             entity(count_range(band)).where(band == DistanceBand.ADJACENT).tolist()
         )

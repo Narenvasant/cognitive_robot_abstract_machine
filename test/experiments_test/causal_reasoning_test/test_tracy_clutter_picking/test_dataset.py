@@ -80,7 +80,7 @@ def test_highest_friction_without_adjacent_neighbours_always_lifts():
         layout.friction_coefficient = FrictionLadder().highest
         outcome = outcomes.simulate(layout)
         scene = outcome.to_scene(layout)
-        if ClutterPickSceneAggregations(instance=scene).crowding_count() == 0:
+        if ClutterPickSceneAggregations(role_taker=scene).crowding_count() == 0:
             assert outcome.lifted
             assert outcome.lift_height == outcomes.lifted_height
             lifted_count += 1

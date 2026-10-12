@@ -115,7 +115,7 @@ def test_aggregations_count_adjacent_neighbours(layout):
     )
     scene = outcome.to_scene(layout)
 
-    assert ClutterPickSceneAggregations(instance=scene).crowding_count() == 1
+    assert ClutterPickSceneAggregations(role_taker=scene).crowding_count() == 1
 
 
 def test_outcome_marks_a_neighbour_disturbed_past_the_threshold(layout, thresholds):
