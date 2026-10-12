@@ -16,13 +16,13 @@ import pytest
 from krrood.entity_query_language.factories import variable
 from typing_extensions import List
 
+from experiments.causal_reasoning.do_query import DoQueryAnswer
 from experiments.causal_reasoning.tracy_clutter_picking.do_query import (
     AttemptAttribute,
     AttemptCount,
     ClosingAxisSideCausesDisturbance,
     ClutterDoQuery,
     CrowdingCausesLift,
-    DoQueryAnswer,
     FrictionCausesLift,
     NeighbourAttribute,
     question_catalogue,

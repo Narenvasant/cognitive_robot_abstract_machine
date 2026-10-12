@@ -9,32 +9,23 @@ adjustment, so the two can be set side by side.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass, fields
 from enum import StrEnum
 
-import numpy as np
 from krrood.entity_query_language.factories import a, cause, confounder, variable
-from krrood.parametrization.model_registries import RelationalCircuitRegistry
-from krrood.parametrization.parameterizer import UnderspecifiedParameters
-from random_events.product_algebra import Event, SimpleEvent
-from random_events.variable import Variable
-from typing_extensions import Any, Dict, List, Optional, Tuple
+from typing_extensions import Any, Dict, List, Tuple, Type
 
-from experiments.causal_reasoning.do_query import CauseRegion, DoQueryAnswer
+from experiments.causal_reasoning.do_query import (
+    CausalQuestion,
+    CauseStratification,
+    DoQuery,
+)
 from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutteredObject,
     ClutterPickScene,
     ClutterPickSceneAggregations,
     PartField,
-)
-from probabilistic_model.learning.jpt.jpt import JointProbabilityTree
-from probabilistic_model.learning.learning_method import StratifiedLearning
-from probabilistic_model.probabilistic_circuit.relational.causal import (
-    RelationalCausalCircuit,
-)
-from probabilistic_model.probabilistic_circuit.relational.rspn import (
-    RelationalProbabilisticCircuit,
 )
 
 # %% what an attempt offers as a cause
@@ -128,57 +119,38 @@ class AttemptCount(StrEnum):
         return {AttemptCount.CROWDING: aggregations.crowding_count()}[self]._name_
 
 
-@dataclass(frozen=True)
-class CauseStratification:
+def stratification_of_attempt(attribute: AttemptAttribute) -> CauseStratification:
     """
-    The column a fit groups by so that every value of the cause lands under one branch,
-    and which circuit has to do the grouping.
+    :param attribute: The attempt's own attribute acting as the cause.
+    :return: The grouping for it.
     """
+    return CauseStratification(column=attribute.circuit_variable_name)
 
-    column: str
-    """
-    The column to group the rows by.
-    """
 
-    part_field: Optional[PartField] = None
+def stratification_of_count(count: AttemptCount) -> CauseStratification:
     """
-    The exchangeable-part field whose template holds the cause, or ``None`` when the
-    attempt itself carries it.
+    :param count: The statistic over the neighbours acting as the cause.
+    :return: The grouping for it.
     """
+    return CauseStratification(column=count.circuit_variable_name)
 
-    @classmethod
-    def of_attempt(cls, attribute: AttemptAttribute) -> CauseStratification:
-        """
-        :param attribute: The attempt's own attribute acting as the cause.
-        :return: The grouping for it.
-        """
-        return cls(column=attribute.circuit_variable_name)
 
-    @classmethod
-    def of_count(cls, count: AttemptCount) -> CauseStratification:
-        """
-        :param count: The statistic over the neighbours acting as the cause.
-        :return: The grouping for it.
-        """
-        return cls(column=count.circuit_variable_name)
-
-    @classmethod
-    def of_neighbour(
-        cls, attribute: NeighbourAttribute, part_field: PartField
-    ) -> CauseStratification:
-        """
-        :param attribute: One neighbour's own attribute acting as the cause.
-        :param part_field: The field those neighbours are held in.
-        :return: The grouping for it, applied to that field's template.
-        """
-        return cls(column=attribute.value, part_field=part_field)
+def stratification_of_neighbour(
+    attribute: NeighbourAttribute, part_field: PartField
+) -> CauseStratification:
+    """
+    :param attribute: One neighbour's own attribute acting as the cause.
+    :param part_field: The field those neighbours are held in.
+    :return: The grouping for it, applied to that field's template.
+    """
+    return CauseStratification(column=attribute.value, part_field=part_field)
 
 
 # %% the questions
 
 
 @dataclass(frozen=True, kw_only=True)
-class ClutterQuestion(ABC):
+class ClutterQuestion(CausalQuestion):
     """
     One question of the form: does this property of an attempt cause that, once the
     confounders are adjusted for?
@@ -290,7 +262,7 @@ class FrictionCausesLift(ClutterQuestion):
 
     @property
     def stratification(self) -> CauseStratification:
-        return CauseStratification.of_attempt(AttemptAttribute.FRICTION_COEFFICIENT)
+        return stratification_of_attempt(AttemptAttribute.FRICTION_COEFFICIENT)
 
     @property
     def adjustment_variable_names(self) -> Tuple[str, ...]:
@@ -353,7 +325,7 @@ class CrowdingCausesLift(ClutterQuestion):
 
     @property
     def stratification(self) -> CauseStratification:
-        return CauseStratification.of_count(AttemptCount.CROWDING)
+        return stratification_of_count(AttemptCount.CROWDING)
 
     @property
     def adjustment_variable_names(self) -> Tuple[str, ...]:
@@ -405,7 +377,7 @@ class ClosingAxisSideCausesDisturbance(ClutterQuestion):
 
     @property
     def stratification(self) -> CauseStratification:
-        return CauseStratification.of_neighbour(
+        return stratification_of_neighbour(
             NeighbourAttribute.CLOSING_AXIS_SIDE, PartField.NEIGHBOURS
         )
 
@@ -447,10 +419,9 @@ def question_catalogue(neighbour_count: int) -> List[ClutterQuestion]:
 
 
 @dataclass
-class ClutterDoQuery:
+class ClutterDoQuery(DoQuery):
     """
-    Fits a relational circuit on recorded attempts, grounds it against one question, and
-    reads the question's effect off every region of its cause.
+    Asks one clutter question of a circuit fitted on recorded attempts.
     """
 
     question: ClutterQuestion
@@ -458,131 +429,9 @@ class ClutterDoQuery:
     The question to ask.
     """
 
-    monte_carlo_sample_count: int = 2000
-    """
-    How many samples grounding draws when it retains a statistic over the neighbours.
-    """
-
-    random_seed: int = 0
-    """
-    Seed applied to the global NumPy random state before grounding, which draws those
-    samples.
-    """
-
-    def run(self, training_attempts: List[ClutterPickScene]) -> DoQueryAnswer:
+    @property
+    def fitted_type(self) -> Type:
         """
-        Fit a circuit on the attempts and answer the question on it.
-
-        :param training_attempts: Attempts to fit on.
-        :return: The answer, one entry per region of the cause.
+        :return: The attempt the circuit is fitted on.
         """
-        causal_circuit = self._grounded_against(training_attempts)
-        [cause_variable] = causal_circuit.causal_variables
-        [effect_variable] = causal_circuit.effect_variables
-        conditioned_circuit = causal_circuit.backdoor_adjustment(
-            cause_variable, effect_variable
-        )
-        adjusted_circuit = causal_circuit.backdoor_adjustment(
-            cause_variable,
-            effect_variable,
-            adjustment_variables=self._adjustment_variables(causal_circuit),
-        )
-
-        regions = [
-            CauseRegion(
-                description=str(region.event.simple_sets[0][cause_variable]),
-                probability=region.probability,
-                conditioned_probability=self._effect_probability(
-                    conditioned_circuit, region.event, effect_variable
-                ),
-                adjusted_probability=self._effect_probability(
-                    adjusted_circuit, region.event, effect_variable
-                ),
-            )
-            for region in causal_circuit.disjoint_support_regions_of(
-                cause_variable
-            )
-        ]
-        return DoQueryAnswer(
-            asked=self.question.asked,
-            training_example_count=len(training_attempts),
-            regions=tuple(sorted(regions, key=lambda region: region.description)),
-        )
-
-    def _grounded_against(
-        self, training_attempts: List[ClutterPickScene]
-    ) -> RelationalCausalCircuit:
-        """
-        Fit a circuit whose class-level branches each hold one value of the cause, and
-        ground it against the question.
-
-        Stratifying by the cause is what lets the registration verify support
-        determinism: an unconstrained fit gives no guarantee that attempts sharing a
-        value of the cause end up under one branch, and two branches claiming one value
-        are rejected.
-
-        :param training_attempts: Attempts to fit on.
-        :return: The grounded circuit, with its cause and effect registered.
-        """
-        model = self._unfitted()
-        model.fit(training_attempts)
-        registry = RelationalCircuitRegistry(relational_probabilistic_circuit=model)
-        np.random.seed(self.random_seed)
-        return registry.get_model(UnderspecifiedParameters(self.question.build()))
-
-    def _unfitted(self) -> RelationalProbabilisticCircuit:
-        """
-        :return: The circuit to fit, grouped by the question's cause: the class circuit
-            when the attempt carries the cause, that part field's template when one of
-            its neighbours does.
-        """
-        stratification = self.question.stratification
-        grouped = StratifiedLearning(
-            variables=[stratification.column], method=JointProbabilityTree()
-        )
-        if stratification.part_field is None:
-            return RelationalProbabilisticCircuit(
-                ClutterPickScene,
-                monte_carlo_sample_count=self.monte_carlo_sample_count,
-                learning_method=grouped,
-            )
-        return RelationalProbabilisticCircuit(
-            ClutterPickScene,
-            monte_carlo_sample_count=self.monte_carlo_sample_count,
-            part_learning_methods={stratification.part_field.value: grouped},
-        )
-
-    def _adjustment_variables(
-        self, causal_circuit: RelationalCausalCircuit
-    ) -> List[Variable]:
-        """
-        :param causal_circuit: The grounded circuit to resolve against.
-        :return: One variable per attribute the question adjusts for.
-        """
-        return [
-            RelationalCausalCircuit.resolve_variable(
-                causal_circuit.probabilistic_circuit, name
-            )
-            for name in self.question.adjustment_variable_names
-        ]
-
-    def _effect_probability(
-        self, interventional_circuit: Any, region: Event, effect_variable: Variable
-    ) -> float:
-        """
-        Read how likely the question's effect is on one region of the cause.
-
-        :param interventional_circuit: A joint circuit over the cause and the effect.
-        :param region: The region of the cause to truncate to.
-        :param effect_variable: The effect's variable.
-        :return: The truncated circuit's probability of the effect's value.
-        """
-        truncated_circuit, _ = interventional_circuit.truncated(
-            region.fill_missing_variables_pure(interventional_circuit.variables)
-        )
-        effect = (
-            SimpleEvent.from_data({effect_variable: self.question.effect_value})
-            .as_composite_set()
-            .fill_missing_variables_pure(truncated_circuit.variables)
-        )
-        return float(truncated_circuit.probability(effect))
+        return ClutterPickScene
