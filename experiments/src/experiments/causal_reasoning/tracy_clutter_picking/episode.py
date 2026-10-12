@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 from coraplex.datastructures.dataclasses import Context
 from coraplex.execution_environment import PhysicallySimulatedRobot
+from coraplex.plans.failures import PlanFailure
 from coraplex.plans.factories import sequential
 from PIL import Image
 from typing_extensions import Dict, List, Optional
@@ -25,7 +26,6 @@ from experiments.causal_reasoning.tracy_clutter_picking.domain import (
     ClutterSceneLayout,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
-    MotionDidNotSettleError,
     EpisodePlanningFailedError,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.scene import MilkClutterWorld
@@ -165,7 +165,8 @@ class PickEpisode:
         yaw.
 
         :param simulation: The running simulation.
-        :raises EpisodePlanningFailedError: If a reach could not be planned.
+        :raises EpisodePlanningFailedError: If any of the attempt's motions failed, so
+            the grasp itself was never tested.
         """
         context = Context(self.scene.world, self.scene.robot, evaluate_conditions=False)
         plan = sequential(
@@ -183,7 +184,7 @@ class PickEpisode:
         try:
             with PhysicallySimulatedRobot(simulation=simulation):
                 plan.perform()
-        except MotionDidNotSettleError as error:
+        except PlanFailure as error:
             raise EpisodePlanningFailedError(str(error)) from error
 
     def _outcome(
