@@ -17,14 +17,16 @@ from datetime import timedelta
 from coraplex.plans.factories import code, sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.robot_plans.actions.base import ActionDescription
-from coraplex.robot_plans.motions.gripper import MoveToolCenterPointMotion
+from coraplex.robot_plans.motions.gripper import (
+    MoveFingersToWidthMotion,
+    MoveToolCenterPointMotion,
+)
 from semantic_digital_twin.robots.robot_parts import Arm
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world_description.world_entity import Body
 from typing_extensions import Optional
 
 from experiments.causal_reasoning.tracy_clutter_picking.grasping import (
-    ClosePadsOntoObject,
     SimulatedServos,
     TopDownGraspGeometry,
     centre_in_root,
@@ -117,9 +119,10 @@ class PickUpActionMujoco(ActionDescription):
             [
                 self._reach(hover),
                 self._reach(grasp),
-                ClosePadsOntoObject(
+                MoveFingersToWidthMotion(
                     gripper=self.arm.end_effector,
-                    pad_separation=2 * self._half_width(),
+                    width=self._grasp_width(),
+                    squeeze=self.squeeze_margin,
                 ),
                 code(self._hold_the_grip),
                 self._reach(hover),
@@ -152,20 +155,18 @@ class PickUpActionMujoco(ActionDescription):
         """
         SimulatedServos.of_the_running_simulation().settle(self.arm)
 
-    def _half_width(self) -> float:
+    def _grasp_width(self) -> float:
         """
-        :return: Half the width, in metres, the pads are sent to, the squeeze margin
-            already taken off.
+        :return: How wide the object stands where the fingers meet it, in metres.
         """
-        half_width = self.grasp_half_width
-        if half_width is None:
-            bounding_box = (
-                self.object_designator.collision.as_bounding_box_collection_in_frame(
-                    self.arm.end_effector.root
-                ).bounding_box()
-            )
-            half_width = (bounding_box.max_x - bounding_box.min_x) / 2
-        return max(0.0, half_width - self.squeeze_margin)
+        if self.grasp_half_width is not None:
+            return 2 * self.grasp_half_width
+        bounding_box = (
+            self.object_designator.collision.as_bounding_box_collection_in_frame(
+                self.arm.end_effector.root
+            ).bounding_box()
+        )
+        return bounding_box.max_x - bounding_box.min_x
 
     def _hold_the_grip(self) -> None:
         """

@@ -36,15 +36,6 @@ def mounted_tracy() -> tuple[World, Tracy]:
     return world, robot
 
 
-def test_finger_midpoint_offset_differs_between_left_and_right_arm(mounted_tracy):
-    world, robot = mounted_tracy
-
-    left_offset = TopDownGraspGeometry(world, robot.left_arm).finger_midpoint_offset()
-    right_offset = TopDownGraspGeometry(world, robot.right_arm).finger_midpoint_offset()
-
-    assert list(left_offset) != list(right_offset)
-
-
 def test_grasp_yaw_turns_the_closing_axis_about_the_vertical_without_tilting_it(
     mounted_tracy,
 ):

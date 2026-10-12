@@ -18,9 +18,6 @@ from datetime import timedelta
 
 import numpy
 from coraplex.plans.executables import GiskardExecutable
-from coraplex.robot_plans.motions.base import BaseMotion
-from giskardpy.motion_statechart.graph_node import Task
-from giskardpy.motion_statechart.tasks.cartesian_tasks import CartesianPosition
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.robots.robot_parts import Arm, EndEffector
 from semantic_digital_twin.spatial_types.spatial_types import (
@@ -91,21 +88,6 @@ class TopDownGraspGeometry:
     axis in the horizontal plane so the pads can meet an object across a chosen width.
     """
 
-    def finger_midpoint_offset(self) -> numpy.ndarray:
-        """
-        :return: The fixed offset from the arm's own tool frame to its gripper's own
-            finger-tip midpoint, in the tool frame's own local axes.
-        """
-        gripper = self.arm.end_effector
-        root_transform_tool = self.world.compute_forward_kinematics_np(
-            self.world.root, gripper.tool_frame
-        )
-        thumb_center = centre_in_root(self.world, gripper.thumb.tip)
-        finger_center = centre_in_root(self.world, gripper.finger.tip)
-        finger_midpoint = (thumb_center + finger_center) / 2
-        offset_in_root_frame = finger_midpoint - root_transform_tool[:3, 3]
-        return root_transform_tool[:3, :3].T @ offset_in_root_frame
-
     def grasp_frame(self, x: float, y: float, z: float) -> Pose:
         """
         The grasp frame that meets an object at a point from straight above.
@@ -139,92 +121,13 @@ class TopDownGraspGeometry:
 
     def tool_frame_pose(self, x: float, y: float, z: float) -> Pose:
         """
-        The gripper states where its own approach and closing axes point, so the grasp
-        frame becomes a tool frame goal without this module knowing which way the tool
-        frame faces. Only the offset between the tool frame and where the fingers
-        actually meet is left to correct here.
-
-        :param x: Where the finger midpoint should be along the world root's x-axis.
-        :param y: Where the finger midpoint should be along the world root's y-axis.
-        :param z: Where the finger midpoint should be along the world root's z-axis.
-        :return: The tool frame pose that puts the finger midpoint there, top-down.
+        :param x: Where the fingers should meet along the world root's x-axis.
+        :param y: Where the fingers should meet along the world root's y-axis.
+        :param z: Where the fingers should meet along the world root's z-axis.
+        :return: The tool frame pose that puts the fingers there, top-down.
         """
-        oriented = self.arm.end_effector.tool_frame_goal(self.grasp_frame(x, y, z))
-        rotation = numpy.array(oriented.rotation_matrix.evaluate()[:3, :3], dtype=float)
-        tool_frame_target = numpy.array([x, y, z]) - rotation @ (
-            self.finger_midpoint_offset()
-        )
-        return Pose(
-            position=Point3(*tool_frame_target, reference_frame=self.world.root),
-            orientation=oriented.quaternion,
-            reference_frame=self.world.root,
-        )
-
-
-def pad_depth(gripper: EndEffector) -> float:
-    """
-    How far a fingertip pad's inner face sits inside its own frame along the closing
-    axis: the distance between the fingertip frames is the pad-to-pad width plus twice
-    this.
-
-    :param gripper: The gripper whose pads are measured, at any opening.
-    :return: The depth, in metres.
-    """
-    world = gripper._world
-    frame_x = world.compute_forward_kinematics_np(gripper.root, gripper.thumb.tip)[0, 3]
-    inner_face_x = (
-        gripper.thumb.tip.collision.as_bounding_box_collection_in_frame(gripper.root)
-        .bounding_box()
-        .min_x
-    )
-    return frame_x - inner_face_x
-
-
-# %% closing the pads onto an object
-
-
-@dataclass
-class ClosePadsOntoObject(BaseMotion):
-    """
-    Close a gripper's pads until they stand a given width apart, instead of driving to
-    the fully closed position.
-
-    Closing all the way on an object that is not perfectly centred between the fingers
-    wedges it sideways rather than gripping it, so the pads are sent to the object's own
-    width less a squeeze margin. Giskard finds the knuckle angle that realises it, which
-    is why this is a Cartesian goal on the distance between the two fingertip frames
-    rather than a joint goal.
-    """
-
-    gripper: EndEffector
-    """
-    The gripper whose pads close.
-    """
-
-    pad_separation: float
-    """
-    How far apart the pads' facing surfaces are to stand, in metres.
-    """
-
-    closing_threshold: float = 0.0005
-    """
-    How close, in metres, the distance between the fingertip frames has to come to its
-    goal for the closing to count as done: well under a squeeze margin, so the squeeze
-    is not lost to the tolerance.
-    """
-
-    @property
-    def _motion_chart(self) -> Task:
-        # the pads stay parallel, so one fingertip frame moves purely along the other's
-        # closing axis and the distance between them is a 1-D goal
-        frame_distance = self.pad_separation + 2 * pad_depth(self.gripper)
-        return CartesianPosition(
-            root_link=self.gripper.finger.tip,
-            tip_link=self.gripper.thumb.tip,
-            goal_point=Point3(
-                frame_distance, 0.0, 0.0, reference_frame=self.gripper.finger.tip
-            ),
-            threshold=self.closing_threshold,
+        return self.arm.end_effector.tool_frame_goal_for_grasp(
+            self.grasp_frame(x, y, z)
         )
 
 
