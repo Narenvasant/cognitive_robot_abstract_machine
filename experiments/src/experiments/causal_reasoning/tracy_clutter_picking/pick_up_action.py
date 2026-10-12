@@ -53,9 +53,9 @@ class PickUpActionMujoco(ActionDescription):
     Height, in metres, above a body's own top face the tool centre point moves to before
     descending onto it -- clears obstacles during the horizontal part of the approach.
 
-    ``0.3`` clears the Montessori board plus its three drawers with a wide margin; a
-    smaller hover height left Giskard's own collision-avoidance solver too little
-    vertical room to route the arm above the board at all.
+    ``0.3`` leaves a wide margin over the tallest obstacle a scene has stood on the
+    table; a smaller hover height left Giskard's own collision-avoidance solver too
+    little vertical room to route the arm over it at all.
     """
 
     grasp_yaw: float = 0.0
