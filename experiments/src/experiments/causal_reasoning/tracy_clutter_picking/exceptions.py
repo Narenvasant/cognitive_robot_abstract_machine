@@ -41,6 +41,23 @@ class MotionDidNotSettleError(DataclassException):
 
 
 @dataclass
+class NoRunningSimulationError(DataclassException):
+    """
+    Raised when the simulated servos are asked to wait while no plan is being performed
+    against a physically simulated robot.
+    """
+
+    def error_message(self) -> str:
+        return "no plan is being performed against a physically simulated robot"
+
+    def suggest_correction(self) -> str:
+        return (
+            "Perform the plan inside a PhysicallySimulatedRobot environment, which "
+            "hands the simulation to the plans performed in it."
+        )
+
+
+@dataclass
 class EpisodePlanningFailedError(DataclassException):
     """
     Raised when the motion planner could not produce a reach for one of a pick attempt's

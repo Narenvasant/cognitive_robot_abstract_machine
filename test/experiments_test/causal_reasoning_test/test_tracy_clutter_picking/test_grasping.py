@@ -10,10 +10,10 @@ import math
 import numpy
 import pytest
 
-from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.pick_and_place_action import (
+from experiments.causal_reasoning.tracy_clutter_picking.grasping import (
     TopDownGraspGeometry,
 )
-from semantic_digital_twin.api import RobotSpecification
+from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.robots.tracy import Tracy
 from semantic_digital_twin.utils import tracy_installed

@@ -1,8 +1,8 @@
 """
 One attempt to pick the target carton out of a layout's clutter, with MuJoCo standing in
 for Tracy and the target held by contact friction alone:
-:class:`~experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.pick_and_place_action.PickUpActionMujoco`
-run as an ordinary coraplex plan, with Giskard driving the simulated robot live.
+:class:`~experiments.causal_reasoning.tracy_clutter_picking.pick_and_place_action.PickUpActionMujoco`
+run as an ordinary coraplex plan against a physically simulated robot.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 from coraplex.datastructures.dataclasses import Context
+from coraplex.execution_environment import PhysicallySimulatedRobot
 from coraplex.plans.factories import sequential
 from PIL import Image
 from typing_extensions import Dict, List, Optional
@@ -28,10 +29,7 @@ from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     EpisodePlanningFailedError,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.scene import MilkClutterWorld
-from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.live_motion import (
-    MotionRunner,
-)
-from experiments.causal_reasoning.tracy_clutter_picking.tracy_mujoco_addons.pick_and_place_action import (
+from experiments.causal_reasoning.tracy_clutter_picking.pick_and_place_action import (
     PickUpActionMujoco,
 )
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
@@ -175,7 +173,6 @@ class PickEpisode:
                 PickUpActionMujoco(
                     object_designator=self.scene.target,
                     arm=self.scene.pick_arm,
-                    runner=MotionRunner(simulation),
                     grasp_yaw=self.scene.layout.target.yaw
                     + self.scene.layout.grasp_yaw,
                     grasp_half_width=self.scene.milk_size.x / 2,
@@ -184,7 +181,8 @@ class PickEpisode:
             context,
         ).plan
         try:
-            plan.perform()
+            with PhysicallySimulatedRobot(simulation=simulation):
+                plan.perform()
         except MotionDidNotSettleError as error:
             raise EpisodePlanningFailedError(str(error)) from error
 

@@ -64,19 +64,22 @@ camera and a light. `episode.py` runs one attempt against that world simulated
 physically, and `collect_data.py` repeats it to record a dataset. `demo.py` runs a single
 attempt with the viewer open.
 
-Every motion goes through `tracy_mujoco_addons/live_motion.py`, which ticks Giskard's own
-control loop against the running simulation: each control cycle's command reaches the
-joints' servos as their set point and the physics steps one control period before the
-next cycle. A motion is therefore reached in the physics, as hard as the servos allow,
-rather than planned kinematically and played back.
+Every attempt is an ordinary coraplex plan performed inside
+`PhysicallySimulatedRobot`, which is what ticks Giskard's control loop against the
+running simulation: each control cycle's command reaches the joints' servos as their set
+point and the physics steps one control period before the next cycle. A motion is
+therefore reached in the physics, as hard as the servos allow, rather than planned
+kinematically and played back. Nothing about that lives here any more.
 
-`tracy_mujoco_addons/pick_and_place_action.py` turns a point to grasp into the goals the
-arm reaches for. It builds a grasp frame, x-axis along the approach and y-axis along the
-axis the fingers close along, and lets the gripper state where its own approach and
-closing axes point, so nothing here needs to know which way Tracy's tool frame faces.
-What it does still correct is the gap between the tool frame and where the fingers
-actually meet: on Tracy those are about 4.5cm apart, and a goal placed on the tool frame
-alone closes the fingers beside the carton rather than on it.
+`pick_and_place_action.py` states the attempt as coraplex motions, and `grasping.py`
+holds the little that is particular to this grasp. A grasp frame points its x-axis along
+the approach and its y-axis along the axis the fingers close along, and the gripper
+states where its own approach and closing axes point, so nothing here needs to know
+which way Tracy's tool frame faces. What is still corrected here is the gap between the
+tool frame and where the fingers actually meet: on Tracy those are about 4.5cm apart,
+and a goal placed on the tool frame alone closes the fingers beside the carton rather
+than on it. The pads are then closed to the carton's own width rather than all the way,
+since closing fully on a carton that is not centred between them wedges it sideways.
 
 ## Where the attempts come from
 

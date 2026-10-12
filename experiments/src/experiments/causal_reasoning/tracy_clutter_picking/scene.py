@@ -12,11 +12,13 @@ from typing_extensions import List
 
 from experiments.causal_reasoning.tracy_clutter_picking.domain import ClutterSceneLayout
 from semantic_digital_twin.adapters.multi_sim import MujocoCamera, MujocoLight
-from semantic_digital_twin.api import (
-    BodySpecification,
+from semantic_digital_twin.specifications.connections import (
     Connection6DoFSpecification,
-    RobotSpecification,
 )
+from semantic_digital_twin.specifications.kinematic_structure_entities import (
+    BodySpecification,
+)
+from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.datastructures.definitions import (
     GripperState,
     StaticJointState,
