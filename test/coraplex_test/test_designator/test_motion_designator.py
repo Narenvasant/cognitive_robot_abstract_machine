@@ -27,6 +27,7 @@ from coraplex.robot_plans.actions.core.pick_up import GraspingAction, PickUpActi
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import MoveTorsoAction
 from coraplex.robot_plans.motions.container import ClosingMotion, OpeningMotion
+from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
 from coraplex.robot_plans.motions.gripper import (
     MoveFingersToWidthMotion,
     MoveGripperMotion,
@@ -59,6 +60,7 @@ from giskardpy.motion_statechart.tasks.joint_tasks import (
 from giskardpy.motion_statechart.tasks.pointing import Pointing
 from semantic_digital_twin.datastructures.definitions import GripperState, TorsoState
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
+from semantic_digital_twin.robots.pr2 import PR2Joint
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Milk
 from semantic_digital_twin.spatial_types import Point3, Quaternion
 from semantic_digital_twin.spatial_types.spatial_types import Pose
@@ -332,7 +334,9 @@ def _motion_task(motion_chart, robot):
     return task
 
 
-def test_an_arm_motion_holds_the_base_of_a_robot_that_stands_still(pr2_apartment_context):
+def test_an_arm_motion_holds_the_base_of_a_robot_that_stands_still(
+    pr2_apartment_context,
+):
     """
     A base that is not full body controlled stands still while an arm moves, so the
     motion has to hold it there rather than leave it for another task to command.
@@ -354,7 +358,28 @@ def test_an_arm_motion_holds_the_base_of_a_robot_that_stands_still(pr2_apartment
     assert hold_base.weight == DefaultWeights.WEIGHT_ABOVE_COLLISION_AVOIDANCE
 
 
-def test_an_arm_motion_leaves_a_full_body_controlled_base_free(full_body_controlled_pr2):
+def test_a_joint_motion_holds_the_base_of_a_robot_that_stands_still(
+    pr2_apartment_context,
+):
+    """
+    A base that is not full body controlled stands still while joints move, as it does
+    while the tool center point moves, rather than being pushed aside by collision
+    avoidance.
+    """
+    world, view, context = pr2_apartment_context
+    assert not view.mobile_base.full_body_controlled
+
+    motion = MoveJointsMotion(names=[PR2Joint.LEFT_UPPER_ARM_ROLL], positions=[0.0])
+    execute_single(motion, context=context)
+
+    [hold_base] = _base_holding_tasks(motion.motion_chart, view)
+    assert hold_base.root_link == world.root
+    assert hold_base.weight == DefaultWeights.WEIGHT_ABOVE_COLLISION_AVOIDANCE
+
+
+def test_an_arm_motion_leaves_a_full_body_controlled_base_free(
+    full_body_controlled_pr2,
+):
     """
     A robot that may move its whole body drives while it reaches, so its base is not
     held.
