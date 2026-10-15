@@ -187,7 +187,7 @@ def hand_offset(world: World) -> float:
     """
     :return: How far to its left of its base's centre the HSR carries its hand, in
         metres: the arm swings about a flex joint mounted beside the torso, and the
-        base, which does not move, has to make up for it.
+        base has to make up for it.
     """
     robot = world.get_semantic_annotations_by_type(HSRB)[0]
     flexed_link = world.get_connection_by_name(HSRBJoint.ARM_FLEX).child
@@ -204,7 +204,6 @@ def build_world() -> World:
     """
     world = KitchenEnvironment().get_world()
     robot = RobotSpecification(HSRB).spawn(world)
-    robot.mobile_base.full_body_controlled = False
     robot.root.parent_connection.origin = standing_pose(
         world, start_pose(world)
     ).homogeneous_matrix

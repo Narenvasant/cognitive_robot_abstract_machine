@@ -677,10 +677,10 @@ class HSRBMobileBase(
     def drive_servos(self) -> DriveServos:
         return DriveServos(
             translation_gains=ServoGains(
-                stiffness=50_000.0, damping=10_000.0, torque_limit=3_000.0
+                stiffness=50_000.0, damping=4_000.0, torque_limit=3_000.0
             ),
             rotation_gains=ServoGains(
-                stiffness=5_000.0, damping=1_000.0, torque_limit=1_000.0
+                stiffness=5_000.0, damping=300.0, torque_limit=1_000.0
             ),
         )
 
