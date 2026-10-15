@@ -62,6 +62,8 @@ try:
 
     with robocasa_version_assertions_relaxed():
         from robocasa.environments.kitchen.kitchen import Kitchen
+        from robocasa.models.objects.kitchen_objects import OBJ_CATEGORIES
+        from robocasa.models.objects.objects import MJCFObject
         from robocasa.models.scenes.kitchen_arena import KitchenArena
         from robocasa.models.scenes import scene_builder, scene_registry
     from robosuite.environments.base import REGISTERED_ENVS
@@ -130,6 +132,21 @@ def _mjcf_document_from_element_copy(element: ET.Element) -> str:
     root = ET.Element("mujoco")
     worldbody = ET.SubElement(root, "worldbody")
     worldbody.append(copy.deepcopy(element))
+    return ET.tostring(root, encoding="unicode")
+
+
+def _mjcf_document_from_robocasa_object(robocasa_object: MJCFObject) -> str:
+    """
+    Wrap a RoboCasa object, free to move and scaled as RoboCasa places it in a kitchen,
+    into a standalone MJCF document.
+
+    :param robocasa_object: The object, as RoboCasa builds it from its model file.
+    :return: The MJCF document as a string.
+    """
+    root = ET.Element("mujoco")
+    root.append(copy.deepcopy(robocasa_object.asset))
+    worldbody = ET.SubElement(root, "worldbody")
+    worldbody.append(copy.deepcopy(robocasa_object.get_obj()))
     return ET.tostring(root, encoding="unicode")
 
 
@@ -304,8 +321,9 @@ class RoboCasaDatasetLoader:
     def load_task(
         self,
         task_name: str,
-        layout_id: LayoutType,
+        layout_id: LayoutType | dict[str, Any],
         style_id: StyleType,
+        seed: int | None = None,
     ) -> RoboCasaTask:
         """
         Compose a RoboCasa task scene and return it bound to its parsed World.
@@ -317,20 +335,25 @@ class RoboCasaDatasetLoader:
 
         :param task_name: The name of a registered RoboCasa kitchen task environment (for example
             ``"TurnOnMicrowave"``).
-        :param layout_id: A member of ``robocasa.models.scenes.scene_registry.LayoutType``.
+        :param layout_id: The kitchen layout: a member of
+            ``robocasa.models.scenes.scene_registry.LayoutType``, or the layout itself
+            as RoboCasa's layout files describe it.
         :param style_id: A member of ``robocasa.models.scenes.scene_registry.StyleType``.
+        :param seed: The seed RoboCasa samples the task's objects and their placement
+            with; ``None`` samples a different scene on every load.
         :return: The task bound to the world it is defined over.
         :raises RoboCasaTaskNotFoundError: if ``task_name`` is not a registered RoboCasa kitchen
             task.
         """
-        environment = self.build_task_environment(task_name, layout_id, style_id)
+        environment = self.build_task_environment(task_name, layout_id, style_id, seed)
         return self.load_task_from_environment(environment)
 
     def build_task_environment(
         self,
         task_name: str,
-        layout_id: LayoutType,
+        layout_id: LayoutType | dict[str, Any],
         style_id: StyleType,
+        seed: int | None = None,
     ) -> Any:
         """
         Build and reset the RoboCasa/robosuite environment a task's scene is composed
@@ -345,8 +368,12 @@ class RoboCasaDatasetLoader:
 
         :param task_name: The name of a registered RoboCasa kitchen task environment
             (for example ``"TurnOnMicrowave"``).
-        :param layout_id: A member of ``robocasa.models.scenes.scene_registry.LayoutType``.
+        :param layout_id: The kitchen layout: a member of
+            ``robocasa.models.scenes.scene_registry.LayoutType``, or the layout itself
+            as RoboCasa's layout files describe it.
         :param style_id: A member of ``robocasa.models.scenes.scene_registry.StyleType``.
+        :param seed: The seed RoboCasa samples the task's objects and their placement
+            with; ``None`` samples a different scene on every build.
         :return: The reset environment.
         :raises RoboCasaTaskNotFoundError: if ``task_name`` is not a registered RoboCasa kitchen
             task.
@@ -357,13 +384,22 @@ class RoboCasaDatasetLoader:
         environment = robosuite.make(
             env_name=task_name,
             robots=self.scene_composition_robot,
-            layout_ids=int(layout_id),
+            # RoboCasa edits the layout it composes a kitchen from.
+            layout_ids=(
+                copy.deepcopy(layout_id)
+                if isinstance(layout_id, dict)
+                else int(layout_id)
+            ),
             style_ids=int(style_id),
             has_renderer=False,
             has_offscreen_renderer=False,
+            # RoboCasa's default viewer looks its camera up by layout id, which a
+            # layout given as a dict does not have.
+            renderer="mujoco",
             use_camera_obs=False,
             control_freq=20,
             ignore_done=True,
+            seed=seed,
         )
         environment.reset()
         return environment
@@ -640,7 +676,18 @@ class RoboCasaDatasetLoader:
                 objects_directory,
             )
 
-        world = _parse_robosuite_mjcf(MJCFParser(str(model_files[instance_index])))
+        model_file = model_files[instance_index]
+        group = model_file.relative_to(objects_directory).parts[0]
+        robocasa_object = MJCFObject(
+            name=category,
+            mjcf_path=str(model_file),
+            scale=OBJ_CATEGORIES[category][group].scale,
+        )
+        world = _parse_robosuite_mjcf(
+            MJCFParser.from_xml_string(
+                _mjcf_document_from_robocasa_object(robocasa_object)
+            )
+        )
         self._apply_object_semantics(world, category)
         return world
 
