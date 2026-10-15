@@ -30,7 +30,10 @@ from experiments.tiago_milk_pick_place.exceptions import (
     UnexpectedTableHeight,
 )
 from semantic_digital_twin.adapters.mesh import STLParser
-from semantic_digital_twin.datastructures.definitions import TorsoState
+from semantic_digital_twin.datastructures.definitions import (
+    StaticJointState,
+    TorsoState,
+)
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
 from semantic_digital_twin.robots.robot_parts import AbstractRobot, Arm
 from semantic_digital_twin.robots.tiago import Tiago
@@ -148,6 +151,16 @@ class MilkPickPlaceLayout:
     How far above the grasp the carton is carried between the two spots.
     """
 
+    arm_side: str = "right"
+    """
+    Which arm carries the carton.
+
+    The robot faces the table along the world's x-axis, so its left arm points at the
+    wall behind the table's north end and its right arm points over the open table. The
+    arm is named rather than guessed at, because an arm chosen for being nearest the
+    carton is the one that ends up in the wall.
+    """
+
     maximum_reach: float = 0.85
     """
     How far the arm reaches from where the robot stands.
@@ -259,6 +272,9 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
     carton_mesh_path: str = "coraplex/resources/objects/milk.stl"
     """
     The carton's mesh, relative to the repository root.
+
+    It is resolved to an absolute path before the carton is spawned: MuJoCo looks a mesh
+    up relative to the scene file it writes, not relative to where the demo was started.
     """
 
     ros_node_name: str = "tiago_milk_pick_place_node"
@@ -346,6 +362,7 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         :raises NotOverTheTable: If a spot does not lie over the table.
         :raises OutOfReach: If a spot lies beyond the arm.
         """
+        self.park_the_arms(world.get_semantic_annotations_by_type(self.used_robot)[0])
         self.table_top = self.measure_table_top(world)
         self._check_both_spots_are_over_the_table(world)
         self._check_both_spots_are_within_reach()
@@ -358,7 +375,7 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         :param world: The world to add it to.
         :return: The carton, with its measurements.
         """
-        carton_world = STLParser(self.carton_mesh_path).parse()
+        carton_world = STLParser(os.path.abspath(self.carton_mesh_path)).parse()
         world.merge_world(carton_world)
         body = world.get_body_by_name("milk.stl")
         own_box = body.collision.as_bounding_box_collection_in_frame(
@@ -447,18 +464,31 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
     def choose_arm(self, robot: AbstractRobot) -> Arm:
         """
         :param robot: The robot that performs the task.
-        :return: The arm whose hand rests nearer the carton, which is the one that
-            reaches it without crossing the robot's body.
+        :return: The arm the layout names, which is the one pointing over the table
+            rather than at the wall behind it.
         """
-        return min(
-            robot.all_arms,
-            key=lambda arm: float(
-                np.linalg.norm(
-                    arm.end_effector.tool_frame.global_transform.to_np()[:2, 3]
-                    - np.array([self.layout.pick_x, self.layout.pick_y])
-                )
-            ),
-        )
+        [arm] = [
+            arm
+            for arm in robot.all_arms
+            if self.layout.arm_side in arm.name.name.lower()
+        ]
+        return arm
+
+    def park_the_arms(self, robot: AbstractRobot) -> None:
+        """
+        Tuck both arms before the simulation is built.
+
+        An arm left in the posture the description spawns it in reaches about a metre
+        out to its side, which at this standing pose puts the left arm inside the wall
+        behind the table. The physics would then start by pushing the arm out of the
+        wall, and a motion planned from there never reaches its goal.
+
+        :param robot: The robot whose arms are tucked.
+        """
+        for arm in robot.all_arms:
+            arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(
+                arm.root._world
+            )
 
     def choose_grasp(self, arm: Arm) -> GraspCandidate:
         """

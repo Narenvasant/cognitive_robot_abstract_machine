@@ -230,12 +230,25 @@ class PhysicsSettings:
     cone.
     """
 
-    wheel_root_name: str = "base_footprint"
+    wheels_and_casters: Tuple[str, ...] = (
+        "wheel_left_link",
+        "wheel_right_link",
+        "caster_front_left_1_link",
+        "caster_front_left_2_link",
+        "caster_front_right_1_link",
+        "caster_front_right_2_link",
+        "caster_back_left_1_link",
+        "caster_back_left_2_link",
+        "caster_back_right_1_link",
+        "caster_back_right_2_link",
+    )
     """
-    The body below which a collision shape has its contacts turned off.
+    The bodies whose contacts are turned off, named outright.
 
     The base's pose is written into the simulation rather than driven, so a wheel
-    touching the floor can only make the free wheel spin and jitter.
+    touching the floor can only make the free wheel spin and jitter. Only these are
+    silenced: the hand has to keep its contacts, since the grasp is nothing but
+    contact.
     """
 
 
@@ -351,17 +364,18 @@ class TiagoGraspPhysics:
 
     def _silence_the_wheels(self, world: World, robot: AbstractRobot) -> None:
         """
-        Turn off the contacts of everything at or below the base.
+        Turn off the contacts of the wheels and the casters.
+
+        They are named one by one rather than found by walking the robot below its base:
+        the base is the robot's root, so everything hangs below it, and silencing that
+        would take the hand's contacts with it.
 
         :param world: The world holding the robot.
         :param robot: The robot whose wheels are silenced.
         """
-        root = world.get_body_by_name(self.settings.wheel_root_name)
-        below = set(
-            world.compute_descendent_child_kinematic_structure_entities(root)
-        ) | {root}
-        for entity in below:
-            if not isinstance(entity, Body) or not entity.has_collision:
+        silenced = set(self.settings.wheels_and_casters)
+        for entity in robot.bodies:
+            if entity.name.name not in silenced or not entity.has_collision:
                 continue
             for shape in entity.collision.shapes:
                 geometry = shape.get_simulator_property_of_type(MujocoGeom)

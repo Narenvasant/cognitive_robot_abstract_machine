@@ -15,7 +15,10 @@ reaches both spots in seconds.
 from __future__ import annotations
 
 import argparse
+import functools
 from dataclasses import dataclass
+
+print = functools.partial(print, flush=True)
 
 from coraplex.datastructures.enums import ExecutionType
 from coraplex.execution_environment import ExecutionEnvironment
