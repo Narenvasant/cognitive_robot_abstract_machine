@@ -12,6 +12,7 @@ from xml.etree import ElementTree as ET
 
 from semantic_digital_twin.adapters.multi_sim import (
     ContactCategories,
+    ContactDimensionality,
     MujocoActuator,
     GeomVisibilityAndCollisionType,
     MujocoCamera,
@@ -264,6 +265,7 @@ class MJCFParser(WorldModelParser):
                 MujocoGeom(
                     contact_type=ContactCategories(mujoco_geom.contype),
                     contact_affinity=ContactCategories(mujoco_geom.conaffinity),
+                    contact_dimensionality=ContactDimensionality(mujoco_geom.condim),
                 )
             )
             takes_part_in_contact = (
@@ -479,7 +481,7 @@ class MJCFParser(WorldModelParser):
                 return Cylinder(
                     origin=origin_transform,
                     width=size[0],
-                    height=size[1] / 2,
+                    height=size[1],
                     color=color,
                     texture=self._resolve_primitive_texture(mujoco_geom),
                 )

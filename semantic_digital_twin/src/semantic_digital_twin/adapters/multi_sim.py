@@ -66,6 +66,7 @@ from semantic_digital_twin.world_description.connections import (
     Connection6DoF,
     OmniDrive,
     DifferentialDrive,
+    WheeledDrive,
 )
 from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFreedom
 from semantic_digital_twin.world_description.geometry import (
@@ -85,6 +86,7 @@ from semantic_digital_twin.world_description.world_entity import (
     Connection,
     WorldEntity,
     Actuator,
+    ContactExclusion,
     PositionServo,
 )
 from semantic_digital_twin.mixin import (
@@ -340,18 +342,19 @@ class KinematicStructureEntityConverter(EntityConverter, ABC):
 
         kinematic_structure_entity_props = EntityConverter._convert(self, entity)
         # The simulator joint supplies the variable part, so the static frame must
-        # exclude it (see Connection.reference_origin_expression).
-        [
-            px,
-            py,
-            pz,
-            qx,
-            qy,
-            qz,
-            qw,
-        ] = entity.parent_connection.reference_origin_as_position_quaternion().evaluate()[
-            0
-        ]
+        # exclude it (see Connection.reference_origin_expression). A drive that is not
+        # servoed has no simulator joint, so its body is built where the drive holds it.
+        parent_connection = entity.parent_connection
+        is_welded_drive = (
+            isinstance(parent_connection, WheeledDrive)
+            and not parent_connection.is_servoed
+        )
+        static_frame = (
+            parent_connection.origin_as_position_quaternion()
+            if is_welded_drive
+            else parent_connection.reference_origin_as_position_quaternion()
+        )
+        [px, py, pz, qx, qy, qz, qw] = static_frame.evaluate()[0]
         kinematic_structure_entity_pos = [px, py, pz]
         kinematic_structure_entity_quat = [qw, qx, qy, qz]
         kinematic_structure_entity_props.update(
@@ -1286,6 +1289,35 @@ class ContactCategories(IntFlag):
     """
 
 
+class ContactDimensionality(IntEnum):
+    """
+    Which friction MuJoCo resolves in a geom's contacts; MuJoCo's ``condim``.
+
+    A friction coefficient a contact does not resolve has no effect, whatever its value.
+    """
+
+    FRICTIONLESS = 1
+    """
+    Only the push along the contact normal.
+    """
+
+    SLIDING = 3
+    """
+    Friction against sliding along the contact plane, MuJoCo's default.
+    """
+
+    SLIDING_AND_TWISTING = 4
+    """
+    Friction against sliding, and against turning about the contact normal, which is
+    what keeps a body held between two pads from turning between them.
+    """
+
+    SLIDING_TWISTING_AND_ROLLING = 6
+    """
+    Friction against sliding, turning and rolling.
+    """
+
+
 @dataclass(eq=False)
 class MujocoGeom(UniqueSimulatorProperty):
     """
@@ -1313,6 +1345,14 @@ class MujocoGeom(UniqueSimulatorProperty):
     """
     Which contact categories this geom accepts pressing into it; MuJoCo's
     ``conaffinity``. Clearing it makes nothing collide with the geom.
+    """
+
+    contact_dimensionality: ContactDimensionality = field(
+        default=ContactDimensionality.SLIDING,
+        metadata=SimulatorAttributeName("condim").as_dict(),
+    )
+    """
+    Which friction the geom's contacts resolve.
     """
 
 
@@ -1450,7 +1490,7 @@ class MujocoCylinderConverter(MujocoGeomConverter, CylinderConverter):
         shape_props.update(
             MujocoGeomConverter._post_convert(self, entity, shape_props, **kwargs)
         )
-        shape_props.update({"size": [entity.width / 2, entity.height, 0.0]})
+        shape_props.update({"size": [entity.radius, entity.height / 2, 0.0]})
         return shape_props
 
 
@@ -1961,8 +2001,9 @@ class MujocoBuilder(MultiSimBuilder):
         qpos = []
         for body in self.world.bodies_topologically_sorted:
             parent_connection = body.parent_connection
-            if isinstance(parent_connection, OmniDrive) and self._is_servoed(
-                parent_connection
+            if (
+                isinstance(parent_connection, OmniDrive)
+                and parent_connection.is_servoed
             ):
                 qpos += [
                     self.world.state[degree_of_freedom.id].position
@@ -2055,6 +2096,9 @@ class MujocoBuilder(MultiSimBuilder):
                 mujoco_geom_props.pop("contype")
                 mujoco_geom_props.pop("conaffinity")
             geom_props.update(mujoco_geom_props)
+        if parent.get_simulator_property_of_type(ContactExclusion) is not None:
+            geom_props["contype"] = ContactCategories.NONE
+            geom_props["conaffinity"] = ContactCategories.NONE
         geom_spec = parent_body_spec.add_geom(**geom_props)
         if geom_spec.type == mujoco.mjtGeom.mjGEOM_BOX and geom_spec.size[2] == 0:
             geom_spec.type = mujoco.mjtGeom.mjGEOM_PLANE
@@ -2251,7 +2295,7 @@ class MujocoBuilder(MultiSimBuilder):
         return material_name
 
     def _build_connection(self, connection: Connection):
-        if isinstance(connection, OmniDrive) and self._is_servoed(connection):
+        if isinstance(connection, OmniDrive) and connection.is_servoed:
             self._build_drive_joints(connection)
             return
         if isinstance(connection, self._ignore_connection_types):
@@ -2291,19 +2335,6 @@ class MujocoBuilder(MultiSimBuilder):
                 entity_type=mujoco.mjtObj.mjOBJ_JOINT,
                 action="add",
             )
-
-    def _is_servoed(self, drive: OmniDrive) -> bool:
-        """
-        :param drive: A drive in the world being built.
-        :return: Whether servos drive the x, y and yaw of the drive, which then moves its
-            base in the simulation instead of keeping it where it is built.
-        """
-        actuated = {
-            degree_of_freedom.id
-            for actuator in self.world.actuators
-            for degree_of_freedom in actuator.dofs
-        }
-        return {drive.x.id, drive.y.id, drive.yaw.id} <= actuated
 
     @staticmethod
     def _drive_joint_axes(

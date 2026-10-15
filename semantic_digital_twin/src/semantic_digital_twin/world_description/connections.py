@@ -751,6 +751,19 @@ class WheeledDrive(ActiveConnection, HasUpdateState, ABC):
     """
 
     @property
+    def is_servoed(self) -> bool:
+        """
+        Whether servos drive this drive's x, y and yaw in a physical simulation, which
+        then moves its child by them instead of holding it where the drive puts it.
+        """
+        actuated = {
+            degree_of_freedom.id
+            for actuator in self._world.actuators
+            for degree_of_freedom in actuator.dofs
+        }
+        return {self.x.id, self.y.id, self.yaw.id} <= actuated
+
+    @property
     def origin(self) -> HomogeneousTransformationMatrix:
         return super().origin
 
