@@ -2,7 +2,7 @@
 Run the demo::
 
     python -m experiments.tiago_milk_pick_place [--kinematic] [--headless]
-                                               [--elliptic-cone]
+                                               [--pyramidal-cone]
 
 Tiago takes the milk carton from one spot on the apartment's dining table, drives a
 short way along it, and sets the carton down. The hand holds the carton by contact
@@ -25,10 +25,8 @@ from coraplex.execution_environment import ExecutionEnvironment
 from experiments.tiago_milk_pick_place.physics import (
     PhysicalMujocoRun,
     PhysicsSettings,
-    TiagoGraspPhysics,
 )
 from experiments.tiago_milk_pick_place.pick_place import MilkPickPlaceDemonstration
-
 
 # %% what one run was asked for
 
@@ -49,9 +47,10 @@ class DemoArguments:
     Whether to run the physics without a window.
     """
 
-    elliptic_cone: bool
+    pyramidal_cone: bool
     """
-    Whether to use MuJoCo's elliptic friction cone, which it recommends for grasping.
+    Whether to use MuJoCo's default pyramidal friction cone instead of the elliptic one
+    it recommends for grasping.
     """
 
     @classmethod
@@ -75,15 +74,15 @@ class DemoArguments:
             "--headless", action="store_true", help="run the physics without a window"
         )
         parser.add_argument(
-            "--elliptic-cone",
+            "--pyramidal-cone",
             action="store_true",
-            help="use MuJoCo's elliptic friction cone",
+            help="use MuJoCo's default friction cone instead of the elliptic one",
         )
         parsed = parser.parse_args()
         return cls(
             kinematic=parsed.kinematic,
             headless=parsed.headless,
-            elliptic_cone=parsed.elliptic_cone,
+            pyramidal_cone=parsed.pyramidal_cone,
         )
 
 
@@ -140,9 +139,12 @@ def run_physically(arguments: DemoArguments) -> None:
     report_the_scene(demonstration)
     robot = world.get_semantic_annotations_by_type(demonstration.used_robot)[0]
     arm = demonstration.choose_arm(robot)
-    settings = PhysicsSettings(elliptic_friction_cone=arguments.elliptic_cone)
-    balanced = TiagoGraspPhysics(settings=settings).prepare(world, robot, arm)
-    print(f"balanced the inertia of {len(balanced)} bodies: {', '.join(balanced)}")
+    grasp = demonstration.choose_grasp(arm)
+    print(
+        f"the hand closes on {grasp.width_along_closing_axis * 100:.1f} cm and stands "
+        f"{arm.end_effector.fingertips.separation * 100:.1f} cm wide"
+    )
+    settings = PhysicsSettings(elliptic_friction_cone=not arguments.pyramidal_cone)
     run = PhysicalMujocoRun(
         world=world,
         robot=robot,

@@ -197,3 +197,6 @@ basstler/board.json
 
 # Some robokudo annotators have default models downloaded
 robokudo/src/robokudo/models/
+
+# MuJoCo writes its own warning log wherever a simulation is started.
+MUJOCO_LOG.TXT

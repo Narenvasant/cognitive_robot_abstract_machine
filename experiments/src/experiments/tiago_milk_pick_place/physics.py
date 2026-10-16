@@ -1,171 +1,31 @@
 """
-What Tiago needs before MuJoCo is built so that its hand can hold the carton by
-friction, and the run that drives the physics with a viewer open.
+The run that performs a plan against MuJoCo physics with a viewer open.
 
-The stiffnesses are the ones MuJoCo's own model of this robot uses, in
-``mujoco_menagerie/pal_tiago_dual``. That model asks for a damping ratio of one, which
-MuJoCo turns into a damping from each joint's inertia; the inertias here were read off
-the built model's mass matrix, so the same damping can be given to CRAM's servos.
+Nothing about the robot's drives is set up here: Tiago's MuJoCo description states what
+every joint is driven with, and
+:class:`~semantic_digital_twin.robots.tiago.TiagoMujoco` declares those servos itself,
+so the arm, the hand and the base are all moved by the physics as soon as it is built.
 """
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import timedelta
-from enum import StrEnum
 
 import mujoco
 import numpy as np
-from typing_extensions import Dict, List, Tuple
+from typing_extensions import Dict, List
 
 from coraplex.execution_environment import PhysicallySimulatedRobot
 from experiments.tiago_milk_pick_place.exceptions import (
     CartonDidNotSettle,
-    MissingDrive,
     ServoOnWrongJoint,
 )
-from semantic_digital_twin.adapters.multi_sim import (
-    ContactCategories,
-    MujocoGeom,
-    MujocoSim,
-)
-from semantic_digital_twin.callbacks.callback import StateChangeCallback
-from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
-from semantic_digital_twin.robots.robot_parts import AbstractRobot, Arm
+from semantic_digital_twin.adapters.multi_sim import MujocoSim
+from semantic_digital_twin.robots.robot_parts import AbstractRobot
 from semantic_digital_twin.world import World
-from semantic_digital_twin.world_description.connection_properties import (
-    JointDynamics,
-    ServoGains,
-)
-from semantic_digital_twin.world_description.connections import (
-    ActiveConnection1DOF,
-    DifferentialDrive,
-    OmniDrive,
-)
-from semantic_digital_twin.world_description.world_entity import (
-    Body,
-    GravityCompensation,
-    PositionServo,
-)
-
-
-# %% the joints a servo drives
-
-
-@dataclass(frozen=True)
-class TiagoServo:
-    """
-    What one joint is given so that it can carry the carton without sagging or ringing.
-    """
-
-    stiffness: float
-    """
-    How hard the servo pulls the joint towards its set point, in newton metres per
-    radian or newtons per metre. Taken from MuJoCo's own model of this robot.
-    """
-
-    inertia: float
-    """
-    What the joint's own motion weighs, read off the built model's mass matrix.
-
-    The damping follows from this and the stiffness, which is how MuJoCo turns the
-    model's damping ratio into a damping of its own.
-    """
-
-    force_limit: float
-    """
-    The largest force or torque the servo may exert.
-    """
-
-    armature: float
-    """
-    Inertia added to the joint, which keeps a light link from ringing.
-    """
-
-    def gains(self, damping_ratio: float) -> ServoGains:
-        """
-        :param damping_ratio: How damped the servo should be, where one is critically
-            damped.
-        :return: What the servo pulls with.
-        """
-        return ServoGains(
-            stiffness=self.stiffness,
-            damping=2.0
-            * damping_ratio
-            * math.sqrt(self.stiffness * (self.inertia + self.armature)),
-            torque_limit=self.force_limit,
-        )
-
-    @property
-    def dynamics(self) -> JointDynamics:
-        """
-        :return: The joint's own inertia and friction.
-        """
-        return JointDynamics(armature=self.armature)
-
-
-class TiagoServoJoint(StrEnum):
-    """
-    The joints a position servo drives so that the arm can carry the carton.
-
-    The torso and the seven arm joints carry the load, and the gripper's finger joint is
-    the grip. The head and the wheels are written kinematically, as the grasp does not
-    depend on them.
-    """
-
-    TORSO_LIFT = "torso_lift_joint"
-    """
-    Raises the whole upper body.
-    """
-
-    ARM_1 = "arm_{side}_1_joint"
-    """
-    Turns the arm at the shoulder.
-    """
-
-    ARM_2 = "arm_{side}_2_joint"
-    """
-    Lifts the arm at the shoulder, under the longest lever.
-    """
-
-    ARM_3 = "arm_{side}_3_joint"
-    """
-    Rolls the upper arm.
-    """
-
-    ARM_4 = "arm_{side}_4_joint"
-    """
-    Bends the elbow.
-    """
-
-    ARM_5 = "arm_{side}_5_joint"
-    """
-    Rolls the forearm.
-    """
-
-    ARM_6 = "arm_{side}_6_joint"
-    """
-    Bends the wrist.
-    """
-
-    ARM_7 = "arm_{side}_7_joint"
-    """
-    Rolls the hand.
-    """
-
-    GRIPPER_FINGER = "gripper_{side}_finger_joint"
-    """
-    Closes the fingers, so its force limit is the grip.
-    """
-
-    def named_for(self, side: str) -> str:
-        """
-        :param side: Which arm, ``left`` or ``right``.
-        :return: The joint's name in the robot's description.
-        """
-        return self.value.format(side=side)
-
+from semantic_digital_twin.world_description.connections import WheeledDrive
+from semantic_digital_twin.world_description.world_entity import PositionServo
 
 # %% the settings one run uses
 
@@ -181,33 +41,6 @@ class PhysicsSettings:
     How long one physics step is, in seconds.
     """
 
-    damping_ratio: float = 1.0
-    """
-    How damped every servo is, where one is critically damped, as the model this
-    robot's stiffnesses come from asks for.
-    """
-
-    servos: Dict[TiagoServoJoint, TiagoServo] = field(
-        default_factory=lambda: {
-            TiagoServoJoint.TORSO_LIFT: TiagoServo(50000.0, 178.383, 2000.0, 0.1),
-            TiagoServoJoint.ARM_1: TiagoServo(250.0, 25.761, 200.0, 0.05),
-            TiagoServoJoint.ARM_2: TiagoServo(1500.0, 21.583, 200.0, 0.05),
-            TiagoServoJoint.ARM_3: TiagoServo(600.0, 12.021, 100.0, 0.05),
-            TiagoServoJoint.ARM_4: TiagoServo(1000.0, 14.846, 100.0, 0.05),
-            TiagoServoJoint.ARM_5: TiagoServo(80.0, 12.008, 40.0, 0.02),
-            TiagoServoJoint.ARM_6: TiagoServo(80.0, 12.221, 40.0, 0.02),
-            TiagoServoJoint.ARM_7: TiagoServo(80.0, 12.001, 40.0, 0.02),
-            TiagoServoJoint.GRIPPER_FINGER: TiagoServo(500.0, 0.0002, 16.0, 0.01),
-        }
-    )
-    """
-    What every servoed joint is given.
-
-    The gripper's force limit is above the 5.197 N the real robot's model states: the
-    carton weighs what MuJoCo makes of its mesh at water density, and a pad has to press
-    hard enough to hold that by friction alone.
-    """
-
     settle_time: timedelta = field(default_factory=lambda: timedelta(seconds=1))
     """
     How long the physics runs before the plan starts, so the carton comes to rest.
@@ -218,10 +51,11 @@ class PhysicsSettings:
     How far the carton may move while settling, in metres, before the run stops.
     """
 
-    elliptic_friction_cone: bool = False
+    elliptic_friction_cone: bool = True
     """
-    Whether to use MuJoCo's elliptic friction cone, which is its recommendation for
-    grasping.
+    Whether to use MuJoCo's elliptic friction cone, which it recommends for grasping:
+    the hand holds the carton by friction alone, and the default pyramidal cone lets a
+    held object creep along the pads under its own weight.
     """
 
     impression_ratio: float = 10.0
@@ -230,256 +64,6 @@ class PhysicsSettings:
     cone.
     """
 
-    wheels_and_casters: Tuple[str, ...] = (
-        "wheel_left_link",
-        "wheel_right_link",
-        "caster_front_left_1_link",
-        "caster_front_left_2_link",
-        "caster_front_right_1_link",
-        "caster_front_right_2_link",
-        "caster_back_left_1_link",
-        "caster_back_left_2_link",
-        "caster_back_right_1_link",
-        "caster_back_right_2_link",
-    )
-    """
-    The bodies whose contacts are turned off, named outright.
-
-    The base's pose is written into the simulation rather than driven, so a wheel
-    touching the floor can only make the free wheel spin and jitter. Only these are
-    silenced: the hand has to keep its contacts, since the grasp is nothing but
-    contact.
-    """
-
-
-# %% declaring all that on the robot
-
-
-@dataclass
-class TiagoGraspPhysics:
-    """
-    Puts on Tiago what its hand needs to hold the carton: a servo on every joint that
-    carries it, no weight of its own to hold up, and no wheels fighting the floor.
-
-    Runs once, before MuJoCo is built, and changes only the world.
-    """
-
-    settings: PhysicsSettings = field(default_factory=PhysicsSettings)
-    """
-    What to declare.
-    """
-
-    def prepare(self, world: World, robot: AbstractRobot, arm: Arm) -> List[str]:
-        """
-        Declare everything the grasp needs.
-
-        :param world: The world the robot stands in.
-        :param robot: The robot to prepare.
-        :param arm: The arm that carries the carton, which decides which side's joints
-            are servoed.
-        :return: The names of the bodies whose inertia had to be balanced.
-        """
-        balanced = self.balance_impossible_inertias(world)
-        with world.modify_world():
-            self._declare_servos(world, robot, self._side_of(arm))
-            self._compensate_gravity(robot)
-            self._silence_the_wheels(world, robot)
-        return balanced
-
-    def balance_impossible_inertias(self, world: World) -> List[str]:
-        """
-        Give every body whose inertia no rigid body could have one that it could.
-
-        Four links of this robot's description carry such an inertia: the antennas'
-        off-diagonal term exceeds the bound its diagonal allows, and the first arm links
-        fail ``A + B >= C``. Both are balanced the way MuJoCo's own ``balanceinertia``
-        does it, by making the tensor isotropic with the same trace.
-
-        :param world: The world to look through.
-        :return: The names of the bodies that were balanced.
-        """
-        balanced = []
-        for body in world.bodies:
-            if body.inertial is None:
-                continue
-            moments = np.sort(np.linalg.eigvalsh(body.inertial.inertia.data))
-            if moments[0] >= 0.0 and moments[0] + moments[1] >= moments[2]:
-                continue
-            body.inertial.inertia.data[:] = np.eye(3) * float(moments.sum() / 3.0)
-            balanced.append(body.name.name)
-        return balanced
-
-    def _side_of(self, arm: Arm) -> str:
-        """
-        :param arm: The arm that carries the carton.
-        :return: Which side it is, as its joints are named.
-        """
-        return "left" if "left" in arm.name.name.lower() else "right"
-
-    def _connections_by_name(
-        self, robot: AbstractRobot
-    ) -> Dict[str, ActiveConnection1DOF]:
-        """
-        :param robot: The robot to read.
-        :return: Every joint of the robot that can be driven, by name.
-        """
-        return {
-            connection.name.name: connection
-            for connection in robot.connections
-            if isinstance(connection, ActiveConnection1DOF)
-        }
-
-    def _declare_servos(self, world: World, robot: AbstractRobot, side: str) -> None:
-        """
-        Put one position servo on each joint that carries the carton.
-
-        :param world: The world the servos are added to.
-        :param robot: The robot whose joints they drive.
-        :param side: Which arm carries it.
-        """
-        connections = self._connections_by_name(robot)
-        for joint, servo in self.settings.servos.items():
-            connection = connections[joint.named_for(side)]
-            connection.dynamics = servo.dynamics
-            actuator = PositionServo(
-                name=PrefixedName(
-                    f"{connection.raw_dof.name.name}_servo",
-                    prefix=connection.raw_dof.name.prefix,
-                ),
-                gains=servo.gains(self.settings.damping_ratio),
-            )
-            actuator.add_dof(connection.raw_dof)
-            world.add_actuator(actuator)
-
-    def _compensate_gravity(self, robot: AbstractRobot) -> None:
-        """
-        Let the physics carry the robot's own weight, so the servos carry only the
-        carton and the contact forces.
-
-        :param robot: The robot to compensate.
-        """
-        for body in robot.bodies:
-            if body.get_simulator_property_of_type(GravityCompensation) is None:
-                body.add_simulator_property(GravityCompensation(fraction=1.0))
-
-    def _silence_the_wheels(self, world: World, robot: AbstractRobot) -> None:
-        """
-        Turn off the contacts of the wheels and the casters.
-
-        They are named one by one rather than found by walking the robot below its base:
-        the base is the robot's root, so everything hangs below it, and silencing that
-        would take the hand's contacts with it.
-
-        :param world: The world holding the robot.
-        :param robot: The robot whose wheels are silenced.
-        """
-        silenced = set(self.settings.wheels_and_casters)
-        for entity in robot.bodies:
-            if entity.name.name not in silenced or not entity.has_collision:
-                continue
-            for shape in entity.collision.shapes:
-                geometry = shape.get_simulator_property_of_type(MujocoGeom)
-                if geometry is None:
-                    shape.add_simulator_property(
-                        MujocoGeom(
-                            contact_type=ContactCategories.NONE,
-                            contact_affinity=ContactCategories.NONE,
-                        )
-                    )
-                else:
-                    geometry.contact_type = ContactCategories.NONE
-                    geometry.contact_affinity = ContactCategories.NONE
-
-
-# %% the base in the simulation
-
-
-@dataclass(eq=False)
-class BaseInMujoco(StateChangeCallback):
-    """
-    Writes the robot's base pose into MuJoCo whenever the world changes.
-
-    The MuJoCo builder leaves a drive out, so without this the base stays where it was
-    built and driving would not move the robot in the viewer. The arm, the hand and the
-    carton stay fully physical either way.
-
-    ..note:: The base is placed once per control cycle rather than pushed by its wheels,
-        so the physics sees no velocity for those steps. A jump across the finger pads
-        presses the carton through contact, which is harmless; a jump along them is not
-        resisted by friction, which is why the drive is kept slow.
-    """
-
-    simulation: object = field(kw_only=True)
-    """
-    The running simulation whose model carries the base body.
-    """
-
-    drive: object = field(kw_only=True)
-    """
-    The connection the base is moved by, read for the pose to write.
-    """
-
-    base_body: Body = field(kw_only=True)
-    """
-    The body whose pose is written, which is the drive's child.
-    """
-
-    def __post_init__(self):
-        """
-        Register for state changes and write where the base already stands.
-        """
-        super().__post_init__()
-        self._written_pose: np.ndarray | None = None
-        self.on_state_change()
-
-    def on_state_change(self, **kwargs) -> None:
-        """
-        Write the base's pose into MuJoCo if it moved since the last write.
-
-        :param kwargs: What the world passes its callbacks, which this one ignores.
-        """
-        odom_T_base = self._world.compute_forward_kinematics_np(
-            self.drive.parent, self.drive.child
-        )
-        if self._written_pose is not None and np.allclose(
-            odom_T_base, self._written_pose, atol=1e-9
-        ):
-            return
-        self._written_pose = odom_T_base.copy()
-        model = self.simulation.simulator._mj_model
-        index = mujoco.mj_name2id(
-            model, mujoco.mjtObj.mjOBJ_BODY, self.base_body.name.name
-        )
-        model.body_pos[index] = odom_T_base[:3, 3]
-        quaternion = np.empty(4)
-        mujoco.mju_mat2Quat(quaternion, odom_T_base[:3, :3].flatten())
-        model.body_quat[index] = quaternion
-
-    @classmethod
-    def for_robot(
-        cls, world: World, robot: AbstractRobot, simulation: object
-    ) -> BaseInMujoco:
-        """
-        Find the robot's drive and follow it.
-
-        :param world: The world the robot stands in.
-        :param robot: The robot whose base is followed.
-        :param simulation: The running simulation to write into.
-        :return: The callback, already having written where the base stands.
-        """
-        entity = robot.root
-        while entity.parent_connection is not None:
-            connection = entity.parent_connection
-            if isinstance(connection, (DifferentialDrive, OmniDrive)):
-                return cls(
-                    _world=world,
-                    simulation=simulation,
-                    drive=connection,
-                    base_body=connection.child,
-                )
-            entity = connection.parent
-        raise MissingDrive(robot.name.name)
-
 
 # %% where the run is watched from
 
@@ -487,28 +71,28 @@ class BaseInMujoco(StateChangeCallback):
 @dataclass
 class ViewerCamera:
     """
-    Where the viewer looks from, so the run opens on the table rather than on the
-    apartment's origin.
+    Where the viewer looks from, so the window opens on the table rather than on the
+    middle of the apartment.
     """
 
-    look_at: Tuple[float, float, float] = (4.6, 3.9, 0.9)
+    look_at: tuple = (4.6, 3.9, 0.9)
     """
-    The point the camera orbits, which is between the robot and the carton.
+    The point the camera orbits, in metres.
     """
 
     distance: float = 2.6
     """
-    How far the camera sits from that point, in metres.
+    How far the camera stands from that point, in metres.
     """
 
     azimuth: float = 150.0
     """
-    Where it sits around the point, in degrees.
+    Which way the camera faces, in degrees.
     """
 
     elevation: float = -20.0
     """
-    How far above the point it sits, in degrees.
+    How far the camera looks down, in degrees.
     """
 
 
@@ -557,11 +141,6 @@ class PhysicalMujocoRun:
     The simulation, once it is built.
     """
 
-    base_callback: BaseInMujoco | None = field(init=False, default=None)
-    """
-    What keeps the base's pose in MuJoCo up to date.
-    """
-
     def open(self) -> None:
         """
         Build MuJoCo, start it stepped, and settle the carton.
@@ -576,9 +155,6 @@ class PhysicalMujocoRun:
             **self._friction_configuration(),
         )
         self._check_every_servo_drives_its_own_joint()
-        self.base_callback = BaseInMujoco.for_robot(
-            self.world, self.robot, self.simulation
-        )
         self.simulation.start_stepped_simulation()
         self._aim_the_camera()
         self._settle()
@@ -603,14 +179,38 @@ class PhysicalMujocoRun:
         :raises ServoOnWrongJoint: If one of them drives another joint.
         """
         model = self.simulation.simulator._mj_model
+        expected = self._joint_each_servo_should_drive()
         for index in range(model.nu):
             servo_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, index)
             driven = mujoco.mj_id2name(
                 model, mujoco.mjtObj.mjOBJ_JOINT, model.actuator_trnid[index, 0]
             )
-            declared = servo_name.removesuffix("_servo")
+            declared = expected[servo_name]
             if driven != declared:
                 raise ServoOnWrongJoint(servo_name, declared, driven)
+
+    def _joint_each_servo_should_drive(self) -> Dict[str, str]:
+        """
+        :return: The name of the simulated joint each servo is meant to drive, by servo
+            name: a drive's own axis joint for a servo on one of its degrees of freedom,
+            and the joint of the same name as the servo for every other.
+        """
+        drive_joints = {
+            degree_of_freedom.id: joint_name
+            for connection in self.world.connections
+            if isinstance(connection, WheeledDrive)
+            for degree_of_freedom, joint_name in (
+                connection.single_axis_joint_names.items()
+            )
+        }
+        return {
+            actuator.name.name: drive_joints.get(
+                degree_of_freedom.id, degree_of_freedom.name.name
+            )
+            for actuator in self.world.actuators
+            if isinstance(actuator, PositionServo)
+            for degree_of_freedom in actuator.dofs
+        }
 
     def _aim_the_camera(self) -> None:
         """
@@ -672,8 +272,8 @@ class PhysicalMujocoRun:
         """
         What every part of the robot touches once the carton has settled.
 
-        The expected answer is nothing, and this is the first thing to read when the arm
-        jitters.
+        The expected answer is the wheels on the floor, and this is the first thing to
+        read when the arm jitters.
 
         :return: One line per robot body that touches something.
         """
@@ -709,9 +309,7 @@ class PhysicalMujocoRun:
 
     def close(self) -> None:
         """
-        Stop following the base and stop the simulation.
+        Stop the simulation.
         """
-        if self.base_callback is not None:
-            self.base_callback.stop()
         if self.simulation is not None:
             self.simulation.stop_simulation()

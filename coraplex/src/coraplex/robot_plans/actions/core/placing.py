@@ -15,6 +15,7 @@ from krrood.entity_query_language.factories import (
     ConditionType,
 )
 from coraplex.datastructures.dataclasses import Context
+from coraplex.datastructures.enums import MovementType
 from coraplex.exceptions import ObjectIsNotHeld
 from coraplex.querying.predicates import GripperHolds
 from coraplex.plans.factories import sequential
@@ -92,6 +93,11 @@ class PlaceAction(
                     poses.grasp,
                     arm,
                     allow_gripper_collision=True,
+                    # The object is between the fingers on the way down and still
+                    # between them on the way out, so both are held to a straight line
+                    # and the hand is held open as it withdraws: a free path, or fingers
+                    # left to drift, sweeps what was just put down off its place.
+                    movement_type=MovementType.STRAIGHT_CARTESIAN,
                     max_linear_velocity=self.placing_linear_velocity,
                     position_threshold=self.position_threshold,
                     orientation_threshold=self.orientation_threshold,
@@ -108,6 +114,8 @@ class PlaceAction(
                 MoveToolCenterPointMotion(
                     poses.pre_grasp,
                     arm,
+                    movement_type=MovementType.STRAIGHT_CARTESIAN,
+                    hold_gripper=GripperState.OPEN,
                     max_linear_velocity=self.retract_linear_velocity,
                     position_threshold=self.position_threshold,
                     orientation_threshold=self.orientation_threshold,

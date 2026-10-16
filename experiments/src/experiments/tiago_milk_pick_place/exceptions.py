@@ -85,8 +85,8 @@ class OutOfReach(DataclassException, ValueError):
     """
     Raised when the robot would have to reach further than its arm allows.
 
-    The base does not move in this demo, so everything has to be reachable from where
-    the robot stands.
+    The robot drives between the two spots, so each has to be reachable from the pose it
+    is reached from.
     """
 
     name: str
@@ -117,8 +117,8 @@ class OutOfReach(DataclassException, ValueError):
 @dataclass
 class ServoOnWrongJoint(DataclassException, ValueError):
     """
-    Raised when a position servo drives a different joint in MuJoCo than it was
-    declared for.
+    Raised when a position servo drives a different joint in MuJoCo than it was declared
+    for.
     """
 
     servo_name: str
@@ -173,24 +173,3 @@ class CartonDidNotSettle(DataclassException, ValueError):
 
     def suggest_correction(self) -> str:
         return "Give the physics longer to settle, or spawn the carton a little higher."
-
-
-@dataclass
-class MissingDrive(DataclassException, ValueError):
-    """
-    Raised when the robot is not standing on a drive the demo can move it with.
-    """
-
-    robot_name: str
-    """
-    Name of the robot that was looked at.
-    """
-
-    def error_message(self) -> str:
-        return f"{self.robot_name} has no drive above it."
-
-    def suggest_correction(self) -> str:
-        return (
-            "Spawn the robot with a RobotSpecification, which puts it on a drive below "
-            "odom."
-        )

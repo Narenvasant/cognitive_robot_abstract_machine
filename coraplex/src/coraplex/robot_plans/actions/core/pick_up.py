@@ -127,6 +127,13 @@ class ReachAction(
                 poses.grasp,
                 self.arm,
                 allow_gripper_collision=True,
+                # The fingers are already around the object by now, so the hand is held
+                # to the line onto the grasp: left to take whatever path the arm finds,
+                # it swings the open fingers sideways through what it is reaching for.
+                movement_type=MovementType.STRAIGHT_CARTESIAN,
+                hold_gripper=(
+                    GripperState.OPEN if self.open_gripper_at_pre_pose else None
+                ),
                 max_linear_velocity=self.final_approach_linear_velocity,
                 position_threshold=self.position_threshold,
                 orientation_threshold=self.orientation_threshold,

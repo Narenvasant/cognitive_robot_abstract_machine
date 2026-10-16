@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from typing_extensions import Optional
+
 
 @dataclass
 class JointDynamics:
@@ -90,9 +92,12 @@ class JointServo:
     How hard the servo pulls the joint towards the commanded position.
     """
 
-    dynamics: JointDynamics
+    dynamics: Optional[JointDynamics] = None
     """
     The joint's own inertia and friction, felt on top of the servo's torque.
+
+    ``None`` keeps what the robot's description says, which is what a description that
+    states them itself, such as an MJCF, already carries.
     """
 
 

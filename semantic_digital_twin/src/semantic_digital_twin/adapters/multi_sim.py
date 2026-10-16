@@ -66,6 +66,7 @@ from semantic_digital_twin.world_description.connections import (
     Connection6DoF,
     OmniDrive,
     DifferentialDrive,
+    WheeledDrive,
 )
 from semantic_digital_twin.world_description.degree_of_freedom import DegreeOfFreedom
 from semantic_digital_twin.world_description.geometry import (
@@ -1961,7 +1962,7 @@ class MujocoBuilder(MultiSimBuilder):
         qpos = []
         for body in self.world.bodies_topologically_sorted:
             parent_connection = body.parent_connection
-            if isinstance(parent_connection, OmniDrive) and self._is_servoed(
+            if isinstance(parent_connection, WheeledDrive) and self._is_servoed(
                 parent_connection
             ):
                 qpos += [
@@ -2251,7 +2252,7 @@ class MujocoBuilder(MultiSimBuilder):
         return material_name
 
     def _build_connection(self, connection: Connection):
-        if isinstance(connection, OmniDrive) and self._is_servoed(connection):
+        if isinstance(connection, WheeledDrive) and self._is_servoed(connection):
             self._build_drive_joints(connection)
             return
         if isinstance(connection, self._ignore_connection_types):
@@ -2292,7 +2293,7 @@ class MujocoBuilder(MultiSimBuilder):
                 action="add",
             )
 
-    def _is_servoed(self, drive: OmniDrive) -> bool:
+    def _is_servoed(self, drive: WheeledDrive) -> bool:
         """
         :param drive: A drive in the world being built.
         :return: Whether servos drive the x, y and yaw of the drive, which then moves its
@@ -2307,7 +2308,7 @@ class MujocoBuilder(MultiSimBuilder):
 
     @staticmethod
     def _drive_joint_axes(
-        drive: OmniDrive,
+        drive: WheeledDrive,
     ) -> Dict[DegreeOfFreedom, Tuple[mujoco.mjtJoint, numpy.ndarray]]:
         """
         :param drive: A servoed drive.
@@ -2320,11 +2321,11 @@ class MujocoBuilder(MultiSimBuilder):
             drive.yaw: (mujoco.mjtJoint.mjJNT_HINGE, numpy.array([0.0, 0.0, 1.0])),
         }
 
-    def _build_drive_joints(self, drive: OmniDrive) -> None:
+    def _build_drive_joints(self, drive: WheeledDrive) -> None:
         """
         Build the joints a servoed drive moves its base with: a slide along x, a slide
         along y and a hinge about z, all in the drive's ``odom`` frame and named as
-        :attr:`~semantic_digital_twin.world_description.connections.OmniDrive.single_axis_joint_names`
+        :attr:`~semantic_digital_twin.world_description.connections.WheeledDrive.single_axis_joint_names`
         says.
 
         :param drive: The servoed drive.
@@ -2387,7 +2388,7 @@ class MujocoBuilder(MultiSimBuilder):
                 "target": degree_of_freedom.name.name,
                 "trntype": mujoco.mjtTrn.mjTRN_TENDON,
             }
-        if isinstance(connection, OmniDrive):
+        if isinstance(connection, WheeledDrive):
             return {
                 "target": connection.single_axis_joint_names[degree_of_freedom],
                 "trntype": mujoco.mjtTrn.mjTRN_JOINT,
