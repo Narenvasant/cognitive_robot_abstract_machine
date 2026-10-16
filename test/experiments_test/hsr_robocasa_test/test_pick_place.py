@@ -1,20 +1,26 @@
 """
-The HSR performing RoboCasa's ``PickPlaceCounterToStove`` task in a RoboCasa kitchen
-lowered to its height, simulated in MuJoCo with the food held by friction alone.
+The HSR performing RoboCasa's pick-and-place tasks in a RoboCasa kitchen lowered to
+its height, simulated in MuJoCo with the object held by friction alone.
 """
 
 import os
+from dataclasses import dataclass
 
+import numpy as np
 import pytest
 
 pytest.importorskip("robocasa", reason="robocasa is not installed")
 pytest.importorskip("robosuite", reason="robosuite is not installed")
 
-from experiments.hsr_robocasa.pick_place_counter_to_stove import (
+from experiments.hsr_robocasa.pick_place import (
     FixtureType,
     HSRBArmPlane,
     LayoutKey,
+    HSRPickPlaceTask,
+    PickPlaceCounterToSink,
     PickPlaceCounterToStove,
+    PickPlaceSinkToCounter,
+    PickPlaceStoveToCounter,
     RoboCasaLayout,
     RowOffTheFloor,
     TaskObject,
@@ -34,17 +40,67 @@ reach: the resolution of its searches.
 
 RESTING_TOLERANCE = 0.02
 """
-How far, in metres, the food's underside may end up above the pan's floor and still
-count as lying on it.
+How far, in metres, the object's underside may end up outside the height of the
+receptacle's floor and still count as resting on it.
 """
 
 
-@pytest.fixture(scope="module")
-def experiment_after_the_run() -> PickPlaceCounterToStove:
-    experiment = PickPlaceCounterToStove(headless=True)
+@dataclass
+class TaskOutcome:
+    """
+    A task performed in MuJoCo, with what its receptacle looked like before the run.
+    """
+
+    experiment: HSRPickPlaceTask
+    """
+    The task, after its run.
+    """
+
+    receptacle_outline: np.ndarray
+    """
+    The lower and upper corner of the box the receptacle's collision geometry
+    occupied before the run, in the kitchen's frame.
+    """
+
+    release_height: float
+    """
+    The height the object was to be let go above.
+    """
+
+
+def outline_of(experiment: HSRPickPlaceTask) -> np.ndarray:
+    """
+    :return: The lower and upper corner of the box the collision geometry of the
+        task's receptacle occupies, in the kitchen's frame.
+    """
+    boxes = [
+        experiment.extent(body)
+        for body in experiment.colliding_bodies_below(experiment.receptacle)
+    ]
+    return np.array(
+        [
+            np.min([[box.min_x, box.min_y, box.min_z] for box in boxes], axis=0),
+            np.max([[box.max_x, box.max_y, box.max_z] for box in boxes], axis=0),
+        ]
+    )
+
+
+@pytest.fixture(
+    scope="module",
+    params=[
+        PickPlaceCounterToStove,
+        PickPlaceStoveToCounter,
+        PickPlaceCounterToSink,
+        PickPlaceSinkToCounter,
+    ],
+)
+def outcome(request) -> TaskOutcome:
+    experiment = request.param(headless=True)
     experiment.build_world()
+    receptacle_outline = outline_of(experiment)
+    release_height = experiment.release_height
     experiment.run()
-    return experiment
+    return TaskOutcome(experiment, receptacle_outline, release_height)
 
 
 # %% the lowered kitchen
@@ -54,19 +110,18 @@ def test_the_counters_stand_at_the_height_the_kitchen_is_lowered_to():
     experiment = PickPlaceCounterToStove()
     layout = RoboCasaLayout.from_layout_type(experiment.layout)
 
-    lowered = layout.lowered_to(experiment.counter_height)
+    lowered = layout.lowered_fixtures(experiment.counter_height)
 
-    counter_heights = [
-        fixture[LayoutKey.SIZE][2]
-        for group in lowered.values()
+    counters = [
+        fixture[LayoutKey.NAME]
+        for group in layout.configuration.values()
         for row in group.values()
         if isinstance(row, list)
         for fixture in row
-        if isinstance(fixture, dict)
-        and fixture.get(LayoutKey.TYPE) == FixtureType.COUNTER
+        if fixture.get(LayoutKey.TYPE) == FixtureType.COUNTER
     ]
-    assert counter_heights == pytest.approx(
-        [experiment.counter_height] * len(counter_heights)
+    assert [lowered[counter][LayoutKey.SIZE][2] for counter in counters] == (
+        pytest.approx([experiment.counter_height] * len(counters))
     )
 
 
@@ -74,12 +129,16 @@ def test_what_hangs_on_the_walls_keeps_its_height():
     experiment = PickPlaceCounterToStove()
     layout = RoboCasaLayout.from_layout_type(experiment.layout)
 
-    lowered = layout.lowered_to(experiment.counter_height)
+    lowered = layout.lowered_fixtures(experiment.counter_height)
 
-    for group_name, group in layout.configuration.items():
-        for row_name, row in group.items():
-            if row_name in RowOffTheFloor:
-                assert lowered[group_name][row_name] == row
+    on_the_walls = [
+        fixture[LayoutKey.NAME]
+        for group in layout.configuration.values()
+        for row_name, row in group.items()
+        if row_name in RowOffTheFloor and isinstance(row, list)
+        for fixture in row
+    ]
+    assert [name for name in on_the_walls if name in lowered] == []
 
 
 # %% the arm plane
@@ -113,18 +172,21 @@ def test_the_arm_plane_puts_the_tool_frame_where_a_configuration_of_it_does():
 
 
 @runs_in_ci
-def test_the_food_ends_lying_in_the_pan(
-    experiment_after_the_run: PickPlaceCounterToStove,
-):
+def test_the_object_ends_resting_in_the_receptacle(outcome: TaskOutcome):
     """
-    Held by friction alone, the food travels from the plate to the pan and comes to
-    rest on the pan's floor.
+    Held by friction alone, the object travels to the receptacle and comes to rest in
+    it, standing or fallen over: within its outline, and no higher than it was let
+    go.
     """
-    experiment = experiment_after_the_run
-    floor = experiment.pan_floor
+    experiment = outcome.experiment
     food = experiment.extent(experiment.world.get_body_by_name(TaskObject.FOOD))
     x, y, _ = food.center.to_np()[:3]
+    lower, upper = outcome.receptacle_outline
 
-    assert floor.min_x < x < floor.max_x
-    assert floor.min_y < y < floor.max_y
-    assert food.min_z == pytest.approx(floor.max_z, abs=RESTING_TOLERANCE)
+    assert lower[0] < x < upper[0]
+    assert lower[1] < y < upper[1]
+    assert (
+        lower[2] - RESTING_TOLERANCE
+        <= food.min_z
+        <= outcome.release_height + RESTING_TOLERANCE
+    )

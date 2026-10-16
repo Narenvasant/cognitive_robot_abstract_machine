@@ -1,27 +1,28 @@
 """
-The Toyota HSR performs RoboCasa's ``PickPlaceCounterToStove`` task in a RoboCasa
-kitchen, simulated in MuJoCo: it picks the food from the plate on the counter and
-places it in the pan on the stove.
+The Toyota HSR performs RoboCasa's pick-and-place tasks in a RoboCasa kitchen,
+simulated in MuJoCo: it picks an object up where the task puts it and sets it into the
+receptacle the task names.
 
-RoboCasa composes the kitchen and samples the food, the plate and the pan; the HSR
-replaces the robot RoboCasa would use. The food is held by nothing but the friction
-between it and the fingers.
+RoboCasa composes the kitchen and samples the objects; the HSR replaces the robot
+RoboCasa would use. The object is held by nothing but the friction between it and the
+fingers.
 
-Run it with::
+Run the stove task with::
 
-    python -m experiments.hsr_robocasa.pick_place_counter_to_stove
+    python -m experiments.hsr_robocasa.pick_place
 """
 
 from __future__ import annotations
 
-import copy
 import math
+from abc import ABC
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
 import numpy as np
 import yaml
+from krrood.ormatic.utils import classproperty
 from coraplex.datastructures.dataclasses import Context
 from coraplex.execution_environment import PhysicallySimulatedRobot
 from coraplex.plans.factories import sequential
@@ -31,12 +32,17 @@ from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
 from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
-from semantic_digital_twin.adapters.multi_sim import MujocoSim
+from semantic_digital_twin.adapters.multi_sim import (
+    ContactDimensionality,
+    MujocoGeom,
+    MujocoSim,
+)
 from semantic_digital_twin.collision_checking.collision_rules import (
     AllowCollisionBetweenGroups,
 )
 from semantic_digital_twin.adapters.robocasa_dataset.loader import (
     RoboCasaDatasetLoader,
+    RoboCasaTask,
 )
 from semantic_digital_twin.adapters.robocasa_dataset.mujoco_compat import (
     robocasa_version_assertions_relaxed,
@@ -46,6 +52,7 @@ from semantic_digital_twin.grasping.grasp_candidates import (
     HasGraspCandidates,
 )
 from semantic_digital_twin.robots.hsrb import HSRB, HSRBJoint
+from semantic_digital_twin.semantic_annotations.semantic_annotations import Sink
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
     Pose,
@@ -80,22 +87,17 @@ with robocasa_version_assertions_relaxed():
 
 class TaskObject(StrEnum):
     """
-    The bodies RoboCasa adds for the task, by the names it gives them.
+    The bodies RoboCasa adds for a pick-and-place task, by the names it gives them.
     """
 
     FOOD = "obj_main"
     """
-    The food to put in the pan.
+    The object to pick up and set down, food in most tasks.
     """
 
-    PLATE = "obj_container_main"
+    CONTAINER = "container_main"
     """
-    The plate the food lies on, on the counter.
-    """
-
-    PAN = "container_main"
-    """
-    The pan on the stove.
+    The container the object is to be set into, where the task has one.
     """
 
 
@@ -117,9 +119,9 @@ class KitchenBody(StrEnum):
 
 class WristLink(StrEnum):
     """
-    The links of the HSR's wrist, by the names its description gives them. Taking the
-    food from its plate and setting it in the pan brings them as close to the three as
-    the hand itself, so they may touch them as the hand may.
+    The links of the HSR's wrist, by the names its description gives them. Taking an
+    object from where it lies and setting it into its receptacle brings them as close
+    to these as the hand itself, so they may touch them as the hand may.
     """
 
     WRIST_FLEX = "wrist_flex_link"
@@ -292,6 +294,11 @@ class LayoutKey(StrEnum):
     What kind of fixture an entry is.
     """
 
+    NAME = "name"
+    """
+    The name of a fixture.
+    """
+
 
 class FixtureType(StrEnum):
     """
@@ -374,52 +381,50 @@ class RoboCasaLayout:
             if fixture[LayoutKey.TYPE] == FixtureType.COUNTER
         )
 
-    def lowered_to(self, counter_height: float) -> dict[str, Any]:
+    def lowered_fixtures(self, counter_height: float) -> dict[str, dict[str, Any]]:
         """
         :param counter_height: How high the counters are to stand, in metres.
-        :return: This layout with every height of the fixtures standing on the floor
-            scaled by the same factor, so that its counters stand ``counter_height``
-            high; what hangs on the walls keeps its height.
+        :return: The updates, by fixture name, that scale every height of the fixtures
+            standing on the floor by the same factor, so that the counters stand
+            ``counter_height`` high; what hangs on the walls keeps its height.
         """
         factor = counter_height / self.counter_height
-        lowered = copy.deepcopy(self.configuration)
-        for group in lowered.values():
-            for row_name, row in group.items():
-                if row_name in RowOffTheFloor:
-                    continue
-                self._scale_heights(row, factor)
-        return lowered
+        return {
+            fixture[LayoutKey.NAME]: update
+            for group in self.configuration.values()
+            for row_name, row in group.items()
+            if row_name not in RowOffTheFloor and isinstance(row, list)
+            for fixture in row
+            if (update := self._lowered(fixture, factor))
+        }
 
-    def _scale_heights(self, entry: Any, factor: float) -> None:
+    @staticmethod
+    def _lowered(fixture: dict[str, Any], factor: float) -> dict[str, Any]:
         """
-        Scale every height stated in ``entry`` and the entries nested in it, in place.
-
-        :param entry: A part of a layout.
-        :param factor: What to multiply each height with.
+        :param fixture: A fixture of the layout.
+        :param factor: What to multiply each of its heights with.
+        :return: The fixture's size, position and stack height with their heights
+            scaled, for those it states.
         """
-        if isinstance(entry, list):
-            for item in entry:
-                self._scale_heights(item, factor)
-            return
-        if not isinstance(entry, dict):
-            return
-        for key, value in entry.items():
+        update = {}
+        for key in (LayoutKey.SIZE, LayoutKey.POSITION):
+            value = fixture.get(key)
             if (
-                key in (LayoutKey.SIZE, LayoutKey.POSITION)
+                isinstance(value, list)
                 and len(value) == 3
                 and isinstance(value[2], (int, float))
             ):
-                value[2] *= factor
-            elif key == LayoutKey.STACK_HEIGHT:
-                entry[key] = value * factor
-            else:
-                self._scale_heights(value, factor)
+                update[key] = [value[0], value[1], value[2] * factor]
+        if LayoutKey.STACK_HEIGHT in fixture:
+            update[LayoutKey.STACK_HEIGHT] = fixture[LayoutKey.STACK_HEIGHT] * factor
+        return update
 
 
 @dataclass
-class PickPlaceCounterToStove:
+class HSRPickPlaceTask(ABC):
     """
-    RoboCasa's ``PickPlaceCounterToStove`` task, performed by the HSR.
+    One of RoboCasa's pick-and-place tasks, performed by the HSR. Each task is a
+    subclass named after the RoboCasa task it performs.
     """
 
     layout: LayoutType = LayoutType.LAYOUT001
@@ -432,10 +437,15 @@ class PickPlaceCounterToStove:
     The RoboCasa kitchen style.
     """
 
-    seed: int = 12
+    seed: int = 0
     """
-    The seed RoboCasa samples the food, the plate and the pan with. Seed 12 gives a
-    block of cheese on the counter left of the stove.
+    The seed RoboCasa samples the task's objects and their places with.
+    """
+
+    food_category: str | None = None
+    """
+    The RoboCasa object category the object to pick up is sampled from; ``None``
+    leaves the choice to the task.
     """
 
     counter_height: float = 0.75
@@ -446,14 +456,32 @@ class PickPlaceCounterToStove:
 
     reach: float = 0.6
     """
-    How far in front of its base's centre the HSR takes and sets down the food, in
-    metres, so that both the grasp and the pre-grasp before it lie within the 0.43 m
-    to 0.64 m its arm reaches with the hand tilted down at :attr:`grasp_pitch`.
+    How far in front of its base's centre the HSR takes the food, in metres, so that
+    both the grasp and the pre-grasp before it lie within the 0.43 m to 0.64 m its
+    arm reaches with the hand tilted down at :attr:`grasp_pitch`.
     """
 
-    release_clearance: float = 0.01
+    placing_reach: float = 0.6
     """
-    How far above the pan's floor the HSR lets the food go, in metres.
+    How far in front of its base's centre the HSR sets the food down, in metres.
+    """
+
+    release_clearance: float = 0.03
+    """
+    How far above :attr:`release_height` the HSR lets the food go, in metres.
+    """
+
+    tool_frame_tolerance: float = 0.015
+    """
+    How far, in metres, the tool frame may stop from a goal of the pick up or the
+    placing: the base stops within about a centimetre of where it is sent, and the
+    arm, swinging in its plane, cannot make up for that sideways.
+    """
+
+    floor_margin: float = 0.05
+    """
+    How far in from the edge of the receptacle's floor the food is set down, in
+    metres.
     """
 
     grasp_pitch: float = math.pi / 4
@@ -471,10 +499,22 @@ class PickPlaceCounterToStove:
     Whether the simulation runs without MuJoCo's own viewer.
     """
 
+    task: RoboCasaTask = field(init=False)
+    """
+    The task as RoboCasa composed it, built by :meth:`build_world`.
+    """
+
     world: World = field(init=False)
     """
     The kitchen with the task's objects and the HSR, built by :meth:`build_world`.
     """
+
+    @classproperty
+    def task_name(cls) -> str:
+        """
+        The name of the RoboCasa task, which the subclass carries.
+        """
+        return cls.__name__
 
     def build_world(self) -> World:
         """
@@ -483,15 +523,19 @@ class PickPlaceCounterToStove:
 
         :return: The world.
         """
-        task = RoboCasaDatasetLoader().load_task(
-            "PickPlaceCounterToStove",
-            RoboCasaLayout.from_layout_type(self.layout).lowered_to(
-                self.counter_height
-            ),
+        self.task = RoboCasaDatasetLoader().load_task(
+            self.task_name,
+            self.layout,
             self.style,
             seed=self.seed,
+            task_parameters=(
+                {} if self.food_category is None else {"obj_groups": self.food_category}
+            ),
+            fixture_updates=RoboCasaLayout.from_layout_type(
+                self.layout
+            ).lowered_fixtures(self.counter_height),
         )
-        self.world = task.world
+        self.world = self.task.world
         robot = RobotSpecification(HSRB).spawn(self.world)
         robot.mobile_base.full_body_controlled = False
         with self.world.modify_world():
@@ -512,22 +556,21 @@ class PickPlaceCounterToStove:
                     ],
                     body_group_b=[
                         body
-                        for task_object in TaskObject
-                        for body in self._colliding_bodies_of(task_object)
+                        for root in [*self.task.manipulated_objects, self.receptacle]
+                        for body in self.colliding_bodies_below(root)
                     ],
                 )
             )
         self.robot.root.parent_connection.origin = self.standing_pose(
-            self.extent(self.food.root).center.to_np()[:3]
+            self.extent(self.food.root).center.to_np()[:3], self.reach
         ).homogeneous_matrix
         return self.world
 
-    def _colliding_bodies_of(self, task_object: TaskObject) -> list[Body]:
+    def colliding_bodies_below(self, root: Body) -> list[Body]:
         """
-        :return: The bodies of ``task_object`` that carry its collision geometry: its
-            root, or the bodies below it RoboCasa puts the geometry in.
+        :return: The bodies of the object rooted in ``root`` that carry its collision
+            geometry: the root itself, or the bodies below it RoboCasa puts it in.
         """
-        root = self.world.get_body_by_name(task_object)
         return [
             body
             for body in [root]
@@ -568,32 +611,37 @@ class PickPlaceCounterToStove:
         ).bounding_box()
 
     @property
-    def pan_floor(self) -> VolumetricBoundingBox:
+    def receptacle(self) -> Body:
         """
-        The floor of the pan, in the kitchen's frame: the widest of the convex pieces
-        RoboCasa builds the pan's collision geometry from.
+        The root of what the object is to be set into: the task's container.
         """
-        [pan_geometry] = [
-            body
-            for body in self.world.compute_descendent_child_kinematic_structure_entities(
-                self.world.get_body_by_name(TaskObject.PAN)
-            )
-            if body.collision.shapes
+        return self.world.get_body_by_name(TaskObject.CONTAINER)
+
+    @property
+    def receptacle_floor(self) -> VolumetricBoundingBox:
+        """
+        The floor of the receptacle, in the kitchen's frame: the widest of the convex
+        pieces RoboCasa builds its collision geometry from.
+        """
+        pieces = [
+            piece
+            for body in self.colliding_bodies_below(self.receptacle)
+            for piece in body.collision.as_bounding_box_collection_in_frame(
+                self.world.root
+            ).bounding_boxes
         ]
-        pieces = pan_geometry.collision.as_bounding_box_collection_in_frame(
-            self.world.root
-        ).bounding_boxes
         return max(pieces, key=lambda piece: piece.width * piece.depth)
 
-    def standing_pose(self, target: np.ndarray) -> Pose:
+    def standing_pose(self, target: np.ndarray, reach: float) -> Pose:
         """
         :param target: Where in the kitchen the hand has to reach.
-        :return: Where the HSR stands to reach it: facing the counter, :attr:`reach`
-            back from ``target``, with its hand rather than its base in line with it.
+        :param reach: How far in front of the base's centre ``target`` is to be.
+        :return: Where the HSR stands to reach it: facing the counter, ``reach`` back
+            from ``target``, with its hand rather than its base in line with it.
         """
         return Pose.from_xyz_rpy(
             x=float(target[0]) + hand_offset(self.world),
-            y=float(target[1]) - self.reach,
+            y=float(target[1]) - reach,
             yaw=math.pi / 2,
             reference_frame=self.world.root,
         )
@@ -621,39 +669,60 @@ class PickPlaceCounterToStove:
             stands where it does to reach the food.
         """
         world_T_base = self.standing_pose(
-            self.extent(self.food.root).center.to_np()[:3]
+            self.extent(self.food.root).center.to_np()[:3], self.reach
         ).to_np()
         world_T_pre_grasp = self.world.transform(pre_grasp, self.world.root).to_np()
         return HSRBArmPlane().joint_positions_for(
             np.linalg.inv(world_T_base) @ world_T_pre_grasp
         )
 
-    def goal(self) -> Pose:
+    @property
+    def release_point(self) -> np.ndarray:
         """
-        :return: Where the food is to be put: its centre above the middle of the pan's
-            floor, turned as it is now.
+        Where the centre of the food is to be let go: its underside
+        :attr:`release_clearance` above :attr:`release_height`, over the part of the
+        receptacle's floor nearest the HSR but at least :attr:`floor_margin` in from
+        its edge.
         """
-        food = self.food.root
-        floor = self.pan_floor
-        food_extent = self.extent(food)
+        floor = self.receptacle_floor
+        food_extent = self.extent(self.food.root)
         floor_center = floor.center.to_np()[:3]
-        target = np.array(
+        return np.array(
             [
                 floor_center[0],
-                floor_center[1],
-                floor.max_z + food_extent.height / 2 + self.release_clearance,
+                min(
+                    floor_center[1],
+                    floor.min_y + food_extent.width / 2 + self.floor_margin,
+                ),
+                self.release_height + food_extent.height / 2 + self.release_clearance,
             ]
         )
+
+    def goal(self) -> Pose:
+        """
+        :return: Where the food is to be put: its centre at :attr:`release_point`,
+            turned as it is now.
+        """
+        food = self.food.root
         world_T_food = food.global_pose.to_np()
-        world_T_food[:3, 3] += target - food_extent.center.to_np()[:3]
+        world_T_food[:3, 3] += self.release_point - self.extent(food).center.to_np()[:3]
         return HomogeneousTransformationMatrix(
             world_T_food, reference_frame=self.world.root
         ).pose
 
+    @property
+    def release_height(self) -> float:
+        """
+        The height above which the food is let go: the top of the receptacle's floor.
+        """
+        return self.receptacle_floor.max_z
+
     def build_plan(self, context: Context) -> Plan:
         """
-        Stand in line with the food, move the arm to where the pick up starts its
-        approach, pick the food up, drive to the pan holding it, and put it in.
+        Stand in line with the food, raise the arm and move it to where the pick up
+        starts its approach, pick the food up, drive to the receptacle holding it, and
+        put it in. The arm is raised first, so that the hand leaves its park pose above
+        the counter rather than in front of the cabinets below it.
 
         :param context: The context the actions are built in.
         :return: The plan.
@@ -662,7 +731,7 @@ class PickPlaceCounterToStove:
         arm = robot.all_arms[0]
         goal = self.goal()
         grasp = self.grasp()
-        pick_up = PickUpAction(grasp, arm)
+        pick_up = PickUpAction(grasp, arm, position_threshold=self.tool_frame_tolerance)
         pre_grasp = pick_up.grasp_pose_sequence(
             grasp.world_T_grasp, arm.end_effector, grasp
         ).pre_grasp
@@ -671,15 +740,25 @@ class PickPlaceCounterToStove:
             [
                 ParkArmsAction(robot.all_arms),
                 NavigateAction(
-                    self.standing_pose(self.extent(self.food.root).center.to_np()[:3])
+                    self.standing_pose(
+                        self.extent(self.food.root).center.to_np()[:3], self.reach
+                    )
+                ),
+                MoveJointsMotion(
+                    names=[HSRBJoint.ARM_LIFT],
+                    positions=[pre_grasp_joints[HSRBJoint.ARM_LIFT]],
                 ),
                 MoveJointsMotion(
                     names=list(pre_grasp_joints),
                     positions=list(pre_grasp_joints.values()),
                 ),
                 pick_up,
-                NavigateAction(self.standing_pose(self.pan_floor.center.to_np()[:3])),
-                PlaceAction(self.food, goal),
+                NavigateAction(
+                    self.standing_pose(self.release_point, self.placing_reach)
+                ),
+                PlaceAction(
+                    self.food, goal, position_threshold=self.tool_frame_tolerance
+                ),
                 ParkArmsAction(robot.all_arms),
             ],
             context=context,
@@ -688,9 +767,15 @@ class PickPlaceCounterToStove:
     def run(self) -> None:
         """
         Let the scene settle, then build the plan from where the food came to rest and
-        carry it out against MuJoCo physics, the food held by friction alone.
+        carry it out against MuJoCo physics, the food held by friction alone. The
+        food's contacts resolve the twisting and rolling friction RoboCasa gives it, so
+        it neither turns in the hand nor rolls on without end.
         """
         context = Context(world=self.world, robot=self.robot, evaluate_conditions=False)
+        for shape in self.food.root.collision.shapes:
+            shape.get_simulator_property_of_type(MujocoGeom).contact_dimensionality = (
+                ContactDimensionality.SLIDING_TWISTING_AND_ROLLING
+            )
         simulation = MujocoSim(
             world=self.world,
             headless=self.headless,
@@ -710,6 +795,112 @@ class PickPlaceCounterToStove:
             simulation.step_simulation(SETTLING_DURATION)
         finally:
             simulation.stop_simulation()
+
+
+# %% the tasks
+
+
+@dataclass
+class PickPlaceCounterToStove(HSRPickPlaceTask):
+    """
+    Pick the food from the plate on the counter and place it in the pan on the stove.
+    """
+
+    seed: int = 2
+    """
+    The seed RoboCasa samples the task with: the plate on the counter left of the
+    stove, near its edge.
+    """
+
+    food_category: str | None = "cheese"
+    """
+    A block of cheese, which lies still on its plate.
+    """
+
+
+@dataclass
+class PickPlaceStoveToCounter(HSRPickPlaceTask):
+    """
+    Pick the food from the pan on the stove and place it on the plate or in the bowl
+    on the counter.
+    """
+
+    seed: int = 12
+    """
+    The seed RoboCasa samples the task with: the pan on the front left burner.
+    """
+
+    food_category: str | None = "lemon"
+    """
+    A lemon, small enough for the HSR's hand.
+    """
+
+
+@dataclass
+class PickPlaceCounterToSink(HSRPickPlaceTask):
+    """
+    Pick the object from the counter and place it in the sink.
+    """
+
+    seed: int = 0
+    """
+    The seed RoboCasa samples the task with: the object near the counter's edge right
+    of the sink.
+    """
+
+    food_category: str | None = "canned_food"
+    """
+    A can, standing upright.
+    """
+
+    @property
+    def receptacle(self) -> Body:
+        return self.world.get_semantic_annotations_by_type(Sink)[0].root
+
+    @property
+    def release_height(self) -> float:
+        """
+        The sink's rim, level with the counter: the object is dropped into the sink
+        from just above it.
+        """
+        return self.counter_height
+
+
+@dataclass
+class PickPlaceSinkToCounter(HSRPickPlaceTask):
+    """
+    Pick the food from the sink and place it on the plate on the counter.
+    """
+
+    seed: int = 11
+    """
+    The seed RoboCasa samples the task with.
+    """
+
+    food_category: str | None = "yogurt"
+    """
+    A pot of yogurt.
+    """
+
+    grasp_pitch: float = math.pi / 3
+    """
+    Steeper than on the counter, so that the wrist passes above the sink's front wall
+    while the hand reaches down to the food below the rim.
+    """
+
+    placing_reach: float = 0.52
+    """
+    Closer than when taking the food from the sink: held at :attr:`grasp_pitch`, the
+    food has to be lifted above the plate, and the arm reaches that high only up to
+    0.54 m in front of the base.
+    """
+
+    tool_frame_tolerance: float = 0.02
+    """
+    Reaching down into the sink, the arm comes within its collision buffer of the
+    counter's edge and the sink's rim 1.6 cm before the grasp, with the food already
+    between the fingers.
+    """
 
 
 if __name__ == "__main__":
