@@ -11,7 +11,7 @@ Run with (the ``experiments`` package must be importable)::
 
     python -m experiments.robocasa_task_execution.trials --robot TIAGO --episodes 10
     python -m experiments.robocasa_task_execution.trials --robot TIAGO --physics
-    python -m experiments.robocasa_task_execution.trials --record-first-success
+    python -m experiments.robocasa_task_execution.trials --record-first-pick-up
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import logging
 from dataclasses import dataclass, field
+from enum import IntEnum
 from pathlib import Path
 
 from semantic_digital_twin.adapters.robocasa_dataset.mujoco_compat import (
@@ -39,8 +40,32 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_RECORDING_PATH = Path.home() / "Downloads" / "robocasa_counter_to_sink.mp4"
 """
-Where the recording of the first completed episode is written.
+Where the recording of the first episode with a successful pick up is written.
 """
+
+# %% how far an episode got
+
+
+class TaskStage(IntEnum):
+    """
+    How far through the task an episode got, each stage including the ones before it.
+    """
+
+    NOTHING = 0
+    """
+    The robot found no way to pick the object up at all.
+    """
+
+    PICKED_UP = 1
+    """
+    The object left the counter and is held by the fingers.
+    """
+
+    PLACED = 2
+    """
+    The object lies in the sink and the robot has let go of it.
+    """
+
 
 # %% how one attempt ended
 
@@ -56,9 +81,14 @@ class Attempt:
     What RoboCasa asked for, in its own words.
     """
 
+    reached: TaskStage = TaskStage.NOTHING
+    """
+    The furthest stage the robot got to.
+    """
+
     outcome: CounterToSinkOutcome | None = None
     """
-    How the episode ended, or nothing if the robot never got that far.
+    RoboCasa's own judgement of the episode, or nothing if the robot never got that far.
     """
 
     gave_up_with: str | None = None
@@ -71,7 +101,7 @@ class Attempt:
         """
         :return: Whether the object ended up in the sink and was let go of.
         """
-        return self.outcome is not None and self.outcome.succeeded
+        return self.reached is TaskStage.PLACED
 
 
 # %% a run of attempts
@@ -113,35 +143,34 @@ class TaskTrials:
     What became of each episode attempted so far, in order.
     """
 
-    @property
-    def completed(self) -> int:
+    def reached(self, stage: TaskStage) -> int:
         """
-        :return: How many episodes the robot completed.
+        :param stage: The stage to count.
+        :return: How many episodes got at least that far.
         """
-        return sum(attempt.succeeded for attempt in self.attempts)
+        return sum(attempt.reached >= stage for attempt in self.attempts)
 
     def run(self, episodes: int) -> None:
         """
-        Attempt that many freshly sampled episodes, recording the first completed one if
-        a path was given.
+        Attempt that many freshly sampled episodes, recording the first one in which the
+        robot gets the object off the counter, if a path was given.
 
         :param episodes: How many episodes to attempt.
         """
         for number in range(1, episodes + 1):
-            attempt = self._attempt(
-                record=self.recording_path is not None and self.completed == 0
+            record = (
+                self.recording_path is not None
+                and self.reached(TaskStage.PICKED_UP) == 0
             )
+            attempt = self._attempt(record=record)
             self.attempts.append(attempt)
             logger.info(
-                "episode %d/%d: %s -- %s",
+                "episode %d/%d: %s -- reached %s%s",
                 number,
                 episodes,
                 attempt.instruction,
-                (
-                    "completed"
-                    if attempt.succeeded
-                    else (attempt.gave_up_with or "failed")
-                ),
+                attempt.reached.name,
+                f", stopped by {attempt.gave_up_with}" if attempt.gave_up_with else "",
             )
 
     def _attempt(self, record: bool) -> Attempt:
@@ -163,7 +192,26 @@ class TaskTrials:
             attempt.outcome = self._perform(episode, record)
         except Exception as failure:
             attempt.gave_up_with = f"{type(failure).__name__}: {failure}"
+        attempt.reached = self._stage_reached(episode, attempt.outcome)
         return attempt
+
+    @staticmethod
+    def _stage_reached(
+        episode: CounterToSinkEpisode, outcome: CounterToSinkOutcome | None
+    ) -> TaskStage:
+        """
+        Read how far the episode got off the world it left behind, so an episode that
+        stopped part way through still reports what the robot achieved.
+
+        :param episode: The episode that was attempted.
+        :param outcome: RoboCasa's judgement, where the episode reached one.
+        :return: The furthest stage reached.
+        """
+        if outcome is not None and outcome.succeeded:
+            return TaskStage.PLACED
+        if not episode.target_object_released:
+            return TaskStage.PICKED_UP
+        return TaskStage.NOTHING
 
     def _perform(
         self, episode: CounterToSinkEpisode, record: bool
@@ -216,20 +264,23 @@ def _parse_arguments() -> argparse.Namespace:
         help="Perform the episodes in MuJoCo physics instead of kinematically.",
     )
     parser.add_argument(
-        "--record-first-success",
+        "--record-first-pick-up",
         nargs="?",
         const=str(DEFAULT_RECORDING_PATH),
         default=None,
         metavar="PATH",
-        help=f"Record the first completed episode, by default to {DEFAULT_RECORDING_PATH}.",
+        help=(
+            "Record the first episode in which the object leaves the counter, "
+            f"by default to {DEFAULT_RECORDING_PATH}."
+        ),
     )
     return parser.parse_args()
 
 
 def main() -> None:
     """
-    Run the trials the command line asked for and report how many episodes were
-    completed.
+    Run the trials the command line asked for and report how far the robot got in
+    them.
     """
     logging.basicConfig(level=logging.INFO, force=True)
     arguments = _parse_arguments()
@@ -239,17 +290,20 @@ def main() -> None:
         in_physics=arguments.physics,
         recording_path=(
             None
-            if arguments.record_first_success is None
-            else Path(arguments.record_first_success)
+            if arguments.record_first_pick_up is None
+            else Path(arguments.record_first_pick_up)
         ),
     )
     trials.run(arguments.episodes)
-    logger.info(
-        "%s completed %d of %d episodes",
-        arguments.robot,
-        trials.completed,
-        len(trials.attempts),
-    )
+    attempted = len(trials.attempts)
+    for stage in (TaskStage.PICKED_UP, TaskStage.PLACED):
+        logger.info(
+            "%s reached %s in %d of %d episodes",
+            arguments.robot,
+            stage.name,
+            trials.reached(stage),
+            attempted,
+        )
 
 
 if __name__ == "__main__":
