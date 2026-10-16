@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pytest
 
@@ -5,11 +7,13 @@ from krrood.entity_query_language.factories import evaluate_condition
 
 from coraplex.plans.factories import sequential
 from coraplex.robot_plans.actions.core.container import CloseAction, OpenAction
+from coraplex.robot_plans.actions.core.pick_up import GraspingAction
 from coraplex.robot_plans.motions.gripper import (
     MoveGripperMotion,
     MoveToolCenterPointMotion,
 )
 from semantic_digital_twin.datastructures.definitions import GripperState
+from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Handle
 from semantic_digital_twin.spatial_types.spatial_types import Pose
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
@@ -48,6 +52,30 @@ def motions_of(action) -> list:
     :return: The designators of the plan the action builds, in execution order.
     """
     return [node.designator for node in action._action_plan.children]
+
+
+# %% taking hold of the handle
+
+
+@pytest.mark.parametrize("action_type", [OpenAction, CloseAction])
+def test_the_handle_is_taken_hold_of_by_the_grasp_the_action_is_given(
+    pr2_at_drawer, action_type
+):
+    """
+    A handle whose frame does not point the way a gripper can come in is taken hold of
+    by the grasp the action is given instead of at its origin.
+    """
+    world, robot, context, handle = pr2_at_drawer
+    grasp = GraspCandidate(
+        handle, Pose.from_xyz_rpy(roll=math.pi / 2, reference_frame=handle.root)
+    )
+    action = action_type(handle, left_or_only_arm(robot), grasp=grasp)
+    sequential([action], context)
+
+    [taking_hold] = [
+        motion for motion in motions_of(action) if isinstance(motion, GraspingAction)
+    ]
+    assert taking_hold.grasp is grasp
 
 
 # %% backing off the handle

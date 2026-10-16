@@ -59,6 +59,21 @@ class ContainerAction(ActionDescription, HasApproachesGraspPoses):
     The gap in meters between the handle and the gripper once it has let go.
     """
 
+    grasp: GraspCandidate | None = None
+    """
+    The grasp the handle is taken hold of by; ``None`` takes it at the handle's origin.
+    """
+
+    @property
+    def handle_grasp(self) -> GraspCandidate:
+        """
+        The grasp the handle is taken hold of by: :attr:`grasp`, or the one at the
+        handle's origin if none is given.
+        """
+        if self.grasp is not None:
+            return self.grasp
+        return GraspCandidate.from_body_origin(self.handle)
+
     @property
     @abstractmethod
     def _mechanism_motion(self) -> BaseMotion:
@@ -81,7 +96,7 @@ class ContainerAction(ActionDescription, HasApproachesGraspPoses):
 
     @property
     def _action_plan(self) -> PlanNode:
-        handle_grasp = GraspCandidate.from_body_origin(self.handle)
+        handle_grasp = self.handle_grasp
         return sequential(
             [
                 GraspingAction(
