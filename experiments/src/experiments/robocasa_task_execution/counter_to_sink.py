@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum, StrEnum
@@ -56,7 +57,10 @@ from coraplex.execution_environment import (
 )
 from coraplex.plans.plan_node import PlanNode
 from coraplex.plans.factories import sequential
+from contextlib import nullcontext
+
 from experiments.robocasa_task_execution.exceptions import NoClearStandingPose
+from experiments.scene_recording import SceneRecorder, SceneRecording, ViewerCamera
 from coraplex.robot_plans.actions.composite.transporting import MoveAndPickUpAction
 from coraplex.robot_plans.actions.core.robot_body import (
     MoveTorsoAction,
@@ -81,10 +85,15 @@ from semantic_digital_twin.datastructures.definitions import (
 from semantic_digital_twin.grasping.grasp_candidates import HasGraspCandidates
 from semantic_digital_twin.reasoning.robot_predicates import is_body_gripped
 from semantic_digital_twin.robots.pr2 import PR2
+from semantic_digital_twin.robots.robot_part_mixins import HasTwoFingers
 from semantic_digital_twin.robots.robot_parts import AbstractRobot, Arm
 from semantic_digital_twin.robots.tiago import TiagoMujoco
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Floor
 from semantic_digital_twin.specifications.robots import RobotSpecification
+from semantic_digital_twin.world_description.contact import (
+    ContactFriction,
+    ContactParameters,
+)
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
     Point3,
@@ -97,6 +106,11 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_RECORDING_PATH = Path.home() / "Downloads" / "robocasa_counter_to_sink.mp4"
+"""
+Where a recording is written when ``--record`` is given no path of its own.
+"""
 
 
 # %% names RoboCasa gives
@@ -399,6 +413,7 @@ class CounterToSinkEpisode:
             pressing in; MuJoCo's ``impratio``.
         :return: The started simulation; stop it when done.
         """
+        self.let_the_fingers_hold_the_target_object()
         simulation = MujocoSim(
             world=self.task.world,
             headless=True,
@@ -410,12 +425,45 @@ class CounterToSinkEpisode:
         simulation.start_stepped_simulation()
         return simulation
 
+    def camera_on_the_task(self, distance: float = 3.0) -> ViewerCamera:
+        """
+        :param distance: How far the camera stands from the object, in metres.
+        :return: A camera orbiting the object the task is about, so the recording shows
+            the counter, the sink and the robot between them.
+        """
+        position = self.target_object.root.global_transform.to_np()[:3, 3].ravel()
+        return ViewerCamera(
+            look_at=(float(position[0]), float(position[1]), float(position[2])),
+            distance=distance,
+            azimuth=135.0,
+            elevation=-25.0,
+        )
+
+    def let_the_fingers_hold_the_target_object(self) -> None:
+        """
+        Give the target object and the fingertips contacts that resist being rolled.
+
+        A contact that resolves sliding alone carries the object's weight but leaves it
+        free to turn between the two pads under that weight, so it arrives in the basin
+        on its side. The sliding friction stays the default a shape gets, since that is
+        what carries the weight.
+        """
+        held = [self.target_object.root]
+        for arm in self.robot.all_arms:
+            if not isinstance(arm.end_effector, HasTwoFingers):
+                continue
+            held.extend(arm.end_effector.fingertips.both)
+        ContactParameters.create_for_grasped_object(
+            sliding_friction=ContactFriction().sliding
+        ).apply_to(held)
+
     def perform_in_physics(
         self,
         simulation: MujocoSim,
         sampling_seed: int = 42,
         collision_avoidance: bool = True,
         settling_time: timedelta = timedelta(seconds=2),
+        recording: SceneRecording | None = None,
     ) -> CounterToSinkOutcome:
         """
         Have the robot carry the target object into the sink in a physical simulation,
@@ -429,14 +477,25 @@ class CounterToSinkEpisode:
             and with itself while moving.
         :param settling_time: How long the physics runs on after the plan, for the
             object to come to rest.
+        :param recording: Where to write a video of the episode, or nothing to run
+            without recording one.
         :return: How the episode ended.
         """
-        with PhysicallySimulatedRobot(
+        recorder = (
+            nullcontext()
+            if recording is None
+            else SceneRecorder(
+                simulation=simulation,
+                camera=self.camera_on_the_task(),
+                recording=recording,
+            )
+        )
+        with recorder, PhysicallySimulatedRobot(
             simulation=simulation, collision_avoidance=collision_avoidance
         ):
             self.pick_up_plan(sampling_seed).perform()
             self.placing_into_the_sink().plan().perform()
-        simulation.step_simulation(settling_time)
+            simulation.step_simulation(settling_time)
         return self.outcome()
 
     def let_the_target_object_fall(self, settling_time: float = 2.0) -> None:
@@ -538,6 +597,17 @@ def _parse_arguments() -> argparse.Namespace:
         help="Perform the episode in MuJoCo physics instead of kinematically.",
     )
     parser.add_argument(
+        "--record",
+        nargs="?",
+        const=str(DEFAULT_RECORDING_PATH),
+        default=None,
+        metavar="PATH",
+        help=(
+            "Write a video of a physical episode, by default to "
+            f"{DEFAULT_RECORDING_PATH}."
+        ),
+    )
+    parser.add_argument(
         "--robot",
         default=KitchenRobot.PR2.name,
         choices=[robot.name for robot in KitchenRobot],
@@ -572,10 +642,18 @@ def main() -> None:
         return
     simulation = episode.start_physical_simulation()
     outcome = episode.perform_in_physics(
-        simulation, collision_avoidance=arguments.collision_avoidance
+        simulation,
+        collision_avoidance=arguments.collision_avoidance,
+        recording=(
+            None
+            if arguments.record is None
+            else SceneRecording(path=Path(arguments.record))
+        ),
     )
     simulation.stop_simulation()
     logger.info("Outcome: %s, succeeded: %s", outcome, outcome.succeeded)
+    if arguments.record is not None:
+        logger.info("Wrote a video to %s", arguments.record)
 
 
 if __name__ == "__main__":
