@@ -11,6 +11,7 @@ from datetime import timedelta
 import trimesh
 import PIL.ImageFile
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
 from types import NoneType
@@ -19,6 +20,7 @@ from typing_extensions import (
     List,
     Any,
     ClassVar,
+    Iterable,
     Iterator,
     Type,
     Optional,
@@ -3279,9 +3281,37 @@ class MujocoSynchronizer(MultiSimSynchronizer):
 
     _last_sync_time: float = field(init=False, default=0.0, repr=False)
 
+    connections_left_to_the_physics: set[ActiveConnection1DOF] = field(
+        init=False, default_factory=set
+    )
+    """
+    The connections whose positions the world and the simulation each keep for
+    themselves, see :meth:`leave_to_the_physics`.
+    """
+
     def __post_init__(self):
         super().__post_init__()
         self.simulator.read_data_from_simulator = self._sim_to_world
+
+    @contextmanager
+    def leave_to_the_physics(
+        self, connections: Iterable[ActiveConnection1DOF]
+    ) -> Iterator[None]:
+        """
+        Within the context, the world and the simulation each keep their own positions
+        of ``connections``: the world's are not written into the simulation, so that
+        only the physics moves them there, and the simulation's are not read back. On
+        leaving, the world takes the positions the physics has moved them to.
+
+        :param connections: The connections to leave to the physics.
+        """
+        left = set(connections) - self.connections_left_to_the_physics
+        self.connections_left_to_the_physics |= left
+        try:
+            yield
+        finally:
+            self.connections_left_to_the_physics -= left
+            self._pull_from_simulation()
 
     def _resolve_qpos_address(self, connection: Connection) -> Optional[int]:
         """
@@ -3380,6 +3410,8 @@ class MujocoSynchronizer(MultiSimSynchronizer):
                         # not overwrite.
                         if connection.raw_dof.id in actuator_name_by_dof_id:
                             continue
+                        if connection in self.connections_left_to_the_physics:
+                            continue
                         self._read_1dof_from_qpos(connection, joint_backed.qpos_address)
                         changed = True
                     case _:
@@ -3424,6 +3456,8 @@ class MujocoSynchronizer(MultiSimSynchronizer):
                         # An actuated joint is commanded by
                         # :meth:`_command_actuators` instead.
                         if connection.raw_dof.id in actuator_name_by_dof_id:
+                            continue
+                        if connection in self.connections_left_to_the_physics:
                             continue
                         self._write_1dof_to_qpos(
                             connection,
@@ -3568,7 +3602,13 @@ class MujocoSynchronizer(MultiSimSynchronizer):
         if now - self._last_sync_time < 1.0 / self.sync_rate_hz:
             return
         self._last_sync_time = now
+        self._pull_from_simulation()
 
+    def _pull_from_simulation(self) -> None:
+        """
+        Copy ``_mj_data.qpos`` back into ``world.state`` and notify the world, without
+        echoing the change back into the simulation.
+        """
         with self._world._world_lock:
             self._state_callback.pause()
             try:
