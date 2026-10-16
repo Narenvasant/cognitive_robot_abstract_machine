@@ -1,5 +1,3 @@
-import copy
-
 import pytest
 
 pytest.importorskip("robocasa", reason="robocasa is not installed")
@@ -184,13 +182,11 @@ def test_load_task_with_a_seed_places_the_same_objects_every_time(robocasa_loade
     ]
 
 
-def test_load_task_builds_the_kitchen_a_layout_configuration_describes(
-    robocasa_loader,
-):
+def test_load_task_applies_the_fixture_updates_it_is_given(robocasa_loader):
     """
-    A layout given as its configuration rather than by its id builds the kitchen that
-    configuration describes: with every counter lowered, the plate the task sets on a
-    counter stands at the lowered height.
+    Updates to the fixtures of a layout change the kitchen RoboCasa composes: with
+    every counter lowered, the plate the task sets on a counter stands at the lowered
+    height.
     """
     import yaml
     from robocasa.models.scenes.scene_registry import (
@@ -201,21 +197,25 @@ def test_load_task_builds_the_kitchen_a_layout_configuration_describes(
 
     with open(get_layout_path(LayoutType.LAYOUT001)) as layout_file:
         layout = yaml.safe_load(layout_file)
-    counters = [
-        fixture
+    lowered_counters = {
+        fixture["name"]: {
+            "size": [*fixture["size"][:2], LOWERED_COUNTER_HEIGHT],
+            **(
+                {"pos": [*fixture["pos"][:2], LOWERED_COUNTER_HEIGHT / 2]}
+                if "pos" in fixture
+                else {}
+            ),
+        }
         for fixture in layout["main_group"]["bottom_row"]
         if fixture["type"] == "counter"
-    ]
-    for counter in counters:
-        counter["size"][2] = LOWERED_COUNTER_HEIGHT
-        if "pos" in counter:
-            counter["pos"][2] = LOWERED_COUNTER_HEIGHT / 2
+    }
 
     task = robocasa_loader.load_task(
         "PickPlaceCounterToStove",
-        layout_id=layout,
+        layout_id=LayoutType.LAYOUT001,
         style_id=StyleType.STYLE001,
         seed=1,
+        fixture_updates=lowered_counters,
     )
 
     [plate] = [
@@ -229,32 +229,34 @@ def test_load_task_builds_the_kitchen_a_layout_configuration_describes(
     assert plate_extent.min_z == pytest.approx(LOWERED_COUNTER_HEIGHT, abs=0.01)
 
 
-def test_load_task_leaves_the_layout_configuration_it_is_given_unchanged(
-    robocasa_loader,
-):
+def test_load_task_passes_its_task_parameters_to_the_task(robocasa_loader):
     """
-    RoboCasa edits the layout it composes a kitchen from; the loader keeps the caller's
-    configuration as it was, so it builds the same kitchen again.
+    A task told which object category to sample from takes its object from that
+    category.
     """
-    import yaml
-    from robocasa.models.scenes.scene_registry import (
-        LayoutType,
-        StyleType,
-        get_layout_path,
-    )
+    from robocasa.models.scenes.scene_registry import LayoutType, StyleType
 
-    with open(get_layout_path(LayoutType.LAYOUT001)) as layout_file:
-        layout = yaml.safe_load(layout_file)
-    as_given = copy.deepcopy(layout)
-
-    robocasa_loader.load_task(
-        "PickPlaceCounterToStove",
-        layout_id=layout,
+    task = robocasa_loader.load_task(
+        "PickPlaceSinkToCounter",
+        layout_id=LayoutType.LAYOUT001,
         style_id=StyleType.STYLE001,
-        seed=1,
+        seed=11,
+        task_parameters={"obj_groups": PINNED_CATEGORY},
     )
 
-    assert layout == as_given
+    [food_annotation] = [
+        annotation
+        for annotation in task.world.semantic_annotations
+        if isinstance(annotation, NaturalLanguageWithTypeDescription)
+        and annotation.root.name.name == "obj_main"
+    ]
+    assert food_annotation.type_description == PINNED_CATEGORY
+
+
+PINNED_CATEGORY = "yogurt"
+"""
+The object category a test pins a task's object to.
+"""
 
 
 LOWERED_COUNTER_HEIGHT = 0.75

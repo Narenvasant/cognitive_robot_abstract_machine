@@ -321,9 +321,11 @@ class RoboCasaDatasetLoader:
     def load_task(
         self,
         task_name: str,
-        layout_id: LayoutType | dict[str, Any],
+        layout_id: LayoutType,
         style_id: StyleType,
         seed: int | None = None,
+        fixture_updates: dict[str, dict[str, Any]] | None = None,
+        task_parameters: dict[str, Any] | None = None,
     ) -> RoboCasaTask:
         """
         Compose a RoboCasa task scene and return it bound to its parsed World.
@@ -335,25 +337,31 @@ class RoboCasaDatasetLoader:
 
         :param task_name: The name of a registered RoboCasa kitchen task environment (for example
             ``"TurnOnMicrowave"``).
-        :param layout_id: The kitchen layout: a member of
-            ``robocasa.models.scenes.scene_registry.LayoutType``, or the layout itself
-            as RoboCasa's layout files describe it.
+        :param layout_id: A member of ``robocasa.models.scenes.scene_registry.LayoutType``.
         :param style_id: A member of ``robocasa.models.scenes.scene_registry.StyleType``.
         :param seed: The seed RoboCasa samples the task's objects and their placement
             with; ``None`` samples a different scene on every load.
+        :param fixture_updates: Changes to the layout's fixtures, by fixture name: the
+            entries of each replace those the layout file gives that fixture.
+        :param task_parameters: Arguments of the RoboCasa task itself, by name, for
+            example the object categories it samples from.
         :return: The task bound to the world it is defined over.
         :raises RoboCasaTaskNotFoundError: if ``task_name`` is not a registered RoboCasa kitchen
             task.
         """
-        environment = self.build_task_environment(task_name, layout_id, style_id, seed)
+        environment = self.build_task_environment(
+            task_name, layout_id, style_id, seed, fixture_updates, task_parameters
+        )
         return self.load_task_from_environment(environment)
 
     def build_task_environment(
         self,
         task_name: str,
-        layout_id: LayoutType | dict[str, Any],
+        layout_id: LayoutType,
         style_id: StyleType,
         seed: int | None = None,
+        fixture_updates: dict[str, dict[str, Any]] | None = None,
+        task_parameters: dict[str, Any] | None = None,
     ) -> Any:
         """
         Build and reset the RoboCasa/robosuite environment a task's scene is composed
@@ -368,12 +376,14 @@ class RoboCasaDatasetLoader:
 
         :param task_name: The name of a registered RoboCasa kitchen task environment
             (for example ``"TurnOnMicrowave"``).
-        :param layout_id: The kitchen layout: a member of
-            ``robocasa.models.scenes.scene_registry.LayoutType``, or the layout itself
-            as RoboCasa's layout files describe it.
+        :param layout_id: A member of ``robocasa.models.scenes.scene_registry.LayoutType``.
         :param style_id: A member of ``robocasa.models.scenes.scene_registry.StyleType``.
         :param seed: The seed RoboCasa samples the task's objects and their placement
             with; ``None`` samples a different scene on every build.
+        :param fixture_updates: Changes to the layout's fixtures, by fixture name: the
+            entries of each replace those the layout file gives that fixture.
+        :param task_parameters: Arguments of the RoboCasa task itself, by name, for
+            example the object categories it samples from.
         :return: The reset environment.
         :raises RoboCasaTaskNotFoundError: if ``task_name`` is not a registered RoboCasa kitchen
             task.
@@ -384,22 +394,16 @@ class RoboCasaDatasetLoader:
         environment = robosuite.make(
             env_name=task_name,
             robots=self.scene_composition_robot,
-            # RoboCasa edits the layout it composes a kitchen from.
-            layout_ids=(
-                copy.deepcopy(layout_id)
-                if isinstance(layout_id, dict)
-                else int(layout_id)
-            ),
+            layout_ids=int(layout_id),
             style_ids=int(style_id),
+            update_fxtr_cfg_dict=fixture_updates,
             has_renderer=False,
             has_offscreen_renderer=False,
-            # RoboCasa's default viewer looks its camera up by layout id, which a
-            # layout given as a dict does not have.
-            renderer="mujoco",
             use_camera_obs=False,
             control_freq=20,
             ignore_done=True,
             seed=seed,
+            **(task_parameters or {}),
         )
         environment.reset()
         return environment
