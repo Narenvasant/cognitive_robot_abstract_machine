@@ -147,9 +147,9 @@ def test_the_drive_joints_are_named_after_the_robot_and_the_axis_they_move(
     builder.build_world(world=pr2._world, file_path=str(tmp_path / "scene.xml"))
 
     assert [joint.name for joint in _drive_joints(builder, pr2)] == [
-        "pr2_omni_drive_x",
-        "pr2_omni_drive_y",
-        "pr2_omni_drive_yaw",
+        "pr2_drive_x",
+        "pr2_drive_y",
+        "pr2_drive_yaw",
     ]
 
 

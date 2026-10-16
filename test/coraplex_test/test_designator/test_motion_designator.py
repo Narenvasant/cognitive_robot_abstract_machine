@@ -23,7 +23,11 @@ from giskardpy.motion_statechart.monitors.overwrite_state_monitors import SetOdo
 from coraplex.plans.factories import sequential, execute_single
 from coraplex.plans.plan_node import MotionNode, ActionNode
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
-from coraplex.robot_plans.actions.core.pick_up import GraspingAction, PickUpAction
+from coraplex.robot_plans.actions.core.pick_up import (
+    GraspingAction,
+    PickUpAction,
+    ReachAction,
+)
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import MoveTorsoAction
 from coraplex.robot_plans.motions.container import ClosingMotion, OpeningMotion
@@ -44,7 +48,9 @@ from giskardpy.motion_statechart.goals.collision_avoidance import (
 from giskardpy.motion_statechart.goals.templates import Parallel
 from giskardpy.motion_statechart.graph_node import Goal
 from giskardpy.motion_statechart.monitors.monitors import LocalMinimumReached
+from giskardpy.motion_statechart.goals.cartesian_goals import CartesianPoseStraight
 from giskardpy.motion_statechart.tasks.cartesian_tasks import (
+    CartesianPositionStraight,
     HoldPose,
     CartesianOrientation,
     CartesianPose,
@@ -1167,3 +1173,77 @@ def test_fingers_are_not_sent_to_a_width_where_nothing_pushes_back(
 
         with pytest.raises(FingerWidthNeedsPhysics):
             motion.motion_chart
+
+
+# %% straight-line approaches
+
+
+def test_a_straight_movement_holds_the_tool_center_point_to_the_line(
+    pr2_apartment_context,
+):
+    """
+    A grasp approach has the open fingers around the object already, so it is asked for
+    a straight movement: left to take whatever path the arm finds, the hand swings the
+    fingers sideways through what it is reaching for.
+    """
+    world, view, context = pr2_apartment_context
+    target = Pose(Point3.from_iterable([1, 1, 1]), reference_frame=world.root)
+
+    motion = MoveToolCenterPointMotion(
+        target,
+        left_or_only_arm(context.robot),
+        movement_type=MovementType.STRAIGHT_CARTESIAN,
+    )
+    execute_single(motion, context=context)
+
+    task = _motion_task(motion.motion_chart, view)
+    assert isinstance(task, CartesianPoseStraight)
+    assert (
+        task.translation_threshold
+        == context.motion_tolerances.default_tcp_position_threshold
+    )
+
+
+def test_a_straight_movement_that_states_no_heading_leaves_the_tool_free_to_turn(
+    pr2_apartment_context,
+):
+    """
+    A straight movement that states only where the tool center point ends up holds it to
+    the line without holding the tool's own heading.
+    """
+    world, view, context = pr2_apartment_context
+    target = Pose(Point3.from_iterable([1, 1, 1]), reference_frame=world.root)
+
+    motion = MoveToolCenterPointMotion(
+        target,
+        left_or_only_arm(context.robot),
+        movement_type=MovementType.STRAIGHT_TRANSLATION,
+    )
+    execute_single(motion, context=context)
+
+    task = _motion_task(motion.motion_chart, view)
+    assert isinstance(task, CartesianPositionStraight)
+    assert task.threshold == context.motion_tolerances.default_tcp_position_threshold
+
+
+def test_a_reach_comes_onto_its_grasp_in_a_straight_line(pr2_apartment_context):
+    """
+    The last motion of a reach is the one with the fingers around the object, so that is
+    the one held to a straight line.
+    """
+    world, view, context = pr2_apartment_context
+    milk = world.get_semantic_annotations_by_type(Milk)[0]
+
+    reach = ReachAction(
+        grasp=milk.grasp_candidates()[0], arm=left_or_only_arm(context.robot)
+    )
+    execute_single(reach, context=context)
+
+    approaches = [
+        node.designator
+        for node in reach.action_plan.descendants
+        if isinstance(node, MotionNode)
+        and isinstance(node.designator, MoveToolCenterPointMotion)
+    ]
+    assert approaches[-1].movement_type is MovementType.STRAIGHT_CARTESIAN
+    assert approaches[0].movement_type is not MovementType.STRAIGHT_CARTESIAN

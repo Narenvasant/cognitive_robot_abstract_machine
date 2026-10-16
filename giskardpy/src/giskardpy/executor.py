@@ -23,7 +23,7 @@ from giskardpy.qp.exceptions import EmptyProblemException
 from giskardpy.qp.qp_controller import QPController
 from giskardpy.qp.qp_controller_config import QPControllerConfig
 from krrood.symbolic_math.symbolic_math import FloatVariable
-from semantic_digital_twin.world_description.connections import OmniDrive
+from semantic_digital_twin.world_description.connections import WheeledDrive
 from semantic_digital_twin.world_description.world_entity import PositionServo
 from semantic_digital_twin.world_description.world_state_trajectory_plotter import (
     WorldStateTrajectoryPlotter,
@@ -204,14 +204,14 @@ class SteppedSimulationPacer(Pacer):
     def _servoed_joint_names(self) -> list[str]:
         """
         :return: The name of the simulated joint each position servo moves: the joint
-            of the drive axis for a degree of freedom of an omnidirectional drive, and
-            the joint named after the degree of freedom otherwise.
+            of the drive axis for a degree of freedom of a wheeled drive, and the joint
+            named after the degree of freedom otherwise.
         """
         world = self.simulation.world
         drive_joint_names = {
             degree_of_freedom.id: joint_name
             for connection in world.connections
-            if isinstance(connection, OmniDrive)
+            if isinstance(connection, WheeledDrive)
             for degree_of_freedom, joint_name in connection.single_axis_joint_names.items()
         }
         return [
