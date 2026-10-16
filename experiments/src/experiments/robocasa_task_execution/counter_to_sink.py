@@ -32,7 +32,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum, StrEnum
 
@@ -202,6 +202,17 @@ class CounterToSinkEpisode:
     The robot performing the task.
     """
 
+    resting_height: float = field(init=False, default=0.0)
+    """
+    How high the target object stood on the counter before anything touched it.
+    """
+
+    minimum_lift: float = field(default=0.05, kw_only=True)
+    """
+    How far the object has to rise above :attr:`resting_height`, in metres, before it
+    counts as picked up rather than nudged.
+    """
+
     @classmethod
     def compose(
         cls,
@@ -233,7 +244,29 @@ class CounterToSinkEpisode:
         ).spawn(task.world)
         episode = cls(environment=environment, task=task, robot=spawned)
         episode.stand_clear_of_the_kitchen()
+        episode.resting_height = episode.target_object_height
         return episode
+
+    @property
+    def target_object_height(self) -> float:
+        """
+        :return: How high the target object stands right now, in metres.
+        """
+        return float(self.target_object.root.global_transform.to_np()[2, 3])
+
+    @property
+    def target_object_picked_up(self) -> bool:
+        """
+        Whether the robot has the object off the counter.
+
+        Read from where the object is and what holds it, not from a plan running to its
+        end: a hand that closes beside an object finishes its plan just the same, having
+        only nudged it.
+
+        :return: True if the object rose clear of where it rested and is still held.
+        """
+        rose = self.target_object_height - self.resting_height
+        return rose >= self.minimum_lift and not self.target_object_released
 
     @property
     def carrying_arm(self) -> Arm:

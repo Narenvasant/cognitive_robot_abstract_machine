@@ -116,3 +116,38 @@ class NoFreeSpotInTheBasin(DataclassException):
 
     def suggest_correction(self) -> str:
         return "Clear the basin, or let go of the object higher above its floor."
+
+
+@dataclass
+class ObjectNotPickedUp(DataclassException):
+    """
+    Raised when a pick up ran to its end without the object leaving its support.
+
+    A hand that closes beside an object, or shuts on nothing, finishes its plan just the
+    same, so the object itself is what says whether it was picked up.
+    """
+
+    instruction: str
+    """
+    What RoboCasa asked for, in its own words.
+    """
+
+    rose: float
+    """
+    How far the object rose above where it rested, in metres.
+    """
+
+    needed: float
+    """
+    How far it had to rise to count as picked up, in metres.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The pick up finished but the object rose {self.rose * 100:.1f} cm, "
+            f"not the {self.needed * 100:.1f} cm that counts as off its support "
+            f"({self.instruction})."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Check where the hand closes relative to the object."

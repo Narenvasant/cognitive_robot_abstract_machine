@@ -29,6 +29,7 @@ from semantic_digital_twin.adapters.robocasa_dataset.mujoco_compat import (
 with robocasa_version_assertions_relaxed():
     from robocasa.models.scenes.scene_registry import LayoutType, StyleType
 
+from experiments.robocasa_task_execution.exceptions import ObjectNotPickedUp
 from experiments.robocasa_task_execution.counter_to_sink import (
     CounterToSinkEpisode,
     CounterToSinkOutcome,
@@ -256,6 +257,12 @@ class TaskTrials:
         :param attempt: The attempt to record progress in.
         """
         episode.perform_the_pick_up()
+        if not episode.target_object_picked_up:
+            raise ObjectNotPickedUp(
+                instruction=episode.task.instruction,
+                rose=episode.target_object_height - episode.resting_height,
+                needed=episode.minimum_lift,
+            )
         attempt.reached = TaskStage.PICKED_UP
         episode.perform_the_placing()
         attempt.reached = TaskStage.PLACED
