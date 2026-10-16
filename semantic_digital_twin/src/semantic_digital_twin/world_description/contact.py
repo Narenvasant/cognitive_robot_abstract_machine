@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from enum import IntEnum
 
 from typing_extensions import TYPE_CHECKING, Iterable, List, Optional
 
@@ -17,6 +18,39 @@ from semantic_digital_twin.mixin import UniqueSimulatorProperty
 
 if TYPE_CHECKING:
     from semantic_digital_twin.world_description.world_entity import Body
+
+
+class ContactResistance(IntEnum):
+    """
+    Which of a shape's friction coefficients a physics engine resolves a contact with.
+
+    A coefficient left out of the contact is still carried by the shape, but nothing in
+    the simulation ever feels it.
+    """
+
+    NORMAL_ONLY = 1
+    """
+    A frictionless contact, which resists only being pressed.
+    """
+
+    SLIDING = 3
+    """
+    Sliding along the surface, which is what an engine resolves by default.
+    """
+
+    SLIDING_AND_SPIN = 4
+    """
+    Sliding, and turning around the contact normal.
+    """
+
+    EVERY_DIRECTION = 6
+    """
+    Sliding, turning around the normal, and rolling around the surface.
+
+    What an object held between two pads needs: a contact that resists neither spin nor
+    roll leaves it free to turn out from between them under its own weight, however hard
+    the pads press.
+    """
 
 
 @dataclass
@@ -127,6 +161,11 @@ class ContactParameters(UniqueSimulatorProperty):
     Sliding, torsional and rolling friction.
     """
 
+    resistance: ContactResistance = ContactResistance.SLIDING
+    """
+    Which of those coefficients the contact resolves.
+    """
+
     stiffness: Optional[ContactStiffness] = None
     """
     How stiff and how damped the contacts are.
@@ -160,8 +199,9 @@ class ContactParameters(UniqueSimulatorProperty):
 
         The contacts are stiffer and harder than a physics engine's defaults, since a
         soft contact lets a pinched object sink into the fingers and slip back out as
-        the arm lifts. The torsional and rolling friction are raised above the defaults
-        to keep a held object from pivoting between the pads.
+        the arm lifts. The torsional and rolling friction are raised above the defaults,
+        and the contact resolves in every direction so that they are felt at all, which
+        is what keeps a held object from pivoting between the pads.
 
         :param sliding_friction: The sliding friction coefficient; ``0.3`` approximates
             painted wood or plastic.
@@ -181,6 +221,7 @@ class ContactParameters(UniqueSimulatorProperty):
                 torsional=torsional_friction,
                 rolling=rolling_friction,
             ),
+            resistance=ContactResistance.EVERY_DIRECTION,
             stiffness=ContactStiffness(time_constant=resolution_time_constant),
             impedance=ContactImpedance(
                 minimum=minimum_impedance, maximum=maximum_impedance
@@ -216,6 +257,7 @@ class ContactParameters(UniqueSimulatorProperty):
                     geometry.add_simulator_property(replace(self))
                     continue
                 existing.friction = self.friction
+                existing.resistance = self.resistance
                 if self.stiffness is not None:
                     existing.stiffness = self.stiffness
                 if self.impedance is not None:

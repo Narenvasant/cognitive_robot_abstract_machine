@@ -77,6 +77,31 @@ def test_a_spot_the_arm_cannot_reach_is_refused():
         demonstration.populate_scene(demonstration.build_simulated_world())
 
 
+# %% the step along the table
+
+
+def test_the_carton_is_set_down_one_step_to_the_robot_s_left(populated_scene):
+    """
+    The robot faces the table along the world's x-axis, which puts its left along the
+    world's y-axis, and the step is taken along the table rather than across it.
+    """
+    layout = populated_scene[0].layout
+
+    assert layout.place_y > layout.pick_y
+    assert layout.place_x == layout.pick_x
+
+
+def test_the_arm_reaches_both_spots_from_where_the_robot_stands(populated_scene):
+    """
+    The base does not move while the carton is held, so one standing spot has to serve
+    the pick-up and the place.
+    """
+    layout = populated_scene[0].layout
+
+    for x, y in ((layout.pick_x, layout.pick_y), (layout.place_x, layout.place_y)):
+        assert layout.distance_from_the_robot(x, y) <= layout.maximum_reach
+
+
 # %% the grasp
 
 

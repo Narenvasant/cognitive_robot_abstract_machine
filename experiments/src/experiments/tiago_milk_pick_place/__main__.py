@@ -2,15 +2,22 @@
 Run the demo::
 
     python -m experiments.tiago_milk_pick_place [--kinematic] [--headless]
-                                               [--pyramidal-cone]
+                                               [--pyramidal-cone] [--record [PATH]]
 
-Tiago takes the milk carton from one spot on the apartment's dining table, drives a
-short way along it, and sets the carton down. The hand holds the carton by contact
+Tiago takes the milk carton from one spot on the apartment's dining table, carries it
+a short way along the table, and sets it down. The hand holds the carton by contact
 friction: nothing attaches it to the robot.
 
 ``--kinematic`` is a dry run without physics or a viewer, which checks in seconds that
 the robot reaches every pose the plan asks for. Only a physical run carries the carton:
 the grip of the fingers is what holds it.
+
+``--record`` writes a video of the plan, which plays back at the speed the robot moves
+rather than the speed the physics is computed at.
+
+Both the viewer and the recording draw through the graphics driver, so on a machine
+whose driver does not match its kernel module, run with
+``__GLX_VENDOR_LIBRARY_NAME=mesa`` to draw on the processor instead.
 """
 
 from __future__ import annotations
@@ -18,6 +25,9 @@ from __future__ import annotations
 import argparse
 import functools
 from dataclasses import dataclass
+from pathlib import Path
+
+from typing_extensions import Optional
 
 print = functools.partial(print, flush=True)
 
@@ -26,8 +36,14 @@ from coraplex.execution_environment import ExecutionEnvironment
 from experiments.tiago_milk_pick_place.physics import (
     PhysicalMujocoRun,
     PhysicsSettings,
+    SceneRecording,
 )
 from experiments.tiago_milk_pick_place.pick_place import MilkPickPlaceDemonstration
+
+DEFAULT_RECORDING_PATH = Path.home() / "Downloads" / "tiago_milk_pick_place.mp4"
+"""
+Where a recording is written when ``--record`` is given no path of its own.
+"""
 
 # %% what one run was asked for
 
@@ -54,6 +70,20 @@ class DemoArguments:
     it recommends for grasping.
     """
 
+    recording_path: Optional[Path]
+    """
+    Where to write a video of the plan, or nothing to run without recording one.
+    """
+
+    @property
+    def recording(self) -> Optional[SceneRecording]:
+        """
+        :return: What to record, or nothing if no recording was asked for.
+        """
+        if self.recording_path is None:
+            return None
+        return SceneRecording(path=self.recording_path)
+
     @classmethod
     def from_command_line(cls) -> DemoArguments:
         """
@@ -62,8 +92,8 @@ class DemoArguments:
         parser = argparse.ArgumentParser(
             prog="python -m experiments.tiago_milk_pick_place",
             description=(
-                "Tiago moves a milk carton along the apartment's dining table, holding "
-                "it by friction in MuJoCo."
+                "Tiago moves a milk carton along the apartment's dining table, "
+                "holding it by friction in MuJoCo."
             ),
         )
         parser.add_argument(
@@ -79,11 +109,20 @@ class DemoArguments:
             action="store_true",
             help="use MuJoCo's default friction cone instead of the elliptic one",
         )
+        parser.add_argument(
+            "--record",
+            nargs="?",
+            const=str(DEFAULT_RECORDING_PATH),
+            default=None,
+            metavar="PATH",
+            help=f"write a video of the plan, by default to {DEFAULT_RECORDING_PATH}",
+        )
         parsed = parser.parse_args()
         return cls(
             kinematic=parsed.kinematic,
             headless=parsed.headless,
             pyramidal_cone=parsed.pyramidal_cone,
+            recording_path=None if parsed.record is None else Path(parsed.record),
         )
 
 
@@ -151,6 +190,7 @@ def run_physically(arguments: DemoArguments) -> None:
         carton_body_name=demonstration.carton.name,
         settings=settings,
         headless=arguments.headless,
+        recording=arguments.recording,
     )
     run.open()
     print("at rest:")
@@ -168,6 +208,11 @@ def run_physically(arguments: DemoArguments) -> None:
         "its parent is still "
         f"{demonstration.carton.annotation.root.parent_connection.parent.name.name}"
     )
+    if run.recorder is not None:
+        print(
+            f"wrote {run.recorder.frames_written} frames to "
+            f"{arguments.recording_path}"
+        )
     run.keep_alive()
     run.close()
 

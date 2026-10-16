@@ -1,0 +1,12 @@
+<mujoco model="box on a plane">
+  <!-- The smallest scene a frame can be rendered from, for testing that a recording
+       reaches a playable file. -->
+  <worldbody>
+    <light pos="0 0 2"/>
+    <geom name="ground" type="plane" size="1 1 0.1"/>
+    <body name="box" pos="0 0 0.3">
+      <freejoint/>
+      <geom name="box" type="box" size="0.05 0.05 0.05"/>
+    </body>
+  </worldbody>
+</mujoco>
