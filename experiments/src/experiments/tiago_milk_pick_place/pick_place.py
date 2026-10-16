@@ -20,7 +20,11 @@ from coraplex.plans.plan_node import ActionLike, PlanNode
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.placing import PlaceAction
-from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
+from coraplex.robot_plans.actions.core.robot_body import (
+    MoveManipulatorAction,
+    MoveTorsoAction,
+    ParkArmsAction,
+)
 from experiments.tiago_milk_pick_place.exceptions import (
     NotOverTheTable,
     OutOfReach,
@@ -42,6 +46,7 @@ from semantic_digital_twin.spatial_types.spatial_types import (
     Pose,
 )
 from semantic_digital_twin.world import World
+from semantic_digital_twin.world_description.degree_of_freedom import DerivativeMap
 from semantic_digital_twin.world_description.inertial_properties import (
     Inertial,
     InertiaTensor,
@@ -77,13 +82,15 @@ class MilkPickPlaceLayout:
     How far the measured top may differ from the expected one before the demo stops.
     """
 
-    standing_x: float = 4.25
+    standing_x: float = 4.22
     """
     Where the robot stands, west of the table, for both halves of the task.
 
-    Close enough that the carton sits where the arm already reaches: the right hand
-    rests about 0.37 m in front of the base and 0.49 m to its right, so a target put
-    there needs no reach across the robot's own body.
+    Close enough that the carton sits where the arm already reaches, and far enough that
+    the robot is beside the table rather than in it. Three centimetres nearer and the
+    base is inside the table's own shape, which leaves the idle arm hanging over the
+    edge with millimetres to spare -- fine until the robot is asked to keep clear of
+    what it is not holding.
     """
 
     standing_y_at_pick: float = 4.10
@@ -218,6 +225,22 @@ class MilkPickPlaceLayout:
     carry_velocity: float = 0.1
     """
     How fast the hand travels while it holds the carton, in metres per second.
+    """
+
+    torso_play: float = 5e-4
+    """
+    How far the torso may still sink from the height it was set to, in metres.
+
+    Half a millimetre: as good as held, while leaving the joint a range rather than a
+    single point to be scaled within.
+    """
+
+    carry_distance: float = 0.45
+    """
+    How far in front of the base the carton is carried, in metres.
+
+    Far enough out that the arm is not folded against the robot's own body, close enough
+    that the arm is not reaching while the robot drives.
     """
 
     arm_side: str = "right"
@@ -425,6 +448,30 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         :return: Whether the carton already stands in it.
         """
         return world.is_kinematic_structure_entity_in_world_by_name("milk.stl")
+
+    def hold_the_torso_at_its_height(self, robot: AbstractRobot) -> None:
+        """
+        Let the torso stay at the height it was set to, by forbidding the joint the
+        range it would otherwise sink through.
+
+        The arms hang off the torso, so lowering it is a way for a motion solver to buy
+        an arm room, or to buy the robot clearance from the table. What sinks with it is
+        the idle arm, which the park posture leaves holding its hand a hand's breadth
+        above the table: lower the torso and that hand is inside it.
+
+        The joint's range is pinned rather than its speed, because a speed of nearly
+        zero is what the solver scales that joint by and divides by.
+
+        :param robot: The robot whose torso is held.
+        """
+        torso = robot.mobile_base.torso.active_connections[0]
+        height = float(torso.position)
+        torso.raw_dof._overwrite_dof_limits(
+            new_lower_limits=DerivativeMap(
+                height - self.layout.torso_play, None, None, None
+            ),
+            new_upper_limits=DerivativeMap(height, None, None, None),
+        )
 
     def raise_the_torso(self, robot: AbstractRobot) -> None:
         """
@@ -637,7 +684,8 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         """
         :param arm: The arm that reaches for the carton.
         :return: The grasp that closes across a pair of the carton's flat faces, from
-            whichever of those directions the robot faces most squarely.
+            whichever of those directions the robot faces most squarely, taken at the
+            height the carton's own weight hangs from.
         """
         candidates = self.carton.annotation.grasp_candidates()
         narrowest = min(candidate.width_along_closing_axis for candidate in candidates)
@@ -647,7 +695,30 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
             if candidate.width_along_closing_axis
             <= narrowest + self.layout.face_width_tolerance
         ]
-        return max(across_the_faces, key=self._alignment_with_the_approach)
+        return self._at_the_carton_s_weight(
+            max(across_the_faces, key=self._alignment_with_the_approach)
+        )
+
+    def _at_the_carton_s_weight(self, candidate: GraspCandidate) -> GraspCandidate:
+        """
+        Raise a grasp to the height the carton's weight hangs from, which is halfway up
+        it.
+
+        The carton offers its grasps at the origin of its own body, which sits below
+        that. Held there, the weight above the fingers outweighs the weight below and
+        turns the carton in the grip -- slowly, a degree or so for every second it is
+        carried, until it is being held at an angle and set down on its side.
+
+        :param candidate: The grasp to raise.
+        :return: The same grasp, at the carton's mid-height.
+        """
+        above_the_grasp = (
+            self.carton.height / 2.0 - self.carton.grasp_height_above_bottom
+        )
+        raised = candidate.grasp_pose.homogeneous_matrix @ (
+            HomogeneousTransformationMatrix.from_xyz_rpy(z=above_the_grasp)
+        )
+        return GraspCandidate(candidate.graspable, raised.pose)
 
     def _alignment_with_the_approach(self, candidate: GraspCandidate) -> float:
         """
@@ -664,6 +735,34 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         )
         towards = towards / np.linalg.norm(towards)
         return float(candidate.world_T_grasp.to_np()[:2, 0] @ towards)
+
+    def carry_pose(self, robot: AbstractRobot, arm: Arm) -> Pose:
+        """
+        Where the hand holds the carton while the robot drives: straight out in front of
+        the shoulder that carries it, at the height the lift left it.
+
+        Stated in the base's own frame, so it travels with the robot. An arm that
+        instead keeps the carton where it picked it up is left reaching over the table
+        while the robot drives away, and what gives is the robot's distance from the
+        table.
+
+        :param robot: The robot that carries it.
+        :param arm: The arm that carries it, whose shoulder the carton is held in front
+            of.
+        :return: The pose the hand holds, in the base's frame.
+        """
+        shoulder = arm.active_connections[0].child
+        base_T_shoulder = robot.root._world.compute_forward_kinematics_np(
+            robot.root, shoulder
+        )
+        return Pose.from_xyz_rpy(
+            self.layout.carry_distance,
+            float(base_T_shoulder[1, 3]),
+            self.table_top
+            + self.carton.grasp_height_above_bottom
+            + self.layout.lift_height,
+            reference_frame=robot.root,
+        )
 
     def approach_clearance(self, arm: Arm) -> float:
         """
@@ -685,10 +784,15 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         The torso is already at the height the arm works from, set when the scene was
         populated, so the plan does not command it.
 
-        The plan ends with the place, which already withdraws the hand from the carton
-        it has just set down. Parking the arms after that sweeps the hand back across
-        the table and knocks the carton over, because nothing in this demo keeps the arm
-        away from what it is not touching on purpose.
+        The carton is carried by the grip alone: nothing hangs it off the hand, so the
+        fingers either hold it or drop it.
+
+        The arm brings the carton in front of the base before the robot drives, and the
+        robot stands up to its full height to do the driving. An arm left reaching over
+        the table makes the robot keep its distance from the table instead. And reaching
+        for the carton crouches the torso far enough that the idle arm's hand hangs below
+        the table top, where the turn the base makes to drive would sweep it straight
+        through the table.
 
         :param context: The context to plan in.
         :return: The plan.
@@ -700,7 +804,7 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         The steps of the plan, in order.
 
         :param context: The context to plan in.
-        :return: Park, pick up, drive, place.
+        :return: Park, pick up, bring the carton in, stand up, drive, place, park.
         """
         world = context.world
         robot = context.robot
@@ -723,9 +827,16 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
                 grasp_closing_velocity=self.layout.closing_velocity,
                 grasp_stall_minimum_time=self.layout.stall_minimum_time,
                 tolerate_grasp_stall=True,
+                held_by_contact_alone=True,
                 position_threshold=self.layout.arrival_tolerance,
                 orientation_threshold=self.layout.heading_tolerance,
             ),
+            MoveManipulatorAction(
+                target_pose=self.carry_pose(robot, arm),
+                end_effector=arm.end_effector,
+                allow_gripper_collision=True,
+            ),
+            MoveTorsoAction(TorsoState.HIGH),
             NavigateAction(
                 self.layout.standing_pose(world, self.layout.standing_y_at_place)
             ),
@@ -743,9 +854,11 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
                 placing_linear_velocity=self.layout.approach_velocity,
                 release_opening_velocity=self.layout.closing_velocity,
                 retract_linear_velocity=self.layout.approach_velocity,
+                rises_off_the_object=True,
                 position_threshold=self.layout.arrival_tolerance,
                 orientation_threshold=self.layout.heading_tolerance,
             ),
+            ParkArmsAction(robot.all_arms),
         ]
 
     def build_plan_prefix(self, context: Context, step_count: int) -> PlanNode:

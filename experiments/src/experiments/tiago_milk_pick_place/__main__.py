@@ -8,8 +8,9 @@ Tiago takes the milk carton from one spot on the apartment's dining table, drive
 short way along it, and sets the carton down. The hand holds the carton by contact
 friction: nothing attaches it to the robot.
 
-``--kinematic`` is a dry run without physics or a viewer, which checks that the robot
-reaches both spots in seconds.
+``--kinematic`` is a dry run without physics or a viewer, which checks in seconds that
+the robot reaches every pose the plan asks for. Only a physical run carries the carton:
+the grip of the fingers is what holds it.
 """
 
 from __future__ import annotations
@@ -107,7 +108,11 @@ def report_the_scene(demonstration: MilkPickPlaceDemonstration) -> None:
 def run_kinematically() -> None:
     """
     Perform the plan in a kinematically simulated world, which checks that the robot
-    reaches both spots before any physics is involved.
+    reaches every pose the plan asks for before any physics is involved.
+
+    It says nothing about the carry: the carton is held by the grip of the fingers, and
+    without physics there is no grip, so it stays on the table while the hand goes
+    through the motions.
     """
     demonstration = MilkPickPlaceDemonstration(
         execution_type=ExecutionType.KINEMATICALLY_SIMULATED
@@ -119,12 +124,7 @@ def run_kinematically() -> None:
     plan = demonstration.build_plan(context)
     with ExecutionEnvironment(ExecutionType.KINEMATICALLY_SIMULATED):
         plan.perform()
-    carton = demonstration.carton.annotation.root.global_transform.to_np()
-    print(
-        f"the carton ended at ({carton[0, 3]:.3f}, {carton[1, 3]:.3f}, "
-        f"{carton[2, 3]:.3f}), asked for "
-        f"({demonstration.layout.place_x:.3f}, {demonstration.layout.place_y:.3f})"
-    )
+    print("the robot reached every pose of the plan")
 
 
 def run_physically(arguments: DemoArguments) -> None:

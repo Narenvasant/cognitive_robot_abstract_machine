@@ -286,9 +286,14 @@ class PhysicalMujocoRun:
                 lines.append(f"  {body.name.name} touches {sorted(contacts)}")
         return "\n".join(lines) if lines else "  the robot touches nothing"
 
-    def perform(self, plan: object, collision_avoidance: bool = False) -> None:
+    def perform(self, plan: object, collision_avoidance: bool = True) -> None:
         """
         Perform a plan against the physics.
+
+        The arm keeps away from what it is not meant to touch, so that reaching over a
+        laid table and parking afterwards do not sweep it clear. The motions that are
+        meant to touch the carton say so themselves, which lets the hand and whatever it
+        holds through.
 
         :param plan: The plan to perform.
         :param collision_avoidance: Whether Giskard avoids collisions while doing it.

@@ -63,6 +63,16 @@ class PlaceAction(
     Pose in the world at which the object should be placed.
     """
 
+    rises_off_the_object: bool = field(default=False, kw_only=True)
+    """
+    Whether the hand lifts straight off what it has set down, instead of withdrawing the
+    way the grasp came in.
+
+    Withdrawing the way the grasp came in draws the open fingers back past the object at
+    the height they were holding it, and a free-standing object falls over in exactly
+    that direction. Lifting off instead presses it, if at all, into what it stands on.
+    """
+
     grasp_release_threshold: float = field(default=0.1, kw_only=True)
     """
     Maximum fraction of sampled rays between the gripper's fingers that may still hit
@@ -74,7 +84,8 @@ class PlaceAction(
     def _action_plan(self) -> PlanNode:
         arm, grasp = self._holding_arm_and_grasp()
         # A release runs the grasp backwards: down from above the target, then out
-        # along the way the grasp was approached.
+        # along the way the grasp was approached, or straight back up where the object
+        # would not survive that (see rises_off_the_object).
         poses = self.grasp_pose_sequence(
             grasp.moved_to(self.target_location), arm.end_effector, grasp
         )
@@ -112,7 +123,7 @@ class PlaceAction(
                     body=self.object_designator.root, new_parent=self.world.root
                 ),
                 MoveToolCenterPointMotion(
-                    poses.pre_grasp,
+                    poses.retreat if self.rises_off_the_object else poses.pre_grasp,
                     arm,
                     movement_type=MovementType.STRAIGHT_CARTESIAN,
                     hold_gripper=GripperState.OPEN,
