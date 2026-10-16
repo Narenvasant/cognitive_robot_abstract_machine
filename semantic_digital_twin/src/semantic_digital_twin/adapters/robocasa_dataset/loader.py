@@ -118,6 +118,12 @@ class RoboCasaTask:
     for spawning the ``semantic_digital_twin``-owned robot.
     """
 
+    referenced_fixtures: dict[str, Body] = field(default_factory=dict)
+    """
+    The fixtures the task refers to, such as the drawer to open or the sink to place
+    into, as their bodies in :attr:`world`, by the name the task refers to them by.
+    """
+
 
 def _mjcf_document_from_element_copy(element: ET.Element) -> str:
     """
@@ -424,8 +430,12 @@ class RoboCasaDatasetLoader:
             environment.sim.model.get_xml(), object_world_poses
         )
 
-        world = _parse_robosuite_mjcf(MJCFParser.from_xml_string(stripped_document))
-        self._apply_joint_positions(world, environment)
+        document = ET.fromstring(stripped_document)
+        mirrored_joints = self._mirror_joints_opening_towards_negative(document)
+        world = _parse_robosuite_mjcf(
+            MJCFParser.from_xml_string(ET.tostring(document, encoding="unicode"))
+        )
+        self._apply_joint_positions(world, environment, mirrored_joints)
         self._apply_kitchen_appliance_semantics(world, environment.fixtures)
         manipulated_objects = self._apply_task_object_semantics(
             world, environment.object_cfgs, environment.objects
@@ -435,20 +445,64 @@ class RoboCasaDatasetLoader:
             world=world,
             instruction=episode_metadata["lang"],
             manipulated_objects=manipulated_objects,
+            referenced_fixtures=self._referenced_fixtures(world, environment),
             robot_base_pose=HomogeneousTransformationMatrix.from_xyz_rpy(
                 *episode_metadata["init_robot_base_pos"],
                 *episode_metadata["init_robot_base_ori"],
             ),
         )
 
+    def _referenced_fixtures(self, world: World, environment: Any) -> dict[str, Body]:
+        """
+        :param world: The world the task scene was parsed into.
+        :param environment: The reset environment the scene was composed in.
+        :return: The bodies of the fixtures the task refers to, by the name it refers
+            to them by.
+        """
+        bodies = {}
+        for reference, value in environment.fixture_refs.items():
+            fixture = value[0] if isinstance(value, tuple) else value
+            body = self._find_body(world, fixture.name)
+            if body is not None:
+                bodies[reference] = body
+        return bodies
+
     @staticmethod
-    def _apply_joint_positions(world: World, environment: Any) -> None:
+    def _mirror_joints_opening_towards_negative(document: ET.Element) -> set[str]:
+        """
+        Mirror, in place, every joint of an MJCF document whose range runs from a
+        negative position up to 0, such as that of a RoboCasa drawer, so that it opens
+        towards positive positions instead, as semantic_digital_twin's joints do.
+
+        :param document: The MJCF document of a task scene.
+        :return: The names of the mirrored joints.
+        """
+        mirrored = set()
+        for joint in document.iter("joint"):
+            joint_range = joint.get("range")
+            if joint_range is None:
+                continue
+            lower, upper = (float(value) for value in joint_range.split())
+            if not lower < upper == 0.0:
+                continue
+            axis = [float(value) for value in joint.get("axis", "0 0 1").split()]
+            joint.set("axis", " ".join(str(-value) for value in axis))
+            joint.set("range", f"0 {-lower}")
+            mirrored.add(joint.get("name"))
+        return mirrored
+
+    @staticmethod
+    def _apply_joint_positions(
+        world: World, environment: Any, mirrored_joints: set[str]
+    ) -> None:
         """
         Set every joint of ``world`` that the environment's simulation also has to the
         position the simulation holds it at, such as that of a drawer the task opened.
 
         :param world: The world the task scene was parsed into.
         :param environment: The reset environment the scene was composed in.
+        :param mirrored_joints: The names of the joints the world holds mirrored, see
+            :meth:`_mirror_joints_opening_towards_negative`.
         """
         model, data = environment.sim.model, environment.sim.data
         joint_ids = {model.joint_id2name(joint): joint for joint in range(model.njnt)}
@@ -458,7 +512,10 @@ class RoboCasaDatasetLoader:
             joint = joint_ids.get(connection.name.name)
             if joint is None:
                 continue
-            connection.position = float(data.qpos[model.jnt_qposadr[joint]])
+            position = float(data.qpos[model.jnt_qposadr[joint]])
+            connection.position = (
+                -position if connection.name.name in mirrored_joints else position
+            )
 
     @staticmethod
     def _available_task_names() -> List[str]:

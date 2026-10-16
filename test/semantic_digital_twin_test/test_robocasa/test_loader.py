@@ -253,31 +253,57 @@ def test_load_task_passes_its_task_parameters_to_the_task(robocasa_loader):
     assert food_annotation.type_description == PINNED_CATEGORY
 
 
-def test_load_task_keeps_the_joints_where_robocasa_set_them(robocasa_loader):
+def test_load_task_opens_a_drawer_towards_positive_positions(robocasa_loader):
     """
-    A drawer RoboCasa opens to set a task up stands open in the loaded world, as far
-    as RoboCasa opened it.
+    A RoboCasa drawer opens towards negative positions; in the loaded world it opens
+    towards positive ones, as semantic_digital_twin's drawers do, from closed at 0 to
+    RoboCasa's full travel, and stands as far open as RoboCasa set it.
     """
     from robocasa.models.scenes.scene_registry import LayoutType, StyleType
 
     environment = robocasa_loader.build_task_environment(
-        "PickPlaceCounterToDrawer",
+        "CloseDrawer",
         layout_id=LayoutType.LAYOUT001,
         style_id=StyleType.STYLE001,
         seed=0,
     )
     model, data = environment.sim.model, environment.sim.data
-    [drawer_joint] = [
-        model.joint_id2name(joint)
+    [joint] = [
+        joint
         for joint in range(model.njnt)
         if environment.drawer.name in (model.joint_id2name(joint) or "")
     ]
-    opened_to = float(data.qpos[model.jnt_qposadr[model.joint_name2id(drawer_joint)]])
+    robocasa_lower, robocasa_upper = model.jnt_range[joint]
+    robocasa_position = float(data.qpos[model.jnt_qposadr[joint]])
 
     task = robocasa_loader.load_task_from_environment(environment)
 
-    assert task.world.get_connection_by_name(drawer_joint).position == pytest.approx(
-        opened_to
+    connection = task.world.get_connection_by_name(model.joint_id2name(joint))
+    assert (
+        connection.dof.limits.lower.position,
+        connection.dof.limits.upper.position,
+    ) == pytest.approx((-robocasa_upper, -robocasa_lower))
+    assert connection.position == pytest.approx(-robocasa_position)
+
+
+def test_load_task_names_the_fixtures_the_task_refers_to(robocasa_loader):
+    """
+    The fixtures a task refers to, such as the drawer to open, are given by the name
+    the task refers to them by, as their bodies in the loaded world.
+    """
+    from robocasa.models.scenes.scene_registry import LayoutType, StyleType
+
+    environment = robocasa_loader.build_task_environment(
+        "OpenDrawer",
+        layout_id=LayoutType.LAYOUT001,
+        style_id=StyleType.STYLE001,
+        seed=0,
+    )
+
+    task = robocasa_loader.load_task_from_environment(environment)
+
+    assert task.referenced_fixtures["drawer"].name.name.startswith(
+        environment.drawer.name
     )
 
 
