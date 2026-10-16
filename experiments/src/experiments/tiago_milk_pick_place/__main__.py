@@ -4,8 +4,8 @@ Run the demo::
     python -m experiments.tiago_milk_pick_place [--kinematic] [--headless]
                                                [--pyramidal-cone] [--record [PATH]]
 
-Tiago takes the milk carton from one spot on the apartment's dining table, carries it
-a short way along the table, and sets it down. The hand holds the carton by contact
+Tiago takes the milk carton from one spot on the apartment's dining table, drives a
+step along it holding the carton, and sets it down. The hand holds the carton by contact
 friction: nothing attaches it to the robot.
 
 ``--kinematic`` is a dry run without physics or a viewer, which checks in seconds that

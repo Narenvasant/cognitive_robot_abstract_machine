@@ -1,6 +1,6 @@
 """
 The scene and the plan: Tiago takes the milk carton from one spot on the apartment's
-dining table, carries it a short way along the table, and sets it down.
+dining table, drives a short way along it, and sets the carton down.
 """
 
 from __future__ import annotations
@@ -17,9 +17,12 @@ from coraplex.datastructures.dataclasses import Context
 from coraplex.demonstrations import RobotDemonstration
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import ActionLike, PlanNode
+from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import (
+    MoveManipulatorAction,
+    MoveTorsoAction,
     ParkArmsAction,
 )
 from experiments.tiago_milk_pick_place.exceptions import (
@@ -94,9 +97,15 @@ class MilkPickPlaceLayout:
     what it is not holding.
     """
 
-    standing_y: float = 4.10
+    standing_y_at_pick: float = 4.10
     """
-    Where the robot stands along the table.
+    Where the robot stands along the table to reach the carton.
+    """
+
+    standing_y_at_place: float = 4.25
+    """
+    Where the robot stands along the table to set the carton down: fifteen centimetres
+    to its left of where it picked the carton up, which it drives to while holding it.
     """
 
     standing_yaw: float = 0.0
@@ -122,31 +131,26 @@ class MilkPickPlaceLayout:
 
     place_y: float = 3.85
     """
-    Where the carton is put down along the table: a step of fifteen centimetres to the
-    robot's left of where it started.
-
-    The arm carries it there and the base stays where it is. A base that stepped
-    sideways instead would be the expensive way to do it, because a differential drive
-    cannot: it shuffles back and forth to turn, dragging the carton through most of a
-    metre of arc while the hand holds it with the few newtons its model allows.
+    Where the carton is put down along the table: the same step to the robot's left that
+    the robot itself takes, so the arm holds the carton the same way at both ends.
     """
 
     drive_translation_velocity_limit: float = 0.1
     """
     How fast the base may travel, in metres per second.
 
-    The plan asks the base to go nowhere, but the arm's goals are stated in the world
-    and the base is free to help reach them, so it is held to a slow walk: the hand
-    holds the carton by friction alone, and every acceleration of the base is felt in
-    that grip.
+    A slow walk: the hand holds the carton by friction alone, so the robot drives no
+    faster than the grip can take being accelerated.
     """
 
     drive_rotation_velocity_limit: float = 0.1
     """
     How fast the base may turn, in radians per second.
 
-    Turning is what the grip feels most, because it swings the carton through the arc of
-    the outstretched arm.
+    Slower still, because turning is what the grip feels. The base only drives along the
+    way it faces, so moving to a spot beside it means turning towards that spot, driving
+    and turning back -- and each of those turns swings the carried carton through the
+    arc of the outstretched arm.
     """
 
     clearance_above_table: float = 0.003
@@ -235,6 +239,14 @@ class MilkPickPlaceLayout:
     single point to be scaled within.
     """
 
+    carry_distance: float = 0.45
+    """
+    How far in front of the base the carton is carried, in metres.
+
+    Far enough out that the arm is not folded against the robot's own body, close enough
+    that the arm is not reaching while the robot drives.
+    """
+
     arm_side: str = "right"
     """
     Which arm carries the carton.
@@ -295,13 +307,28 @@ class MilkPickPlaceLayout:
     How close to the target the carton has to come to rest, in metres.
     """
 
-    def distance_from_the_robot(self, x: float, y: float) -> float:
+    def standing_pose(self, world: World, y: float) -> Pose:
         """
+        :param world: The world the pose is expressed in.
+        :param y: Where along the table the robot stands, in metres.
+        :return: Where the robot stands, facing the table.
+        """
+        return Pose.from_xyz_rpy(
+            self.standing_x,
+            y,
+            0.0,
+            yaw=self.standing_yaw,
+            reference_frame=world.root,
+        )
+
+    def distance_from(self, standing_y: float, x: float, y: float) -> float:
+        """
+        :param standing_y: Where along the table the robot stands, in metres.
         :param x: A point's x coordinate in the world.
         :param y: A point's y coordinate in the world.
-        :return: How far the point lies from where the robot stands, horizontally.
+        :return: How far the point lies from the robot, horizontally.
         """
-        return float(math.hypot(x - self.standing_x, y - self.standing_y))
+        return float(math.hypot(x - self.standing_x, y - standing_y))
 
 
 # %% the scene
@@ -405,7 +432,7 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
                     semantic_annotation_type=self.used_robot,
                     odom_T_robot_start=HomogeneousTransformationMatrix.from_xyz_rpy(
                         self.layout.standing_x,
-                        self.layout.standing_y,
+                        self.layout.standing_y_at_pick,
                         0.0,
                         yaw=self.layout.standing_yaw,
                     ),
@@ -515,7 +542,8 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         Give the carton and the fingertips contacts that resist being rolled.
 
         A contact that resolves sliding alone holds the carton's weight but leaves it
-        free to turn between the two pads under that weight, and it arrives on its side.
+        free to turn between the two pads under that weight, and the turns the base
+        makes to drive are enough to lay it on its side by the time it arrives.
 
         The sliding friction stays the default a shape gets, rather than the lower one
         the grip is otherwise described with: the hand presses with the few newtons its
@@ -616,16 +644,26 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
 
     def _check_both_spots_are_within_reach(self) -> None:
         """
-        The robot stands in one spot and reaches both, so both have to be within the
-        arm's reach of it.
+        The robot drives between the two spots, so each has to be within the arm's reach
+        of the pose it is reached from.
 
         :raises OutOfReach: If one of them lies beyond it.
         """
-        for name, x, y in (
-            ("the carton", self.layout.pick_x, self.layout.pick_y),
-            ("the target", self.layout.place_x, self.layout.place_y),
+        for name, standing_y, x, y in (
+            (
+                "the carton",
+                self.layout.standing_y_at_pick,
+                self.layout.pick_x,
+                self.layout.pick_y,
+            ),
+            (
+                "the target",
+                self.layout.standing_y_at_place,
+                self.layout.place_x,
+                self.layout.place_y,
+            ),
         ):
-            distance = self.layout.distance_from_the_robot(x, y)
+            distance = self.layout.distance_from(standing_y, x, y)
             if distance > self.layout.maximum_reach:
                 raise OutOfReach(name, distance, self.layout.maximum_reach)
 
@@ -722,11 +760,39 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         towards = np.array(
             [
                 self.layout.pick_x - self.layout.standing_x,
-                self.layout.pick_y - self.layout.standing_y,
+                self.layout.pick_y - self.layout.standing_y_at_pick,
             ]
         )
         towards = towards / np.linalg.norm(towards)
         return float(candidate.world_T_grasp.to_np()[:2, 0] @ towards)
+
+    def carry_pose(self, robot: AbstractRobot, arm: Arm) -> Pose:
+        """
+        Where the hand holds the carton while the robot drives: straight out in front of
+        the shoulder that carries it, at the height the lift left it.
+
+        Stated in the base's own frame, so it travels with the robot. An arm that
+        instead keeps the carton where it picked it up is left reaching over the table
+        while the robot drives away, and what gives is the robot's distance from the
+        table.
+
+        :param robot: The robot that carries it.
+        :param arm: The arm that carries it, whose shoulder the carton is held in front
+            of.
+        :return: The pose the hand holds, in the base's frame.
+        """
+        shoulder = arm.active_connections[0].child
+        base_T_shoulder = robot.root._world.compute_forward_kinematics_np(
+            robot.root, shoulder
+        )
+        return Pose.from_xyz_rpy(
+            self.layout.carry_distance,
+            float(base_T_shoulder[1, 3]),
+            self.table_top
+            + self.carton.grasp_height_above_bottom
+            + self.layout.lift_height,
+            reference_frame=robot.root,
+        )
 
     def approach_clearance(self, arm: Arm) -> float:
         """
@@ -743,16 +809,20 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
 
     def build_plan(self, context: Context) -> PlanNode:
         """
-        Pick the carton up, carry it a step along the table and set it down.
+        Pick the carton up, drive along the table and set it down.
 
         The torso is already at the height the arm works from, set when the scene was
         populated, so the plan does not command it.
 
         The carton is carried by the grip alone: nothing hangs it off the hand, so the
-        fingers either hold it or drop it. The arm reaches both spots from where the
-        robot stands, which is what keeps the carton upright: a base that stepped
-        sideways would have to turn to do it, and the turn drags the carton far enough
-        through the pads to lean it over.
+        fingers either hold it or drop it.
+
+        The arm brings the carton in front of the base before the robot drives, and the
+        robot stands up to its full height to do the driving. An arm left reaching over
+        the table makes the robot keep its distance from the table instead. And reaching
+        for the carton crouches the torso far enough that the idle arm's hand hangs below
+        the table top, where the turn the base makes to drive would sweep it straight
+        through the table.
 
         :param context: The context to plan in.
         :return: The plan.
@@ -764,7 +834,7 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
         The steps of the plan, in order.
 
         :param context: The context to plan in.
-        :return: Park, pick up, place, park.
+        :return: Park, pick up, bring the carton in, stand up, drive, place, park.
         """
         world = context.world
         robot = context.robot
@@ -790,6 +860,15 @@ class MilkPickPlaceDemonstration(RobotDemonstration):
                 held_by_contact_alone=True,
                 position_threshold=self.layout.arrival_tolerance,
                 orientation_threshold=self.layout.heading_tolerance,
+            ),
+            MoveManipulatorAction(
+                target_pose=self.carry_pose(robot, arm),
+                end_effector=arm.end_effector,
+                allow_gripper_collision=True,
+            ),
+            MoveTorsoAction(TorsoState.HIGH),
+            NavigateAction(
+                self.layout.standing_pose(world, self.layout.standing_y_at_place)
             ),
             PlaceAction(
                 object_designator=self.carton.annotation,

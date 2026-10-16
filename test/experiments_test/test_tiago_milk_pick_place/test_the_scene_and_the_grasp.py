@@ -91,15 +91,16 @@ def test_the_carton_is_set_down_one_step_to_the_robot_s_left(populated_scene):
     assert layout.place_x == layout.pick_x
 
 
-def test_the_arm_reaches_both_spots_from_where_the_robot_stands(populated_scene):
+def test_the_robot_takes_the_same_step_the_carton_does(populated_scene):
     """
-    The base does not move while the carton is held, so one standing spot has to serve
-    the pick-up and the place.
+    The robot carries the carton there rather than reaching further with the arm, so the
+    hand holds it the same way at both ends of the step.
     """
     layout = populated_scene[0].layout
 
-    for x, y in ((layout.pick_x, layout.pick_y), (layout.place_x, layout.place_y)):
-        assert layout.distance_from_the_robot(x, y) <= layout.maximum_reach
+    assert layout.standing_y_at_place - layout.standing_y_at_pick == pytest.approx(
+        layout.place_y - layout.pick_y
+    )
 
 
 # %% the grasp
