@@ -360,7 +360,8 @@ class PlacingIntoTheBasin:
         :param world_T_base: Where the base of the robot stands.
         """
         world = self.context.world
-        self.robot.torso.get_joint_state_by_type(TorsoState.HIGH).apply_to(world)
+        torso = self.robot.mobile_base.torso
+        torso.get_joint_state_by_type(TorsoState.HIGH).apply_to(world)
         for arm in self.robot.all_arms:
             arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(world)
         self.robot.root.parent_connection.origin = world_T_base
