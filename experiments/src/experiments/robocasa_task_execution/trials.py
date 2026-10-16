@@ -34,7 +34,12 @@ from experiments.robocasa_task_execution.counter_to_sink import (
     CounterToSinkOutcome,
     KitchenRobot,
 )
-from experiments.scene_recording import SceneRecording
+from contextlib import nullcontext
+from datetime import timedelta
+
+from coraplex.execution_environment import PhysicallySimulatedRobot
+from semantic_digital_twin.adapters.multi_sim import MujocoSim
+from experiments.scene_recording import SceneRecorder, SceneRecording
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +143,11 @@ class TaskTrials:
     Where to record the first episode the robot completes, or nothing to record none.
     """
 
+    settling_time: timedelta = timedelta(seconds=2)
+    """
+    How long the physics runs on after a plan, for the object to come to rest.
+    """
+
     attempts: list[Attempt] = field(default_factory=list)
     """
     What became of each episode attempted so far, in order.
@@ -189,50 +199,66 @@ class TaskTrials:
         )
         attempt = Attempt(instruction=episode.task.instruction)
         try:
-            attempt.outcome = self._perform(episode, record)
+            self._perform(episode, attempt, record)
         except Exception as failure:
             attempt.gave_up_with = f"{type(failure).__name__}: {failure}"
-        attempt.reached = self._stage_reached(episode, attempt.outcome)
         return attempt
 
-    @staticmethod
-    def _stage_reached(
-        episode: CounterToSinkEpisode, outcome: CounterToSinkOutcome | None
-    ) -> TaskStage:
-        """
-        Read how far the episode got off the world it left behind, so an episode that
-        stopped part way through still reports what the robot achieved.
-
-        :param episode: The episode that was attempted.
-        :param outcome: RoboCasa's judgement, where the episode reached one.
-        :return: The furthest stage reached.
-        """
-        if outcome is not None and outcome.succeeded:
-            return TaskStage.PLACED
-        if not episode.target_object_released:
-            return TaskStage.PICKED_UP
-        return TaskStage.NOTHING
-
     def _perform(
-        self, episode: CounterToSinkEpisode, record: bool
-    ) -> CounterToSinkOutcome:
+        self, episode: CounterToSinkEpisode, attempt: Attempt, record: bool
+    ) -> None:
         """
+        Perform the episode stage by stage, marking each as it completes, so an attempt
+        stopped half way still says what the robot achieved.
+
         :param episode: The episode to perform.
+        :param attempt: The attempt to record progress in.
         :param record: Whether to write a video of it.
-        :return: How it ended.
         """
         if not self.in_physics:
-            return episode.perform()
+            with episode.kinematic_environment():
+                self._perform_the_stages(episode, attempt)
+            episode.let_the_target_object_fall()
+            attempt.outcome = episode.outcome()
+            return
         simulation = episode.start_physical_simulation()
         try:
-            return episode.perform_in_physics(
-                simulation,
-                recording=(
-                    SceneRecording(path=self.recording_path) if record else None
-                ),
-            )
+            with self._recorder_for(
+                episode, simulation, record
+            ), PhysicallySimulatedRobot(simulation=simulation):
+                self._perform_the_stages(episode, attempt)
+                simulation.step_simulation(self.settling_time)
+            attempt.outcome = episode.outcome()
         finally:
             simulation.stop_simulation()
+
+    def _recorder_for(
+        self, episode: CounterToSinkEpisode, simulation: MujocoSim, record: bool
+    ) -> object:
+        """
+        :param episode: The episode the camera is aimed at.
+        :param simulation: The running simulation the frames are taken from.
+        :param record: Whether to record at all.
+        :return: What writes the video, or a context that writes nothing.
+        """
+        if not record:
+            return nullcontext()
+        return SceneRecorder(
+            simulation=simulation,
+            camera=episode.camera_on_the_task(),
+            recording=SceneRecording(path=self.recording_path),
+        )
+
+    @staticmethod
+    def _perform_the_stages(episode: CounterToSinkEpisode, attempt: Attempt) -> None:
+        """
+        :param episode: The episode to perform, in an environment already open.
+        :param attempt: The attempt to record progress in.
+        """
+        episode.perform_the_pick_up()
+        attempt.reached = TaskStage.PICKED_UP
+        episode.perform_the_placing()
+        attempt.reached = TaskStage.PLACED
 
 
 # %% running the trials from the command line

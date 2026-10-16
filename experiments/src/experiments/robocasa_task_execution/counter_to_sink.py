@@ -386,14 +386,39 @@ class CounterToSinkEpisode:
             and with itself while moving.
         :return: How the episode ended.
         """
-        with ExecutionEnvironment(
-            ExecutionType.KINEMATICALLY_SIMULATED,
-            collision_avoidance=collision_avoidance,
-        ):
-            self.pick_up_plan(sampling_seed).perform()
-            self.placing_into_the_sink().plan().perform()
+        with self.kinematic_environment(collision_avoidance):
+            self.perform_the_pick_up(sampling_seed)
+            self.perform_the_placing()
         self.let_the_target_object_fall()
         return self.outcome()
+
+    def kinematic_environment(
+        self, collision_avoidance: bool = True
+    ) -> ExecutionEnvironment:
+        """
+        :param collision_avoidance: Whether the robot avoids colliding with the kitchen
+            and with itself while moving.
+        :return: The environment an episode is performed in without physics.
+        """
+        return ExecutionEnvironment(
+            ExecutionType.KINEMATICALLY_SIMULATED,
+            collision_avoidance=collision_avoidance,
+        )
+
+    def perform_the_pick_up(self, sampling_seed: int = 42) -> None:
+        """
+        Take the target object off the counter, in whatever environment is open.
+
+        :param sampling_seed: The seed the standing poses are sampled with.
+        """
+        self.pick_up_plan(sampling_seed).perform()
+
+    def perform_the_placing(self) -> None:
+        """
+        Lower the held object into the basin and let go of it, in whatever environment
+        is open.
+        """
+        self.placing_into_the_sink().plan().perform()
 
     def start_physical_simulation(
         self,
@@ -493,8 +518,8 @@ class CounterToSinkEpisode:
         with recorder, PhysicallySimulatedRobot(
             simulation=simulation, collision_avoidance=collision_avoidance
         ):
-            self.pick_up_plan(sampling_seed).perform()
-            self.placing_into_the_sink().plan().perform()
+            self.perform_the_pick_up(sampling_seed)
+            self.perform_the_placing()
             simulation.step_simulation(settling_time)
         return self.outcome()
 
