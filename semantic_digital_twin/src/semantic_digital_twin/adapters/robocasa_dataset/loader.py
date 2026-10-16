@@ -32,6 +32,7 @@ from semantic_digital_twin.semantic_annotations.mixins import (
     HasDoors,
     HasDrawers,
     HasHandle,
+    HasMovableJoint,
 )
 from semantic_digital_twin.semantic_annotations.natural_language import (
     NaturalLanguageWithTypeDescription,
@@ -431,6 +432,7 @@ class RoboCasaDatasetLoader:
         )
 
         document = ET.fromstring(stripped_document)
+        self._bake_inertials(document, environment.sim.model)
         mirrored_joints = self._mirror_joints_opening_towards_negative(document)
         world = _parse_robosuite_mjcf(
             MJCFParser.from_xml_string(ET.tostring(document, encoding="unicode"))
@@ -596,6 +598,37 @@ class RoboCasaDatasetLoader:
             body.set("quat", cls._format_vector(orientation))
 
         return ET.tostring(root, encoding="unicode")
+
+    @classmethod
+    def _bake_inertials(cls, document: ET.Element, model: Any) -> None:
+        """
+        Give every body of ``document`` that RoboCasa simulates with a mass the inertial
+        properties it is simulated with.
+
+        The document RoboCasa's simulation gives back does not say which of a body's
+        geoms RoboCasa weighs, so weighed from its geoms alone a drawer would also weigh
+        the region marking its inside.
+
+        :param document: The task's MJCF document, changed in place.
+        :param model: The model of RoboCasa's simulation of the task.
+        """
+        for body in document.find("worldbody").iter("body"):
+            name = body.get("name")
+            if name not in model.body_names:
+                continue
+            index = model.body_name2id(name)
+            if model.body_mass[index] <= 0.0:
+                continue
+            for inertial in body.findall("inertial"):
+                body.remove(inertial)
+            inertial = ET.Element(
+                "inertial",
+                pos=cls._format_vector(model.body_ipos[index]),
+                quat=cls._format_vector(model.body_iquat[index]),
+                mass=cls._format_vector([model.body_mass[index]]),
+                diaginertia=cls._format_vector(model.body_inertia[index]),
+            )
+            body.insert(0, inertial)
 
     @staticmethod
     def _format_vector(vector: Any) -> str:
@@ -828,6 +861,10 @@ class RoboCasaDatasetLoader:
             category
         ) or self.object_annotator.resolve(category)
 
+        if annotation_class is not None and issubclass(
+            annotation_class, HasMovableJoint
+        ):
+            body = self._moving_part_of(world, body)
         with world.modify_world():
             if annotation_class is not None:
                 annotation = annotation_class(root=body)
@@ -837,6 +874,28 @@ class RoboCasaDatasetLoader:
                 )
             world.add_semantic_annotation(annotation)
             self._attach_sub_part_annotations(world, annotation, body)
+
+    @staticmethod
+    def _moving_part_of(world: World, fixture_root: Body) -> Body:
+        """
+        :param world: The world the fixture belongs to.
+        :param fixture_root: The root body of a fixture, such as a drawer's housing.
+        :return: The fixture's part that moves, such as the drawer that slides out of
+            its housing: a body below ``fixture_root`` hanging from a joint of one
+            degree of freedom, or ``fixture_root`` itself if none does.
+        """
+        descendants = world.compute_descendent_child_kinematic_structure_entities(
+            fixture_root
+        )
+        return next(
+            (
+                body
+                for body in descendants
+                if isinstance(body, Body)
+                and isinstance(body.parent_connection, ActiveConnection1DOF)
+            ),
+            fixture_root,
+        )
 
     def _attach_sub_part_annotations(
         self, world: World, parent_annotation: SemanticAnnotation, parent_body: Body

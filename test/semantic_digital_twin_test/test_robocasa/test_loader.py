@@ -18,7 +18,11 @@ from semantic_digital_twin.adapters.robocasa_dataset.semantics import (
 from semantic_digital_twin.semantic_annotations.natural_language import (
     NaturalLanguageWithTypeDescription,
 )
-from semantic_digital_twin.semantic_annotations.semantic_annotations import Dishwasher
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    Dishwasher,
+    Drawer,
+)
+from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from semantic_digital_twin.world import World
 
 
@@ -305,6 +309,61 @@ def test_load_task_names_the_fixtures_the_task_refers_to(robocasa_loader):
     assert task.referenced_fixtures["drawer"].name.name.startswith(
         environment.drawer.name
     )
+
+
+def test_load_task_puts_a_drawer_on_its_rails_with_its_handle(robocasa_loader):
+    """
+    A RoboCasa drawer is annotated at the part that slides, and its handle moves with
+    it, rather than staying with the drawer's housing.
+    """
+    from robocasa.models.scenes.scene_registry import LayoutType, StyleType
+
+    task = robocasa_loader.load_task(
+        "OpenDrawer",
+        layout_id=LayoutType.LAYOUT001,
+        style_id=StyleType.STYLE001,
+        seed=0,
+    )
+    housing = task.referenced_fixtures["drawer"]
+    [drawer] = [
+        annotation
+        for annotation in task.world.get_semantic_annotations_by_type(Drawer)
+        if annotation.root
+        in task.world.compute_descendent_child_kinematic_structure_entities(housing)
+    ]
+
+    assert drawer.movable_joint is drawer.root.parent_connection
+    assert (
+        drawer.handle.root.get_first_parent_connection_of_type(ActiveConnection1DOF)
+        is drawer.movable_joint
+    )
+
+
+def test_load_task_weighs_a_body_as_robocasa_weighs_it(robocasa_loader):
+    """
+    A body is given the mass RoboCasa simulates it with, which counts only the geoms
+    RoboCasa weighs: a drawer weighs its panels, not the region marking its inside.
+    """
+    from robocasa.models.scenes.scene_registry import LayoutType, StyleType
+
+    environment = robocasa_loader.build_task_environment(
+        "OpenDrawer",
+        layout_id=LayoutType.LAYOUT001,
+        style_id=StyleType.STYLE001,
+        seed=0,
+    )
+    model = environment.sim.model
+    [joint] = [
+        joint
+        for joint in range(model.njnt)
+        if environment.drawer.name in (model.joint_id2name(joint) or "")
+    ]
+    drawer = model.jnt_bodyid[joint]
+
+    task = robocasa_loader.load_task_from_environment(environment)
+
+    inertial = task.world.get_body_by_name(model.body_id2name(drawer)).inertial
+    assert inertial.mass == pytest.approx(model.body_mass[drawer])
 
 
 PINNED_CATEGORY = "yogurt"
