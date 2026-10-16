@@ -1,21 +1,22 @@
 """
-A PR2 performs RoboCasa's counter to sink pick and place task with an underspecified
+A robot performs RoboCasa's counter to sink pick and place task with an underspecified
 coraplex plan.
 
 RoboCasa composes the kitchen, samples the object to move and says where its own robot
-starts. The PR2 is spawned there and given a pick up whose standing pose and grasp are
-left open; coraplex grounds them by trying candidates against a copy of the world. The
-PR2 then stands in front of the sink and lowers the object into the basin along a path a
+starts. The robot is spawned there and given a pick up whose standing pose and grasp are
+left open; coraplex grounds them by trying candidates against a copy of the world. It
+then stands in front of the sink and lowers the object into the basin along a path a
 graph of convex sets plans through the free space around the sink, and lets go of it
 just above the basin floor. Whether the task succeeded is decided by RoboCasa's own
 check.
 
-The episode is performed either kinematically or in MuJoCo physics, where the PR2's
+The episode is performed either kinematically or in MuJoCo physics, where the robot's
 servos and drive move it and its fingers hold the object by friction alone.
 
 Run with (the ``experiments`` package must be importable)::
 
     python -m experiments.robocasa_task_execution.counter_to_sink
+    python -m experiments.robocasa_task_execution.counter_to_sink --robot tiago
     python -m experiments.robocasa_task_execution.counter_to_sink --layout LAYOUT005
     python -m experiments.robocasa_task_execution.counter_to_sink --physics
     python -m experiments.robocasa_task_execution.counter_to_sink --no-collision-avoidance
@@ -32,7 +33,7 @@ import argparse
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
-from enum import StrEnum
+from enum import Enum, StrEnum
 
 import mujoco
 
@@ -70,7 +71,6 @@ from semantic_digital_twin.adapters.robocasa_dataset.loader import (
     RoboCasaDatasetLoader,
     RoboCasaTask,
 )
-from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.collision_checking.collision_rules import (
     AllowCollisionBetweenGroups,
 )
@@ -81,13 +81,15 @@ from semantic_digital_twin.datastructures.definitions import (
 from semantic_digital_twin.grasping.grasp_candidates import HasGraspCandidates
 from semantic_digital_twin.reasoning.robot_predicates import is_body_gripped
 from semantic_digital_twin.robots.pr2 import PR2
+from semantic_digital_twin.robots.robot_parts import AbstractRobot, Arm
+from semantic_digital_twin.robots.tiago import TiagoMujoco
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Floor
+from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
     Point3,
     Pose,
 )
-from semantic_digital_twin.world_description.connections import OmniDrive
 
 if TYPE_CHECKING:
     from robocasa.environments.kitchen.atomic.kitchen_pick_place import (
@@ -106,6 +108,18 @@ class RoboCasaTaskName(StrEnum):
     """
 
     PICK_PLACE_COUNTER_TO_SINK = "PickPlaceCounterToSink"
+
+
+class KitchenRobot(Enum):
+    """
+    The robots that can be sent into a RoboCasa kitchen to perform a task.
+
+    Each one reads its own description and declares its own drive, so spawning it into
+    the kitchen is the same call either way.
+    """
+
+    PR2 = PR2
+    TIAGO = TiagoMujoco
 
 
 class RoboCasaObjectName(StrEnum):
@@ -154,8 +168,8 @@ class CounterToSinkOutcome:
 @dataclass
 class CounterToSinkEpisode:
     """
-    One episode of RoboCasa's counter to sink task, with a PR2 standing where RoboCasa
-    starts its own robot.
+    One episode of RoboCasa's counter to sink task, with a robot standing where
+    RoboCasa starts its own one.
     """
 
     environment: PickPlaceCounterToSink
@@ -166,17 +180,21 @@ class CounterToSinkEpisode:
 
     task: RoboCasaTask
     """
-    The task, bound to the world the PR2 performs it in.
+    The task, bound to the world the robot performs it in.
     """
 
-    robot: PR2
+    robot: AbstractRobot
     """
     The robot performing the task.
     """
 
     @classmethod
     def compose(
-        cls, layout: LayoutType, style: StyleType, seed: int | None = None
+        cls,
+        layout: LayoutType,
+        style: StyleType,
+        seed: int | None = None,
+        robot: KitchenRobot = KitchenRobot.PR2,
     ) -> Self:
         """
         Compose a new episode, with the target object and distractors RoboCasa samples
@@ -186,7 +204,8 @@ class CounterToSinkEpisode:
         :param style: The visual style of the kitchen.
         :param seed: The seed RoboCasa samples the objects and their placements with;
             ``None`` samples a different episode every time.
-        :return: The episode, with the PR2 standing clear of the kitchen at or behind
+        :param robot: The robot to send into the kitchen.
+        :return: The episode, with the robot standing clear of the kitchen at or behind
             RoboCasa's start pose.
         """
         loader = RoboCasaDatasetLoader()
@@ -194,29 +213,31 @@ class CounterToSinkEpisode:
             RoboCasaTaskName.PICK_PLACE_COUNTER_TO_SINK, layout, style, seed=seed
         )
         task = loader.load_task_from_environment(environment)
-        world = task.world
-        pr2_world = URDFParser.from_file(PR2.get_ros_file_path()).parse()
-        with world.modify_world():
-            drive = OmniDrive.create_with_dofs(
-                parent=world.root, child=pr2_world.root, world=world
-            )
-            world.merge_world(pr2_world, drive)
-            drive.has_hardware_interface = True
-        drive.origin = task.robot_base_pose
-        episode = cls(environment=environment, task=task, robot=PR2.from_world(world))
+        spawned = RobotSpecification(
+            semantic_annotation_type=robot.value,
+            odom_T_robot_start=task.robot_base_pose,
+        ).spawn(task.world)
+        episode = cls(environment=environment, task=task, robot=spawned)
         episode.stand_clear_of_the_kitchen()
         return episode
+
+    @property
+    def carrying_arm(self) -> Arm:
+        """
+        :return: The arm that picks the target object up and lowers it into the basin.
+        """
+        return self.robot.mobile_base.torso.right_arm
 
     def stand_clear_of_the_kitchen(
         self, step: float = 0.05, maximum_distance: float = 1.0
     ) -> None:
         """
-        Park the arms of the PR2 and step it back from RoboCasa's start pose until it
+        Park the arms of the robot and step it back from RoboCasa's start pose until it
         collides with nothing, while letting its base rest on the floor.
 
-        :param step: How far the PR2 steps back at a time.
-        :param maximum_distance: How far behind the start pose the PR2 stands at most.
-        :raises NoClearStandingPose: If the PR2 collides wherever it stands up to
+        :param step: How far the robot steps back at a time.
+        :param maximum_distance: How far behind the start pose the robot stands at most.
+        :raises NoClearStandingPose: If the robot collides wherever it stands up to
             ``maximum_distance`` behind the start pose.
         """
         world = self.task.world
@@ -315,7 +336,7 @@ class CounterToSinkEpisode:
         context = Context(self.task.world, self.robot, sampling_seed=sampling_seed)
         arms = self.robot.all_arms
         pick_up = MoveAndPickUpAction.from_graspable_by_closest_grasps(
-            graspable=self.target_object, arm=self.robot.right_arm, context=context
+            graspable=self.target_object, arm=self.carrying_arm, context=context
         )
         return sequential(
             [
@@ -335,7 +356,7 @@ class CounterToSinkEpisode:
         return PlacingIntoTheBasin(
             basin=SinkBasin.first_of(self.environment.sink),
             held_object=self.target_object.root,
-            arm=self.robot.right_arm,
+            arm=self.carrying_arm,
             context=Context(self.task.world, self.robot),
         )
 
@@ -343,11 +364,11 @@ class CounterToSinkEpisode:
         self, sampling_seed: int = 42, collision_avoidance: bool = True
     ) -> CounterToSinkOutcome:
         """
-        Have the PR2 carry the target object into the sink kinematically, and let
+        Have the robot carry the target object into the sink kinematically, and let
         RoboCasa's physics settle it there.
 
         :param sampling_seed: The seed the standing poses are sampled with.
-        :param collision_avoidance: Whether the PR2 avoids colliding with the kitchen
+        :param collision_avoidance: Whether the robot avoids colliding with the kitchen
             and with itself while moving.
         :return: How the episode ended.
         """
@@ -397,14 +418,14 @@ class CounterToSinkEpisode:
         settling_time: timedelta = timedelta(seconds=2),
     ) -> CounterToSinkOutcome:
         """
-        Have the PR2 carry the target object into the sink in a physical simulation,
+        Have the robot carry the target object into the sink in a physical simulation,
         where its fingers hold the object by friction alone and the object drops onto
         the basin floor once they let go.
 
         :param simulation: The started simulation of the episode's world, see
             :meth:`start_physical_simulation`.
         :param sampling_seed: The seed the standing poses are sampled with.
-        :param collision_avoidance: Whether the PR2 avoids colliding with the kitchen
+        :param collision_avoidance: Whether the robot avoids colliding with the kitchen
             and with itself while moving.
         :param settling_time: How long the physics runs on after the plan, for the
             object to come to rest.
@@ -517,23 +538,32 @@ def _parse_arguments() -> argparse.Namespace:
         help="Perform the episode in MuJoCo physics instead of kinematically.",
     )
     parser.add_argument(
+        "--robot",
+        default=KitchenRobot.PR2.name,
+        choices=[robot.name for robot in KitchenRobot],
+        help="The robot that performs the task.",
+    )
+    parser.add_argument(
         "--collision-avoidance",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Whether the PR2 avoids colliding with the kitchen and with itself.",
+        help="Whether the robot avoids colliding with the kitchen and with itself.",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     """
-    Compose one episode of the counter to sink task, have the PR2 perform it and report
-    how it ended.
+    Compose one episode of the counter to sink task, have the chosen robot perform it
+    and report how it ended.
     """
     logging.basicConfig(level=logging.INFO, force=True)
     arguments = _parse_arguments()
     episode = CounterToSinkEpisode.compose(
-        LayoutType[arguments.layout], StyleType[arguments.style], seed=arguments.seed
+        LayoutType[arguments.layout],
+        StyleType[arguments.style],
+        seed=arguments.seed,
+        robot=KitchenRobot[arguments.robot],
     )
     logger.info("Task: %s", episode.task.instruction)
     if not arguments.physics:
