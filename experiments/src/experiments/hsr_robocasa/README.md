@@ -1,8 +1,9 @@
 # The HSR in RoboCasa
 
-The Toyota HSR performs RoboCasa's pick-and-place tasks in a RoboCasa kitchen,
-simulated in MuJoCo. RoboCasa composes the kitchen and samples the objects, the HSR
-replaces RoboCasa's robot, and every object is held by friction alone.
+The Toyota HSR performs RoboCasa's pick-and-place and drawer tasks in a RoboCasa
+kitchen, simulated in MuJoCo. RoboCasa composes the kitchen and samples the objects,
+the HSR replaces RoboCasa's robot, every object is held by friction alone, and a
+drawer moves only as far as the HSR's hold on its handle pulls or pushes it.
 
 The kitchen is RoboCasa's layout 1, style 1, with everything standing on the floor
 lowered from RoboCasa's 0.92 m counters to 0.75 m, where the HSR reaches.
@@ -13,6 +14,16 @@ lowered from RoboCasa's 0.92 m counters to 0.75 m, where the HSR reaches.
 | `PickPlaceStoveToCounter` | takes the food from the pan and puts it in the bowl | 12 | lemon |
 | `PickPlaceCounterToSink` | takes the object from the counter and drops it in the sink | 0 | can |
 | `PickPlaceSinkToCounter` | takes the food out of the sink and puts it on the plate | 11 | yogurt |
+| `PickPlaceDrawerToCounter` | pulls the drawer fully open, takes the object out and lays it on the counter past the stove | 9 | rolling pin |
+
+| Task (class in `drawers.py`) | What the HSR does |
+|---|---|
+| `OpenDrawer` | takes the top drawer's handle from the front and pulls the drawer open |
+| `CloseDrawer` | takes the handle of the drawer RoboCasa opened and pushes it shut |
+
+The drawer tasks and `PickPlaceDrawerToCounter` lower the counters to 0.84 m only: RoboCasa takes a drawer for the
+top drawer only while its middle stands 0.7 m to 0.9 m high. RoboCasa counts a drawer
+open at 95 % of its travel and closed at 5 %, and so do the tests.
 
 ## One-time setup
 
@@ -72,9 +83,10 @@ cd ~/cram2/cognitive_robot_abstract_machine
     test/experiments_test/hsr_robocasa_test
 ```
 
-The four full runs show as skipped: they only run with `CI=true`.
+The seven full runs show as skipped: they only run with `CI=true`.
 
-**Full runs**: each task performed in MuJoCo, about 90 s per task. Cap the memory,
+**Full runs**: each task performed in MuJoCo, about 90 s per pick-and-place task and
+60 s per drawer task. Cap the memory,
 so that a runaway run is killed rather than the machine:
 
 ```bash
@@ -87,6 +99,8 @@ One task only:
 ```bash
 CI=true .venv/bin/python -m pytest --orm-build never -q \
     test/experiments_test/hsr_robocasa_test -k PickPlaceCounterToSink
+CI=true .venv/bin/python -m pytest --orm-build never -q \
+    test/experiments_test/hsr_robocasa_test -k opens_the_drawer
 ```
 
 Run the tests one after the other, never two at the same time: every RoboCasa scene
@@ -105,6 +119,12 @@ With MuJoCo's viewer, the stove task:
 
 ```bash
 .venv/bin/python -m experiments.hsr_robocasa.pick_place
+```
+
+The drawer opening task:
+
+```bash
+.venv/bin/python -m experiments.hsr_robocasa.drawers
 ```
 
 Any other task:

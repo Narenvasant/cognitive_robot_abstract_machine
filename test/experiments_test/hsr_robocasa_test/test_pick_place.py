@@ -13,17 +13,20 @@ pytest.importorskip("robocasa", reason="robocasa is not installed")
 pytest.importorskip("robosuite", reason="robosuite is not installed")
 
 from experiments.hsr_robocasa.pick_place import (
-    FixtureType,
-    HSRBArmPlane,
-    LayoutKey,
     HSRPickPlaceTask,
     PickPlaceCounterToSink,
     PickPlaceCounterToStove,
+    PickPlaceDrawerToCounter,
     PickPlaceSinkToCounter,
     PickPlaceStoveToCounter,
+    TaskObject,
+)
+from experiments.hsr_robocasa.robocasa_task import (
+    FixtureType,
+    HSRBArmPlane,
+    LayoutKey,
     RoboCasaLayout,
     RowOffTheFloor,
-    TaskObject,
 )
 from semantic_digital_twin.robots.hsrb import HSRBJoint
 
@@ -92,6 +95,7 @@ def outline_of(experiment: HSRPickPlaceTask) -> np.ndarray:
         PickPlaceStoveToCounter,
         PickPlaceCounterToSink,
         PickPlaceSinkToCounter,
+        PickPlaceDrawerToCounter,
     ],
 )
 def outcome(request) -> TaskOutcome:
@@ -166,6 +170,29 @@ def test_the_arm_plane_puts_the_tool_frame_where_a_configuration_of_it_does():
     assert reached[:3, 3] == pytest.approx(
         base_T_tool[:3, 3], abs=REACHED_POSE_TOLERANCE
     )
+
+
+def test_the_arm_plane_turns_the_wrist_to_the_goals_roll_where_it_puts_the_tool_frame():
+    arm_plane = HSRBArmPlane()
+    tool_frame = arm_plane.robot.all_arms[0].end_effector.tool_frame
+    for joint, position in {
+        HSRBJoint.ARM_LIFT: 0.4,
+        HSRBJoint.ARM_FLEX: -0.8,
+        HSRBJoint.WRIST_FLEX: -1.2,
+        HSRBJoint.WRIST_ROLL: 0.7,
+    }.items():
+        arm_plane.world.get_connection_by_name(joint).position = position
+    base_T_tool = arm_plane.world.compute_forward_kinematics_np(
+        arm_plane.robot.root, tool_frame
+    )
+
+    for joint, position in arm_plane.joint_positions_for(base_T_tool).items():
+        arm_plane.world.get_connection_by_name(joint).position = position
+    reached = arm_plane.world.compute_forward_kinematics_np(
+        arm_plane.robot.root, tool_frame
+    )
+
+    assert reached == pytest.approx(base_T_tool, abs=REACHED_POSE_TOLERANCE)
 
 
 # %% the run
