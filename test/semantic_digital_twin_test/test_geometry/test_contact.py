@@ -14,6 +14,7 @@ from semantic_digital_twin.world_description.contact import (
     ContactFriction,
     ContactImpedance,
     ContactParameters,
+    ContactResistance,
     ContactStiffness,
 )
 from semantic_digital_twin.world_description.geometry import Box, Scale
@@ -39,6 +40,37 @@ def test_contact_parameters_round_trip_through_their_list_forms():
     assert impedance.to_list() == [0.96, 0.99, 0.002, 0.4, 3.0]
 
 
+# %% which coefficients a contact resolves
+
+
+def test_a_contact_resolves_sliding_unless_it_is_told_otherwise():
+    """
+    Resolving sliding alone is what a physics engine does by default, so declaring
+    friction changes nothing else about a shape.
+    """
+    assert ContactParameters(friction=ContactFriction()).resistance is (
+        ContactResistance.SLIDING
+    )
+
+
+def test_a_grip_resolves_the_coefficients_it_raises():
+    """
+    The torsional and rolling friction a grip raises are only felt by a contact that
+    resolves them, so the two have to be declared together.
+    """
+    grip = ContactParameters.create_for_grasped_object()
+
+    assert grip.resistance is ContactResistance.EVERY_DIRECTION
+    assert grip.friction.torsional > ContactFriction().torsional
+    assert grip.friction.rolling > ContactFriction().rolling
+
+
+def test_a_surface_is_never_pinched_so_it_only_resolves_sliding():
+    assert ContactParameters.create_for_surface().resistance is (
+        ContactResistance.SLIDING
+    )
+
+
 # %% applying to bodies
 
 
@@ -62,6 +94,23 @@ def test_contact_parameters_reach_every_collision_geometry():
         assert attached.friction == ContactFriction(
             sliding=0.4, torsional=0.05, rolling=0.001
         )
+        assert attached.resistance is ContactResistance.EVERY_DIRECTION
+
+
+def test_a_grip_applied_over_a_geometrys_own_parameters_carries_its_resistance():
+    """
+    A shape that already declares contacts keeps its own stiffness, but what the
+    contacts resolve comes with the friction they belong to.
+    """
+    body = Body(name=PrefixedName("box"))
+    shape = Box(origin=HomogeneousTransformationMatrix(), scale=Scale(1, 1, 1))
+    body.collision = ShapeCollection([shape], reference_frame=body)
+    shape.add_simulator_property(ContactParameters(friction=ContactFriction()))
+
+    ContactParameters.create_for_grasped_object().apply_to([body])
+
+    attached = shape.get_simulator_property_of_type(ContactParameters)
+    assert attached.resistance is ContactResistance.EVERY_DIRECTION
 
 
 def test_a_surface_leaves_the_geometrys_own_stiffness_and_impedance():

@@ -32,6 +32,7 @@ from krrood.class_diagrams.attribute_introspector import (
 from krrood.entity_query_language.factories import variable, contains, a, entity
 from krrood.ormatic.utils import classproperty
 from krrood.utils import get_generic_type_parameters
+from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.datastructures.definitions import JointStateType
 from semantic_digital_twin.datastructures.field_of_view import FieldOfView
 from semantic_digital_twin.datastructures.joint_state import JointState
@@ -430,7 +431,8 @@ class AbstractRobotPart(HasRootBody, HasRobotParts, ABC):
         :param connection: The joint to drive.
         :param servo: What drives it.
         """
-        connection.dynamics = servo.dynamics
+        if servo.dynamics is not None:
+            connection.dynamics = servo.dynamics
         self._declare_position_servo(
             connection.raw_dof,
             servo.gains,
@@ -1104,6 +1106,21 @@ class AbstractRobot(Agent, HasRobotParts, ABC):
         checking even though they bound the robot's real shape.
         """
         return False
+
+    @classmethod
+    def parse_description(cls) -> World:
+        """
+        Read this robot's own description into a world of its own, rooted in the body
+        the robot is attached to the rest of the world by.
+
+        Overridden by a robot described in another format than a URDF.
+
+        :return: The world holding nothing but this robot.
+        """
+        return URDFParser.from_file(
+            cls.get_ros_file_path(),
+            use_visual_as_collision_backup=cls.uses_visual_as_collision_backup,
+        ).parse()
 
     @classmethod
     @abstractmethod
