@@ -19,6 +19,8 @@ from coraplex.datastructures.dataclasses import Context, MotionToleranceConfig
 from coraplex.execution_environment import PhysicallySimulatedRobot
 from coraplex.plans.plan import Plan
 from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
+from segmind.datastructures.events import DetectionEvent
+from segmind.event_segmentation import Segmind
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.adapters.robocasa_dataset.loader import (
     RoboCasaDatasetLoader,
@@ -248,6 +250,27 @@ class HSRBArmPlane:
             self.world.get_connection_by_name(joint).position = position
 
 
+class FixtureReference(StrEnum):
+    """
+    The names RoboCasa's tasks refer to their fixtures by.
+    """
+
+    DRAWER = "drawer"
+    """
+    The drawer a drawer task works.
+    """
+
+    COUNTER = "counter"
+    """
+    The counter above the drawer.
+    """
+
+    FIXTURE = "fxtr"
+    """
+    The fixture a door task works.
+    """
+
+
 class LayoutKey(StrEnum):
     """
     The keys of a RoboCasa layout this experiment reads or changes.
@@ -286,6 +309,11 @@ class LayoutKey(StrEnum):
     NAME = "name"
     """
     The name of a fixture.
+    """
+
+    ISLAND_GROUP = "island_group"
+    """
+    The fixtures of a kitchen island standing free in the room.
     """
 
 
@@ -375,7 +403,8 @@ class RoboCasaLayout:
         :param counter_height: How high the counters are to stand, in metres.
         :return: The updates, by fixture name, that scale every height of the fixtures
             standing on the floor by the same factor, so that the counters stand
-            ``counter_height`` high; what hangs on the walls keeps its height.
+            ``counter_height`` high; what hangs on the walls keeps its height, and
+            where a group stands is left as it is.
         """
         factor = counter_height / self.counter_height
         return {
@@ -384,7 +413,7 @@ class RoboCasaLayout:
             for row_name, row in group.items()
             if row_name not in RowOffTheFloor and isinstance(row, list)
             for fixture in row
-            if (update := self._lowered(fixture, factor))
+            if isinstance(fixture, dict) and (update := self._lowered(fixture, factor))
         }
 
     @staticmethod
@@ -477,6 +506,11 @@ class HSRRoboCasaTask(ABC):
     The kitchen with the task's objects and the HSR, built by :meth:`build_world`.
     """
 
+    detected_events: list[DetectionEvent] = field(init=False, default_factory=list)
+    """
+    What SegMind detected during the last run, in order.
+    """
+
     @classproperty
     def task_name(cls) -> str:
         """
@@ -511,6 +545,12 @@ class HSRRoboCasaTask(ABC):
         """
         :param context: The context the actions are built in.
         :return: The plan that performs the task, or its last stage.
+        """
+
+    @abstractmethod
+    def build_segmind(self) -> Segmind:
+        """
+        :return: SegMind watching what the task's success is read from.
         """
 
     @property
@@ -660,7 +700,9 @@ class HSRRoboCasaTask(ABC):
     def run(self) -> None:
         """
         Let the scene settle, then build each of the :attr:`stages`' plans from where
-        everything came to rest and carry it out against MuJoCo physics.
+        everything came to rest and carry it out against MuJoCo physics, watched by
+        :meth:`build_segmind`'s SegMind, whose events are kept in
+        :attr:`detected_events`.
         """
         context = Context(
             world=self.world,
@@ -682,12 +724,16 @@ class HSRRoboCasaTask(ABC):
         simulation.start_stepped_simulation()
         try:
             simulation.step_simulation(SETTLING_DURATION)
-            for build_stage in self.stages:
-                plan = build_stage(context)
-                with PhysicallySimulatedRobot(
-                    simulation=simulation, collision_avoidance=self.collision_avoidance
-                ):
-                    plan.perform()
-            simulation.step_simulation(SETTLING_DURATION)
+            segmind = self.build_segmind()
+            with segmind:
+                for build_stage in self.stages:
+                    plan = build_stage(context)
+                    with PhysicallySimulatedRobot(
+                        simulation=simulation,
+                        collision_avoidance=self.collision_avoidance,
+                    ):
+                        plan.perform()
+                simulation.step_simulation(SETTLING_DURATION)
+            self.detected_events = segmind.event_logger.get_events()
         finally:
             simulation.stop_simulation()

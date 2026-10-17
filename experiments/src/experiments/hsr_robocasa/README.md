@@ -13,7 +13,7 @@ lowered from RoboCasa's 0.92 m counters to 0.75 m, where the HSR reaches.
 | `PickPlaceCounterToStove` | takes the food from the plate and puts it in the pan | 2 | cheese |
 | `PickPlaceStoveToCounter` | takes the food from the pan and puts it in the bowl | 12 | lemon |
 | `PickPlaceCounterToSink` | takes the object from the counter and drops it in the sink | 0 | can |
-| `PickPlaceSinkToCounter` | takes the food out of the sink and puts it on the plate | 11 | yogurt |
+| `PickPlaceSinkToCounter` | takes the food out of the sink and puts it on the plate | 4 | yogurt |
 | `PickPlaceDrawerToCounter` | pulls the drawer fully open, takes the object out and lays it on the counter past the stove | 9 | rolling pin |
 
 | Task (class in `drawers.py`) | What the HSR does |
@@ -21,9 +21,18 @@ lowered from RoboCasa's 0.92 m counters to 0.75 m, where the HSR reaches.
 | `OpenDrawer` | takes the top drawer's handle from the front and pulls the drawer open |
 | `CloseDrawer` | takes the handle of the drawer RoboCasa opened and pushes it shut |
 
+| Task (class in `doors.py`) | What the HSR does |
+|---|---|
+| `OpenOven` | takes the bar along the top of the oven's door and lets the door down (layout 2, which has an oven) |
+
 The drawer tasks and `PickPlaceDrawerToCounter` lower the counters to 0.84 m only: RoboCasa takes a drawer for the
 top drawer only while its middle stands 0.7 m to 0.9 m high. RoboCasa counts a drawer
-open at 95 % of its travel and closed at 5 %, and so do the tests.
+open at 95 % of its travel and closed at 5 %.
+
+Every task is watched by SegMind while it runs, and the tests take its word for
+success: a pick-and-place task has to end with a placing of the object on its
+receptacle, a drawer or door task with the drawer or door seen opened or closed at
+RoboCasa's thresholds.
 
 ## One-time setup
 
@@ -83,7 +92,7 @@ cd ~/cram2/cognitive_robot_abstract_machine
     test/experiments_test/hsr_robocasa_test
 ```
 
-The seven full runs show as skipped: they only run with `CI=true`.
+The eight full runs show as skipped: they only run with `CI=true`.
 
 **Full runs**: each task performed in MuJoCo, about 90 s per pick-and-place task and
 60 s per drawer task. Cap the memory,

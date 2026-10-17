@@ -29,6 +29,9 @@ from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
+from segmind.detectors.agent_event_detector_nodes import GraspDetector
+from segmind.detectors.coarse_event_detector_nodes import PlacingDetector
+from segmind.event_segmentation import Segmind
 from semantic_digital_twin.adapters.multi_sim import (
     ContactDimensionality,
     MujocoGeom,
@@ -48,8 +51,12 @@ from semantic_digital_twin.spatial_types.spatial_types import (
 from semantic_digital_twin.world_description.geometry import VolumetricBoundingBox
 from semantic_digital_twin.world_description.world_entity import Body
 
-from experiments.hsr_robocasa.drawers import FixtureReference, HSRTaskAtDrawer
-from experiments.hsr_robocasa.robocasa_task import ArmLink, HSRRoboCasaTask
+from experiments.hsr_robocasa.drawers import HSRTaskAtDrawer
+from experiments.hsr_robocasa.robocasa_task import (
+    ArmLink,
+    FixtureReference,
+    HSRRoboCasaTask,
+)
 
 # %% the task's objects
 
@@ -180,6 +187,14 @@ class HSRPickPlaceTask(HSRRoboCasaTask, ABC):
             ).bounding_boxes
         ]
         return max(pieces, key=lambda piece: piece.width * piece.depth)
+
+    def build_segmind(self) -> Segmind:
+        """
+        :return: SegMind watching the food be taken hold of and put down.
+        """
+        return Segmind.create_for_bodies(
+            self.world, [self.food.root], [GraspDetector, PlacingDetector]
+        )
 
     def grasp(self) -> GraspCandidate:
         """
@@ -354,9 +369,10 @@ class PickPlaceSinkToCounter(HSRPickPlaceTask):
     Pick the food from the sink and place it on the plate on the counter.
     """
 
-    seed: int = 11
+    seed: int = 4
     """
-    The seed RoboCasa samples the task with.
+    The seed RoboCasa samples the task with: a flat plate on the counter right of the
+    sink.
     """
 
     food_category: str | None = "yogurt"
@@ -452,7 +468,7 @@ class PickPlaceDrawerToCounter(HSRPickPlaceTask, HSRTaskAtDrawer):
         :param context: The context the actions are built in.
         :return: The plan that pulls the drawer fully open.
         """
-        return self.drawer_plan(context, OpenAction)
+        return self.handle_plan(context, OpenAction)
 
     @property
     def counter(self) -> Body:

@@ -4,9 +4,6 @@ its height, simulated in MuJoCo with the object held by friction alone.
 """
 
 import os
-from dataclasses import dataclass
-
-import numpy as np
 import pytest
 
 pytest.importorskip("robocasa", reason="robocasa is not installed")
@@ -28,6 +25,8 @@ from experiments.hsr_robocasa.robocasa_task import (
     RoboCasaLayout,
     RowOffTheFloor,
 )
+from robocasa.models.scenes.scene_registry import LayoutType
+from segmind.datastructures.events import LossOfGraspEvent, PlacingEvent
 from semantic_digital_twin.robots.hsrb import HSRBJoint
 
 runs_in_ci = pytest.mark.skipif(
@@ -41,52 +40,6 @@ How far, in metres, the tool frame may end up from a pose the arm plane is asked
 reach: the resolution of its searches.
 """
 
-RESTING_TOLERANCE = 0.02
-"""
-How far, in metres, the object's underside may end up outside the height of the
-receptacle's floor and still count as resting on it.
-"""
-
-
-@dataclass
-class TaskOutcome:
-    """
-    A task performed in MuJoCo, with what its receptacle looked like before the run.
-    """
-
-    experiment: HSRPickPlaceTask
-    """
-    The task, after its run.
-    """
-
-    receptacle_outline: np.ndarray
-    """
-    The lower and upper corner of the box the receptacle's collision geometry
-    occupied before the run, in the kitchen's frame.
-    """
-
-    release_height: float
-    """
-    The height the object was to be let go above.
-    """
-
-
-def outline_of(experiment: HSRPickPlaceTask) -> np.ndarray:
-    """
-    :return: The lower and upper corner of the box the collision geometry of the
-        task's receptacle occupies, in the kitchen's frame.
-    """
-    boxes = [
-        experiment.extent(body)
-        for body in experiment.colliding_bodies_below(experiment.receptacle)
-    ]
-    return np.array(
-        [
-            np.min([[box.min_x, box.min_y, box.min_z] for box in boxes], axis=0),
-            np.max([[box.max_x, box.max_y, box.max_z] for box in boxes], axis=0),
-        ]
-    )
-
 
 @pytest.fixture(
     scope="module",
@@ -98,13 +51,14 @@ def outline_of(experiment: HSRPickPlaceTask) -> np.ndarray:
         PickPlaceDrawerToCounter,
     ],
 )
-def outcome(request) -> TaskOutcome:
+def performed_task(request) -> HSRPickPlaceTask:
+    """
+    A pick-and-place task, performed in MuJoCo.
+    """
     experiment = request.param(headless=True)
     experiment.build_world()
-    receptacle_outline = outline_of(experiment)
-    release_height = experiment.release_height
     experiment.run()
-    return TaskOutcome(experiment, receptacle_outline, release_height)
+    return experiment
 
 
 # %% the lowered kitchen
@@ -127,6 +81,26 @@ def test_the_counters_stand_at_the_height_the_kitchen_is_lowered_to():
     assert [lowered[counter][LayoutKey.SIZE][2] for counter in counters] == (
         pytest.approx([experiment.counter_height] * len(counters))
     )
+
+
+def test_a_kitchen_island_is_lowered_with_the_counters():
+    """
+    A layout with a group of its own, such as an island, also states where the group
+    stands; that is no fixture to lower, while the island's own fixtures are.
+    """
+    layout = RoboCasaLayout.from_layout_type(LayoutType.LAYOUT002)
+
+    lowered = layout.lowered_fixtures(PickPlaceCounterToStove().counter_height)
+
+    island = [
+        fixture[LayoutKey.NAME]
+        for row in layout.configuration[LayoutKey.ISLAND_GROUP].values()
+        if isinstance(row, list)
+        for fixture in row
+        if isinstance(fixture, dict) and LayoutKey.SIZE in fixture
+    ]
+    assert island
+    assert [name for name in island if name not in lowered] == []
 
 
 def test_what_hangs_on_the_walls_keeps_its_height():
@@ -199,21 +173,31 @@ def test_the_arm_plane_turns_the_wrist_to_the_goals_roll_where_it_puts_the_tool_
 
 
 @runs_in_ci
-def test_the_object_ends_resting_in_the_receptacle(outcome: TaskOutcome):
+def test_segmind_sees_the_object_put_down_in_the_receptacle(
+    performed_task: HSRPickPlaceTask,
+):
     """
-    Held by friction alone, the object travels to the receptacle and comes to rest in
-    it, standing or fallen over: within its outline, and no higher than it was let
-    go.
+    Held by friction alone, the object travels to the receptacle and is put down in
+    it, as SegMind, watching the run, sees it the last time it is let go of. What
+    stands right below a thin receptacle, a plate's counter, may hold it up too.
     """
-    experiment = outcome.experiment
-    food = experiment.extent(experiment.world.get_body_by_name(TaskObject.FOOD))
-    x, y, _ = food.center.to_np()[:3]
-    lower, upper = outcome.receptacle_outline
+    food = performed_task.food.root
+    events_of_the_food = [
+        event
+        for event in performed_task.detected_events
+        if event.tracked_object is food
+    ]
+    last_release = max(
+        event.timestamp
+        for event in events_of_the_food
+        if isinstance(event, LossOfGraspEvent)
+    )
 
-    assert lower[0] < x < upper[0]
-    assert lower[1] < y < upper[1]
-    assert (
-        lower[2] - RESTING_TOLERANCE
-        <= food.min_z
-        <= outcome.release_height + RESTING_TOLERANCE
+    put_down_on = {
+        event.with_object
+        for event in events_of_the_food
+        if isinstance(event, PlacingEvent) and event.timestamp >= last_release
+    }
+    assert put_down_on & set(
+        performed_task.colliding_bodies_below(performed_task.receptacle)
     )

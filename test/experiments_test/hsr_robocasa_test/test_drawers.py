@@ -1,45 +1,31 @@
 """
 The HSR opening and closing a drawer in a RoboCasa kitchen, simulated in MuJoCo with
-the drawer moved by nothing but the HSR's hold on its handle.
+the drawer moved by nothing but the HSR's hold on its handle, as SegMind sees it.
 """
-
-from enum import Enum
 
 import pytest
 
 pytest.importorskip("robocasa", reason="robocasa is not installed")
 pytest.importorskip("robosuite", reason="robosuite is not installed")
 
-from experiments.hsr_robocasa.drawers import CloseDrawer, HSRDrawerTask, OpenDrawer
+from experiments.hsr_robocasa.drawers import CloseDrawer, OpenDrawer
+from experiments.hsr_robocasa.handles import HSRHandleTask
+from segmind.datastructures.events import ClosedEvent, DetectionEvent, OpenedEvent
 
 from .test_pick_place import runs_in_ci
 
-# %% RoboCasa's verdict
+# %% what SegMind saw
 
 
-class DrawerVerdict(float, Enum):
+def last_event_of_the_moving_part(experiment: HSRHandleTask) -> DetectionEvent:
     """
-    How far along its travel RoboCasa's drawer tasks count a drawer as open or as
-    closed, in their ``ManipulateDrawer._check_success``.
+    :return: The last event SegMind detected for the part of the fixture that moves.
     """
-
-    OPEN = 0.95
-    """
-    At least this far open.
-    """
-
-    CLOSED = 0.05
-    """
-    At most this far open.
-    """
-
-
-def how_far_open(experiment: HSRDrawerTask) -> float:
-    """
-    :return: How far along its travel the drawer of ``experiment`` stands open.
-    """
-    joint = experiment.drawer.movable_joint
-    return joint.position / joint.dof.limits.upper.position
+    return [
+        event
+        for event in experiment.detected_events
+        if experiment.moving_part in event.tracked_objects
+    ][-1]
 
 
 # %% the runs
@@ -52,7 +38,7 @@ def test_the_hsr_opens_the_drawer():
 
     experiment.run()
 
-    assert how_far_open(experiment) >= DrawerVerdict.OPEN
+    assert type(last_event_of_the_moving_part(experiment)) is OpenedEvent
 
 
 @runs_in_ci
@@ -62,4 +48,4 @@ def test_the_hsr_closes_the_drawer():
 
     experiment.run()
 
-    assert how_far_open(experiment) <= DrawerVerdict.CLOSED
+    assert type(last_event_of_the_moving_part(experiment)) is ClosedEvent
