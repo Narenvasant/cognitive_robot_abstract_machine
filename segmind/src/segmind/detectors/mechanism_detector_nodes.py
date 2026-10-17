@@ -1,6 +1,6 @@
 """
-Detecting a moving part of the scene, such as a drawer or a door, being opened and being
-closed.
+Detecting a moving part of the scene, such as a drawer or a door, being opened, being
+closed, and leaving either.
 
 What is read here is how far a part stands along the joint it moves on, rather than a
 relation between two bodies.
@@ -14,7 +14,12 @@ from enum import StrEnum
 from giskardpy.motion_statechart.context import MotionStatechartContext
 from typing_extensions import List
 
-from segmind.datastructures.events import ClosedEvent, DetectionEvent, OpenedEvent
+from segmind.datastructures.events import (
+    ClosedEvent,
+    DetectionEvent,
+    OpenedEvent,
+    PartlyOpenEvent,
+)
 from segmind.detectors.base import AbstractDetector, SegmindContext
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from semantic_digital_twin.world_description.world_entity import Body
@@ -44,7 +49,7 @@ class MechanismState(StrEnum):
 @dataclass(eq=False, repr=False)
 class OpeningDetector(AbstractDetector):
     """
-    Reports a moving part coming to stand open, and coming to stand closed.
+    Reports a moving part coming to stand open, closed, or partly open from either.
 
     The part is a body moving on a joint of its own, a drawer on its rails or a door on
     its hinge, and how far it stands is the share of its joint's travel it stands out.
@@ -75,13 +80,13 @@ class OpeningDetector(AbstractDetector):
         objects_to_check: List[Body],
     ) -> List[DetectionEvent]:
         """
-        Detects parts that came to stand open or closed since they were last seen.
+        Detects parts whose state changed since they were last seen.
 
         :param context: The current motion statechart context.
         :param segmind_context: The shared SegmindContext; nothing in it is needed.
         :param objects_to_check: The bodies to check; those not moving on a joint of
             their own are left out.
-        :return: One event per part that came to stand open or closed.
+        :return: One event per part whose state changed.
         """
         events: List[DetectionEvent] = []
         for body in objects_to_check:
@@ -94,10 +99,13 @@ class OpeningDetector(AbstractDetector):
             self.states[body] = state
             if not (seen_before and changed):
                 continue
-            if state is MechanismState.OPEN:
-                events.append(OpenedEvent(tracked_object=body))
-            elif state is MechanismState.CLOSED:
-                events.append(ClosedEvent(tracked_object=body))
+            match state:
+                case MechanismState.OPEN:
+                    events.append(OpenedEvent(tracked_object=body))
+                case MechanismState.CLOSED:
+                    events.append(ClosedEvent(tracked_object=body))
+                case MechanismState.PARTLY_OPEN:
+                    events.append(PartlyOpenEvent(tracked_object=body))
         return events
 
     def state_of(self, joint: ActiveConnection1DOF) -> MechanismState:

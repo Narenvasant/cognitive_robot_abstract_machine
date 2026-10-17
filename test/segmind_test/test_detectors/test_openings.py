@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 from giskardpy.motion_statechart.context import MotionStatechartContext
-from segmind.datastructures.events import ClosedEvent, OpenedEvent
+from segmind.datastructures.events import ClosedEvent, OpenedEvent, PartlyOpenEvent
 from segmind.detectors.base import SegmindContext
 from segmind.detectors.mechanism_detector_nodes import OpeningDetector
 from segmind.episode_segmenter import EpisodeSegmenterExecutor
@@ -147,10 +147,30 @@ def test_a_drawer_that_starts_open_is_reported_only_once_it_changes():
     assert drawer.events() == []
 
 
-def test_a_drawer_partly_opened_is_neither_opened_nor_closed():
+def test_a_closed_drawer_pulled_partly_out_is_reported_partly_open():
     drawer = drawer_on_rails(starting_position=0.0)
 
     drawer.slide_to(0.2)
+
+    [partly_open] = drawer.events()
+    assert type(partly_open) is PartlyOpenEvent
+    assert partly_open.tracked_object is drawer.rails.child
+
+
+def test_an_open_drawer_pushed_partly_in_is_reported_partly_open():
+    drawer = drawer_on_rails(starting_position=0.4)
+
+    drawer.slide_to(0.2)
+
+    [partly_open] = drawer.events()
+    assert type(partly_open) is PartlyOpenEvent
+    assert partly_open.tracked_object is drawer.rails.child
+
+
+def test_a_drawer_moved_within_partly_open_is_not_reported():
+    drawer = drawer_on_rails(starting_position=0.2)
+
+    drawer.slide_to(0.25)
 
     assert drawer.events() == []
 

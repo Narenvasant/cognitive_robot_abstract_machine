@@ -341,3 +341,13 @@ class ClosedEvent(EventWithTrackedObjects):
     """
 
     ...
+
+
+@dataclass(unsafe_hash=True)
+class PartlyOpenEvent(EventWithTrackedObjects):
+    """
+    Represents an event where a moving part, such as a drawer or a door, that stood
+    open or closed came to stand partly open.
+    """
+
+    ...
