@@ -1,7 +1,8 @@
 """
-The Toyota HSR opens the oven's door in a RoboCasa kitchen, simulated in MuJoCo:
-RoboCasa's ``OpenOven`` task. The HSR takes hold of the bar along the top of the door
-and lets the door down about its hinge at the bottom.
+The Toyota HSR opens and closes the oven's door in a RoboCasa kitchen, simulated in
+MuJoCo: RoboCasa's ``OpenOven`` and ``CloseOven`` tasks. The HSR takes hold of the bar
+along the top of the door and lets the door down about its hinge at the bottom, or
+swings it back up.
 
 Run the opening task with::
 
@@ -12,6 +13,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import partial
 
 from typing_extensions import Callable
 
@@ -19,6 +21,7 @@ import numpy as np
 from coraplex.datastructures.dataclasses import Context
 from coraplex.plans.plan import Plan
 from coraplex.robot_plans.actions.core.container import (
+    CloseAction,
     ContainerAction,
     OpenAction,
 )
@@ -132,6 +135,54 @@ class OpenOven(HSROvenDoorTask):
     @property
     def door_action(self) -> Callable[..., ContainerAction]:
         return OpenAction
+
+
+@dataclass
+class CloseOven(HSROvenDoorTask):
+    """
+    Close the oven's door, which RoboCasa has opened.
+    """
+
+    handle_reach: float = 0.59
+    """
+    RoboCasa has let the door down, so its bar faces the floor and is taken from below
+    and in front, the hand tilted up as the door is. Tilted up that steeply, the arm
+    reaches the bar only 0.46 m to 0.60 m ahead, and where taking hold of it starts
+    its approach, lower down, only from 0.52 m on.
+    """
+
+    approach_clearance: float = 0.05
+    """
+    How far, in metres, the hand stays off the bar where taking hold of it starts its
+    approach: further out, that start lies too low for the arm, coming from below.
+    """
+
+    closing_tolerance: float = 0.002
+    """
+    How far, in radians, the door may stand open once closed: RoboCasa counts an oven
+    closed only within half a percent of its door's travel.
+    """
+
+    @property
+    def stages(self) -> list[Callable[[Context], Plan]]:
+        """
+        Swings the door up, which leaves it about 0.05 rad open, as the hand holds the
+        bar loosely from below; then takes hold of the bar again, from the front where
+        the door came to rest, and presses the door shut.
+        """
+        return [self.build_plan, self.build_plan]
+
+    @property
+    def door_action(self) -> Callable[..., ContainerAction]:
+        """
+        Closes the door all the way, to its joint's lower limit.
+        """
+        return partial(
+            CloseAction,
+            closed_position=self.moving_part.parent_connection.dof.limits.lower.position,
+            closing_tolerance=self.closing_tolerance,
+            approach_clearance=self.approach_clearance,
+        )
 
 
 if __name__ == "__main__":

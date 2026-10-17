@@ -24,10 +24,12 @@ lowered from RoboCasa's 0.92 m counters to 0.75 m, where the HSR reaches.
 | Task (class in `doors.py`) | What the HSR does |
 |---|---|
 | `OpenOven` | takes the bar along the top of the oven's door and lets the door down (layout 2, which has an oven) |
+| `CloseOven` | takes the bar of the door RoboCasa let down from below and swings the door up, then takes the bar again from the front and presses the door shut (layout 2) |
 
 The drawer tasks and `PickPlaceDrawerToCounter` lower the counters to 0.84 m only: RoboCasa takes a drawer for the
 top drawer only while its middle stands 0.7 m to 0.9 m high. RoboCasa counts a drawer
-open at 95 % of its travel and closed at 5 %.
+open at 95 % of its travel and closed at 5 %, an oven door open at 90 % and closed at
+0.5 %.
 
 Every task is watched by SegMind while it runs, and the tests take its word for
 success: a pick-and-place task has to end with a placing of the object on its
@@ -92,7 +94,7 @@ cd ~/cram2/cognitive_robot_abstract_machine
     test/experiments_test/hsr_robocasa_test
 ```
 
-The eight full runs show as skipped: they only run with `CI=true`.
+The nine full runs show as skipped: they only run with `CI=true`.
 
 **Full runs**: each task performed in MuJoCo, about 90 s per pick-and-place task and
 60 s per drawer task. Cap the memory,

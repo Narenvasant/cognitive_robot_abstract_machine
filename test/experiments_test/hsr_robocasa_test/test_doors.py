@@ -1,5 +1,5 @@
 """
-The HSR opening the oven's door in a RoboCasa kitchen, simulated in MuJoCo with the
+The HSR opening and closing the oven's door in a RoboCasa kitchen, simulated in MuJoCo with the
 door moved by nothing but the HSR's hold on its bar, as SegMind sees it.
 """
 
@@ -8,8 +8,8 @@ import pytest
 pytest.importorskip("robocasa", reason="robocasa is not installed")
 pytest.importorskip("robosuite", reason="robosuite is not installed")
 
-from experiments.hsr_robocasa.doors import OpenOven
-from segmind.datastructures.events import OpenedEvent
+from experiments.hsr_robocasa.doors import CloseOven, OpenOven
+from segmind.datastructures.events import ClosedEvent, OpenedEvent
 
 from .test_drawers import last_event_of_the_moving_part
 from .test_pick_place import runs_in_ci
@@ -44,3 +44,13 @@ def test_the_hsr_opens_the_oven():
     experiment.run()
 
     assert type(last_event_of_the_moving_part(experiment)) is OpenedEvent
+
+
+@runs_in_ci
+def test_the_hsr_closes_the_oven():
+    experiment = CloseOven(headless=True)
+    experiment.build_world()
+
+    experiment.run()
+
+    assert type(last_event_of_the_moving_part(experiment)) is ClosedEvent
