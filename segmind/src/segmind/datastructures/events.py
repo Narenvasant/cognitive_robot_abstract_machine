@@ -321,3 +321,23 @@ class LossOfContainmentEvent(EventWithTrackedObjects):
     """
 
     ...
+
+
+@dataclass(unsafe_hash=True)
+class OpenedEvent(EventWithTrackedObjects):
+    """
+    Represents an event where a moving part, such as a drawer or a door, came to stand
+    open.
+    """
+
+    ...
+
+
+@dataclass(unsafe_hash=True)
+class ClosedEvent(EventWithTrackedObjects):
+    """
+    Represents an event where a moving part, such as a drawer or a door, came to stand
+    closed.
+    """
+
+    ...
