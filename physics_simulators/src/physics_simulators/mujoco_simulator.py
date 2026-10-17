@@ -163,6 +163,9 @@ class MujocoSimulator(BaseSimulator):
             "cone", mujoco.mjtCone.mjCONE_PYRAMIDAL
         )
         self._mj_spec.option.impratio = float(self.config.get("impratio", 1))
+        self._mj_spec.option.solver = self.config.get(
+            "solver", mujoco.mjtSolver.mjSOL_NEWTON
+        )
         self._mj_spec.option.timestep = self.step_size
         if self.config.get("multiccd", False):
             self._mj_spec.option.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
