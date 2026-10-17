@@ -3,11 +3,13 @@ import math
 import numpy as np
 import pytest
 
+from giskardpy.motion_statechart.goals.open_close import Close
 from krrood.entity_query_language.factories import evaluate_condition
 
 from coraplex.plans.factories import sequential
 from coraplex.robot_plans.actions.core.container import CloseAction, OpenAction
 from coraplex.robot_plans.actions.core.pick_up import GraspingAction
+from coraplex.robot_plans.motions.container import ClosingMotion
 from coraplex.robot_plans.motions.gripper import (
     MoveGripperMotion,
     MoveToolCenterPointMotion,
@@ -76,6 +78,29 @@ def test_the_handle_is_taken_hold_of_by_the_grasp_the_action_is_given(
         motion for motion in motions_of(action) if isinstance(motion, GraspingAction)
     ]
     assert taking_hold.grasp is grasp
+
+
+# %% how far closed
+
+
+def test_a_close_action_shuts_the_container_as_far_as_it_is_asked_to(pr2_at_drawer):
+    """
+    A container that has to shut tighter than the default is closed to the position
+    and within the tolerance the action is given.
+    """
+    world, robot, context, handle = pr2_at_drawer
+    action = CloseAction(
+        handle, left_or_only_arm(robot), closed_position=0.0, closing_tolerance=0.002
+    )
+    sequential([action], context)
+
+    [closing] = [
+        motion for motion in motions_of(action) if isinstance(motion, ClosingMotion)
+    ]
+    goal = closing._motion_chart
+    assert isinstance(goal, Close)
+    assert goal.goal_joint_state == action.closed_position
+    assert goal.threshold == action.closing_tolerance
 
 
 # %% backing off the handle

@@ -161,9 +161,25 @@ class CloseAction(ContainerAction):
     Closes a container like object.
     """
 
+    closed_position: float = 0.01
+    """
+    The position of the mechanism's joint the container is closed to.
+    """
+
+    closing_tolerance: float = 0.01
+    """
+    How close the joint has to come to :attr:`closed_position` for the container to
+    count as closed.
+    """
+
     @property
     def _mechanism_motion(self) -> BaseMotion:
-        return ClosingMotion(self.handle.root, self.arm)
+        return ClosingMotion(
+            self.handle.root,
+            self.arm,
+            closed_position=self.closed_position,
+            closing_tolerance=self.closing_tolerance,
+        )
 
     @staticmethod
     def post_condition(
