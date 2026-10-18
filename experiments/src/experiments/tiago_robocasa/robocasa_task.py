@@ -21,7 +21,13 @@ from krrood.ormatic.utils import classproperty
 
 from coraplex.datastructures.dataclasses import Context, MotionToleranceConfig
 from coraplex.execution_environment import PhysicallySimulatedRobot
+from coraplex.datastructures.enums import ExecutionType
+from coraplex.execution_environment import ExecutionEnvironment
+from coraplex.plans.factories import sequential
 from coraplex.plans.plan import Plan
+from coraplex.robot_plans.motions.gripper import MoveToolCenterPointMotion
+from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
+from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from experiments.hsr_robocasa.robocasa_task import KitchenBody, RoboCasaLayout
 from experiments.tiago_robocasa.exceptions import NoClearStandingPose
 from experiments.scene_recording import SceneRecorder, SceneRecording, ViewerCamera
@@ -33,6 +39,7 @@ from semantic_digital_twin.adapters.robocasa_dataset.loader import (
 from semantic_digital_twin.collision_checking.collision_rules import (
     AllowCollisionBetweenGroups,
 )
+from semantic_digital_twin.datastructures.definitions import TorsoState
 from semantic_digital_twin.robots.tiago import TiagoMujoco
 from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.spatial_types.spatial_types import Pose
@@ -95,10 +102,13 @@ class TiagoRoboCasaTask(ABC):
     The seed RoboCasa samples the task's objects and their places with.
     """
 
-    counter_height: float = 0.75
+    counter_height: float | None = None
     """
-    How high the kitchen's counters stand, in metres, lowered from RoboCasa's 0.92 m
-    together with everything else standing on the floor.
+    How high the kitchen's counters are made to stand, in metres, or nothing to leave
+    RoboCasa's kitchen at the size it ships.
+
+    Tiago reaches RoboCasa's own counters, so the kitchen is not shrunk for it the way
+    it has to be for a robot that cannot.
     """
 
     reach: float = 0.6
@@ -113,19 +123,15 @@ class TiagoRoboCasaTask(ABC):
     horizontal.
     """
 
-    standing_step: float = 0.05
+    stand_step: float = 0.05
     """
     How far the stand is moved at a time while looking for a clear one, in metres.
     """
 
-    standing_slide: float = 0.4
+    stand_search: float = 0.4
     """
-    How far along the counter a clear stand may be looked for, in metres.
-    """
-
-    standing_search: float = 0.5
-    """
-    How far back of the ideal stand one may be looked for, in metres.
+    How far back of, and along from, the ideal stand a clear one may be looked for, in
+    metres.
     """
 
     tool_frame_tolerance: float = 0.015
@@ -270,9 +276,7 @@ class TiagoRoboCasaTask(ABC):
             style,
             seed=self.seed,
             task_parameters=self.task_parameters,
-            fixture_updates=RoboCasaLayout.from_layout_type(layout).lowered_fixtures(
-                self.counter_height
-            ),
+            fixture_updates=self.fixture_updates(layout),
         )
         self.world = self.task.world
         robot = RobotSpecification(TiagoMujoco).spawn(self.world)
@@ -287,53 +291,68 @@ class TiagoRoboCasaTask(ABC):
                     ],
                 )
             )
-        self.stand_clear_of_the_kitchen()
+        self.raise_the_torso()
+        self.stand_where_nothing_touches()
         return self.world
 
-    def stand_clear_of_the_kitchen(self) -> None:
+    def raise_the_torso(self) -> None:
         """
-        Put Tiago where it reaches :attr:`first_target`, and if it is in the kitchen
-        there, step it back and along until it is not.
+        Stand the torso at its full height before the simulation is built.
 
-        Tiago is wider than the robot a RoboCasa kitchen is laid out around, and its
-        idle arm hangs at its side, so the pose that puts the working hand in front of
-        the target can still leave an elbow in a wall.
+        The torso is set rather than commanded: its joint carries the whole upper body,
+        and a servo asked to lift that saturates its force without moving, so the robot
+        starts where it needs to be. With the torso down, Tiago's hand does not reach a
+        RoboCasa counter at all.
+        """
+        self.robot.mobile_base.torso.get_joint_state_by_type(TorsoState.HIGH).apply_to(
+            self.world
+        )
 
-        :raises NoClearStandingPose: If it touches the kitchen wherever it is tried.
+    def stand_where_nothing_touches(self) -> None:
+        """
+        Put Tiago where it reaches :attr:`first_target`, stepping it back and along the
+        counter until it touches nothing.
+
+        Tiago is wider than the robot a RoboCasa kitchen is laid out around and carries
+        a second arm at its side, so the stand that puts its working hand in front of
+        the target often leaves a wheel in a cabinet or an elbow in a wall.
+
+        :raises NoClearStandingPose: If it touches the kitchen at every stand tried.
         """
         self.world.collision_manager.update_collision_matrix()
         drive = self.robot.root.parent_connection
-        for back, along in self.standing_offsets():
+        for back, along in self.stands_to_try():
             drive.origin = self.standing_pose(
                 self.first_target + np.array([along, 0.0, 0.0]), self.reach + back
             ).homogeneous_matrix
             if not self.robot.is_in_collision:
                 return
         raise NoClearStandingPose(
-            target=self.first_target, tried=len(list(self.standing_offsets()))
+            target=self.first_target, tried=len(self.stands_to_try())
         )
 
-    def standing_slides(self) -> list[float]:
-        """
-        :return: How far along the counter to try standing, nearest first, each way.
-        """
-        steps = np.arange(
-            self.standing_step, self.standing_slide + self.standing_step / 2,
-            self.standing_step,
-        )
-        return [0.0] + [side * step for step in steps for side in (1.0, -1.0)]
-
-    def standing_offsets(self) -> list[tuple[float, float]]:
+    def stands_to_try(self) -> list[tuple[float, float]]:
         """
         :return: How much further back and how far along the counter to try standing,
             nearest first.
         """
-        return [
-            (back, along)
-            for back in np.arange(0.0, self.standing_search + self.standing_step / 2,
-                                  self.standing_step)
-            for along in self.standing_slides()
+        steps = np.arange(0.0, self.stand_search + self.stand_step / 2, self.stand_step)
+        slides = [0.0] + [
+            side * step for step in steps[1:] for side in (1.0, -1.0)
         ]
+        return [(float(back), float(along)) for back in steps for along in slides]
+
+    def fixture_updates(self, layout: Any) -> dict[str, Any]:
+        """
+        :param layout: The kitchen layout being composed.
+        :return: What to change about the kitchen's fixtures, which is nothing unless
+            the counters are to stand at a height of their own.
+        """
+        if self.counter_height is None:
+            return {}
+        return RoboCasaLayout.from_layout_type(layout).lowered_fixtures(
+            self.counter_height
+        )
 
     def standing_pose(
         self, target: np.ndarray, reach: float, heading: float = math.pi / 2
@@ -361,6 +380,47 @@ class TiagoRoboCasaTask(ABC):
         base = self.robot.root.global_transform.to_np()
         shoulder = self.arm.bodies[1].global_transform.to_np()
         return float((np.linalg.inv(base) @ shoulder)[1, 3])
+
+    def arm_motions_to(self, tool_frame_goal: Pose) -> list[MoveJointsMotion]:
+        """
+        Bring the arm to a tool frame goal in joint space.
+
+        Where the arm is to go is worked out in a kinematically simulated world, which
+        the goal is reachable in, and the joints it ends up in are what the physical
+        run is asked for. A tool frame goal given to the physical run directly stalls:
+        the arm is still on its way when the controller is satisfied, and the hand ends
+        up short of what it is reaching for.
+
+        :param tool_frame_goal: Where the tool frame is to be.
+        :return: The motion bringing the arm there.
+        """
+        context = Context(
+            world=self.world, robot=self.robot, evaluate_conditions=False
+        )
+        joints = [
+            connection
+            for connection in self.arm.active_connections
+            if isinstance(connection, ActiveConnection1DOF)
+        ]
+        with self.world.reset_state_context():
+            with ExecutionEnvironment(
+                ExecutionType.KINEMATICALLY_SIMULATED,
+                collision_avoidance=self.collision_avoidance,
+            ):
+                sequential(
+                    [
+                        MoveToolCenterPointMotion(
+                            tool_frame_goal, self.arm, allow_gripper_collision=True
+                        )
+                    ],
+                    context=context,
+                ).plan.perform()
+            positions = [float(joint.position) for joint in joints]
+        return [
+            MoveJointsMotion(
+                names=[joint.name.name for joint in joints], positions=positions
+            )
+        ]
 
     def prepare_contacts(self) -> None:
         """
@@ -407,12 +467,13 @@ class TiagoRoboCasaTask(ABC):
         simulation.start_stepped_simulation()
         try:
             simulation.step_simulation(SETTLING_DURATION)
+            plan = self.build_plan(context)
             with self._recorder(simulation):
                 with PhysicallySimulatedRobot(
                     simulation=simulation,
                     collision_avoidance=self.collision_avoidance,
                 ):
-                    self.build_plan(context).perform()
+                    plan.perform()
                 simulation.step_simulation(SETTLING_DURATION)
         finally:
             simulation.stop_simulation()

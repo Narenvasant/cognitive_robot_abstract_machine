@@ -29,9 +29,7 @@ from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
-from coraplex.robot_plans.motions.gripper import MoveToolCenterPointMotion
 from experiments.scene_recording import SceneRecording
-from experiments.tiago_robocasa.exceptions import NoClearStandingPose
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
 from semantic_digital_twin.adapters.multi_sim import (
     ContactDimensionality,
@@ -216,10 +214,17 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
                 ContactDimensionality.SLIDING_TWISTING_AND_ROLLING
             )
 
+    puts_it_in_the_receptacle: bool = True
+    """
+    Whether the task carries on to put the object into its receptacle, or stops once it
+    has it off the counter.
+    """
+
     def build_plan(self, context: Context) -> Plan:
         """
         Stand in line with the object, bring the hand to where the pick up starts its
-        approach, take the object, drive to the receptacle holding it, and put it in.
+        approach, take the object, and unless the task stops there, carry it to the
+        receptacle and put it in.
 
         :param context: The context to plan in.
         :return: The plan.
@@ -236,14 +241,16 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         pre_grasp = pick_up.grasp_pose_sequence(
             grasp.world_T_grasp, arm.end_effector, grasp
         ).pre_grasp
+        taking = [
+            ParkArmsAction(self.robot.all_arms),
+            *self.arm_motions_to(pre_grasp),
+            pick_up,
+        ]
+        if not self.puts_it_in_the_receptacle:
+            return sequential(taking, context=context).plan
         return sequential(
-            [
-                ParkArmsAction(self.robot.all_arms),
-                NavigateAction(self.standing_pose(self.first_target, self.reach)),
-                MoveToolCenterPointMotion(
-                    pre_grasp, arm, allow_gripper_collision=True
-                ),
-                pick_up,
+            taking
+            + [
                 NavigateAction(
                     self.standing_pose(self.release_point, self.placing_reach)
                 ),
@@ -289,10 +296,10 @@ class PickPlaceCounterToSink(TiagoPickPlaceTask):
     @property
     def release_height(self) -> float:
         """
-        :return: The sink's rim, level with the counter: the object is dropped in from
-            just above it.
+        :return: The sink's rim, which the object is dropped in from just above, read
+            off the sink rather than off what the counters were set to.
         """
-        return self.counter_height
+        return float(self.extent(self.receptacle).max_z)
 
 
 # %% running one from the command line
@@ -315,6 +322,8 @@ def main() -> None:
     parser.add_argument("--pitch", type=float, default=None, help="grasp pitch in degrees")
     parser.add_argument("--counter-height", type=float, default=None)
     parser.add_argument("--attempts", type=int, default=12)
+    parser.add_argument("--pick-only", action="store_true")
+    parser.add_argument("--no-avoidance", action="store_true")
     arguments = parser.parse_args()
 
     recording = None
@@ -343,24 +352,46 @@ def main() -> None:
     if arguments.seed is not None:
         task.seed = arguments.seed
     for attempt in range(1, arguments.attempts + 1):
+        episode = PickPlaceCounterToSink(
+            recording=recording,
+            headless=not arguments.viewer,
+            noslip_iterations=arguments.noslip,
+            works_with_the_left_arm=arguments.left_arm,
+            friction_cone=(
+                mujoco.mjtCone.mjCONE_PYRAMIDAL
+                if arguments.pyramidal
+                else mujoco.mjtCone.mjCONE_ELLIPTIC
+            ),
+        )
+        if arguments.seed is not None:
+            episode.seed = arguments.seed
+        if arguments.reach is not None:
+            episode.reach = arguments.reach
+        if arguments.pitch is not None:
+            episode.grasp_pitch = math.radians(arguments.pitch)
+        if arguments.counter_height is not None:
+            episode.counter_height = arguments.counter_height
+        episode.puts_it_in_the_receptacle = not arguments.pick_only
+        episode.collision_avoidance = not arguments.no_avoidance
         try:
-            task.build_world()
-            break
-        except NoClearStandingPose as refused:
-            logger.info("episode %d: %s", attempt, refused.error_message())
+            episode.build_world()
+            started = episode.extent(episode.food.root).center.to_np()[:3].copy()
+            logger.info("episode %d: %s", attempt, episode.task.instruction)
+            episode.run()
+        except Exception as failure:
+            logger.info("episode %d stopped: %s: %s", attempt, type(failure).__name__, failure)
+            continue
+        ended = episode.extent(episode.food.root).center.to_np()[:3]
+        rose = (ended[2] - started[2]) * 100
+        logger.info(
+            "episode %d finished: the object went from %s to %s, rising %.1f cm",
+            attempt, started.round(3), ended.round(3), rose,
+        )
+        break
     else:
-        logger.error("no episode in %d put Tiago within reach", arguments.attempts)
+        logger.error("no episode of %d ran to its end", arguments.attempts)
         return
-    started = task.extent(task.food.root).center.to_np()[:3].copy()
-    logger.info("task: %s", task.task.instruction)
-    task.run()
-    ended = task.extent(task.food.root).center.to_np()[:3]
-    logger.info(
-        "the object went from %s to %s, rising %.1f cm",
-        started.round(3),
-        ended.round(3),
-        (ended[2] - started[2]) * 100,
-    )
+
     if recording is not None:
         logger.info("wrote a video to %s", recording.path)
 
