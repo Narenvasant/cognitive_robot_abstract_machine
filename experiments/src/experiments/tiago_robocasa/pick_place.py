@@ -49,6 +49,12 @@ from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger(__name__)
 
+MINIMUM_LIFT = 0.05
+"""
+How far the object has to rise above where it rested, in metres, before the episode
+counts as one where the robot got it off its support.
+"""
+
 DEFAULT_RECORDING_DIRECTORY = Path.home() / "Downloads"
 """
 Where a recording is written when one is asked for without a path.
@@ -283,6 +289,16 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             orientation_threshold=self.heading_tolerance,
         )
 
+    def release_tool_pose(self) -> Pose:
+        """
+        :return: Where the tool frame has to be for the object it holds to sit where the
+            task wants it, which is the goal carried back through the grasp.
+        """
+        return HomogeneousTransformationMatrix(
+            self.goal().to_np() @ self.grasp().grasp_pose.to_np(),
+            reference_frame=self.world.root,
+        ).pose
+
     def build_plan(self, context: Context) -> Plan:
         """
         Stand where the hand reaches the object, bring the arm there, take the object,
@@ -300,12 +316,18 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         ]
         if not self.puts_it_in_the_receptacle:
             return sequential(taking, context=context).plan
+        pick_stand = self.robot.root.parent_connection.origin
+        self.stand_where_the_hand_arrives(
+            self.release_tool_pose, self.release_point, self.placing_reach
+        )
+        place_stand = self.standing_pose(
+            self.release_point, self.placing_reach
+        )
+        self.robot.root.parent_connection.origin = pick_stand
         return sequential(
             taking
             + [
-                NavigateAction(
-                    self.standing_pose(self.release_point, self.placing_reach)
-                ),
+                NavigateAction(place_stand),
                 PlaceAction(self.food, self.goal(), rises_off_the_object=True),
                 ParkArmsAction(self.robot.all_arms),
             ],
@@ -373,6 +395,30 @@ class PickPlaceCounterToSink(TiagoPickPlaceTask):
         return float(self.extent(self.receptacle).max_z)
 
 
+@dataclass
+class PickPlaceCounterToStove(TiagoPickPlaceTask):
+    """
+    Tiago takes the food off the counter and puts it in the pan on the stove.
+
+    The pan stands on the hob at about counter height, so the hand sets the food down
+    onto a surface rather than reaching down into a basin.
+    """
+
+    seed: int = 2
+    """
+    The seed RoboCasa samples the task with.
+    """
+
+
+TASKS = {
+    "PickPlaceCounterToSink": PickPlaceCounterToSink,
+    "PickPlaceCounterToStove": PickPlaceCounterToStove,
+}
+"""
+The RoboCasa tasks Tiago can be asked for, by the name RoboCasa gives them.
+"""
+
+
 # %% running one from the command line
 
 
@@ -382,7 +428,9 @@ def main() -> None:
     """
     logging.basicConfig(level=logging.INFO, force=True)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("task", choices=["PickPlaceCounterToSink"])
+    parser.add_argument(
+        "task", choices=["PickPlaceCounterToSink", "PickPlaceCounterToStove"]
+    )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--record", nargs="?", const="", default=None, metavar="PATH")
     parser.add_argument("--viewer", action="store_true")
@@ -393,6 +441,12 @@ def main() -> None:
     parser.add_argument("--pitch", type=float, default=None, help="grasp pitch in degrees")
     parser.add_argument("--counter-height", type=float, default=None)
     parser.add_argument("--attempts", type=int, default=12)
+    parser.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="attempt every episode and report how many succeeded, rather than stopping"
+        " at the first that does",
+    )
     parser.add_argument("--pick-only", action="store_true")
     parser.add_argument("--no-avoidance", action="store_true")
     arguments = parser.parse_args()
@@ -422,8 +476,9 @@ def main() -> None:
         task.counter_height = arguments.counter_height
     if arguments.seed is not None:
         task.seed = arguments.seed
+    succeeded = 0
     for attempt in range(1, arguments.attempts + 1):
-        episode = PickPlaceCounterToSink(
+        episode = TASKS[arguments.task](
             recording=recording,
             headless=not arguments.viewer,
             noslip_iterations=arguments.noslip,
@@ -444,13 +499,21 @@ def main() -> None:
             episode.counter_height = arguments.counter_height
         episode.puts_it_in_the_receptacle = not arguments.pick_only
         episode.collision_avoidance = not arguments.no_avoidance
+        if arguments.benchmark and succeeded:
+            episode.recording = None
         try:
             episode.build_world()
             started = episode.extent(episode.food.root).center.to_np()[:3].copy()
             logger.info("episode %d: %s", attempt, episode.task.instruction)
             episode.run()
         except Exception as failure:
-            logger.info("episode %d stopped: %s: %s", attempt, type(failure).__name__, failure)
+            rose = (
+                episode.extent(episode.food.root).center.to_np()[2] - started[2]
+            ) * 100
+            logger.info(
+                "episode %d stopped after the object rose %.1f cm: %s: %s",
+                attempt, rose, type(failure).__name__, str(failure)[:90],
+            )
             continue
         ended = episode.extent(episode.food.root).center.to_np()[:3]
         rose = (ended[2] - started[2]) * 100
@@ -458,8 +521,16 @@ def main() -> None:
             "episode %d finished: the object went from %s to %s, rising %.1f cm",
             attempt, started.round(3), ended.round(3), rose,
         )
-        break
-    else:
+        if rose >= MINIMUM_LIFT * 100:
+            succeeded += 1
+            if not arguments.benchmark:
+                break
+    if arguments.benchmark:
+        logger.info(
+            "%s: %d of %d episodes ended with the object off its support",
+            arguments.task, succeeded, arguments.attempts,
+        )
+    elif succeeded == 0:
         logger.error("no episode of %d ran to its end", arguments.attempts)
         return
 

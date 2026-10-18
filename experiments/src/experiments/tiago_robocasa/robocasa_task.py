@@ -314,7 +314,12 @@ class TiagoRoboCasaTask(ABC):
         self.stand_where_nothing_touches()
         return self.world
 
-    def stand_where_the_hand_arrives(self, reaches: Callable[[], Pose]) -> None:
+    def stand_where_the_hand_arrives(
+        self,
+        reaches: Callable[[], Pose],
+        target: np.ndarray | None = None,
+        reach: float | None = None,
+    ) -> None:
         """
         Move Tiago among the clear stands until the arm can get its hand where the task
         needs it.
@@ -326,21 +331,25 @@ class TiagoRoboCasaTask(ABC):
 
         :param reaches: What the hand has to get to, read afresh at each stand because
             it is expressed against the robot.
+        :param target: What the stand is worked out from, or nothing for the task's own
+            first target.
+        :param reach: How far in front of the base that target is to be, or nothing for
+            the task's own.
         :raises NoClearStandingPose: If no clear stand lets the arm arrive.
         """
+        target = self.first_target if target is None else target
+        reach = self.reach if reach is None else reach
         self.world.collision_manager.update_collision_matrix()
         drive = self.robot.root.parent_connection
         for back, along in self.stands_to_try():
             drive.origin = self.standing_pose(
-                self.first_target + np.array([along, 0.0, 0.0]), self.reach + back
+                target + np.array([along, 0.0, 0.0]), reach + back
             ).homogeneous_matrix
             if self.robot.is_in_collision:
                 continue
             if self.can_reach(reaches()):
                 return
-        raise NoClearStandingPose(
-            target=self.first_target, tried=len(self.stands_to_try())
-        )
+        raise NoClearStandingPose(target=target, tried=len(self.stands_to_try()))
 
     def raise_the_torso(self) -> None:
         """
