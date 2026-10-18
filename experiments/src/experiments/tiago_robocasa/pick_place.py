@@ -83,6 +83,48 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     Tiago takes the task's object off where it lies and puts it into the receptacle.
     """
 
+    finger_clearance: float = 0.08
+    """
+    How far clear of the object the shut fingers wait before the hand moves on to the
+    grasp, in metres, on top of how far they reach past it.
+    """
+
+    carry_velocity: float = 0.1
+    """
+    How fast the hand travels while it is not about to touch anything, in metres per
+    second.
+    """
+
+    approach_velocity: float = 0.03
+    """
+    How fast the hand creeps the last stretch onto the grasp, in metres per second.
+    """
+
+    closing_velocity: float = 0.05
+    """
+    How fast the fingers close, in metres per second.
+    """
+
+    stall_minimum_time: float = 0.3
+    """
+    How long the fingers have to be stalled before the grasp counts as closed, in
+    seconds.
+    """
+
+    arrival_tolerance: float = 0.03
+    """
+    How close the hand has to come to a goal before it counts as reached, in metres.
+
+    Loose enough that a simulated arm, which trails what it is asked for while it
+    moves, is taken to have arrived: held to millimetres it never is, and the motion
+    gives up with the hand short of the grasp.
+    """
+
+    heading_tolerance: float = 0.15
+    """
+    How closely the hand has to face a goal before it counts as reached, in radians.
+    """
+
     lift: float = 0.15
     """
     How far the object is lifted clear of what it rested on, in metres.
@@ -204,46 +246,56 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             world_T_food, reference_frame=self.world.root
         ).pose
 
-    def prepare_contacts(self) -> None:
+    def pre_grasp(self) -> Pose:
         """
-        Have the object's contacts resolve the twisting and rolling friction it is given,
-        so it neither turns in the hand nor rolls on once it is let go.
+        :return: Where the hand waits before it moves onto the grasp, read afresh so it
+            follows the robot as the robot is moved about.
         """
-        for shape in self.food.root.collision.shapes:
-            shape.get_simulator_property_of_type(MujocoGeom).contact_dimensionality = (
-                ContactDimensionality.SLIDING_TWISTING_AND_ROLLING
-            )
+        grasp = self.grasp()
+        return (
+            self.pick_up_of(grasp)
+            .grasp_pose_sequence(grasp.world_T_grasp, self.arm.end_effector, grasp)
+            .pre_grasp
+        )
 
-    puts_it_in_the_receptacle: bool = True
-    """
-    Whether the task carries on to put the object into its receptacle, or stops once it
-    has it off the counter.
-    """
+    def pick_up_of(self, grasp: GraspCandidate) -> PickUpAction:
+        """
+        :param grasp: The grasp to take.
+        :return: The pick up taking it, with the hand creeping the last stretch onto it
+            and the fingers alone carrying what they close on.
+        """
+        arm = self.arm
+        return PickUpAction(
+            grasp,
+            arm,
+            approach_clearance=(
+                arm.end_effector.fingers_reach_beyond_the_grasp + self.finger_clearance
+            ),
+            retreat_distance=self.lift,
+            pre_approach_linear_velocity=self.carry_velocity,
+            final_approach_linear_velocity=self.approach_velocity,
+            lift_linear_velocity=self.carry_velocity,
+            grasp_closing_velocity=self.closing_velocity,
+            grasp_stall_minimum_time=self.stall_minimum_time,
+            tolerate_grasp_stall=True,
+            held_by_contact_alone=True,
+            position_threshold=self.arrival_tolerance,
+            orientation_threshold=self.heading_tolerance,
+        )
 
     def build_plan(self, context: Context) -> Plan:
         """
-        Stand in line with the object, bring the hand to where the pick up starts its
-        approach, take the object, and unless the task stops there, carry it to the
-        receptacle and put it in.
+        Stand where the hand reaches the object, bring the arm there, take the object,
+        and unless the task stops at that, carry it to the receptacle and put it in.
 
         :param context: The context to plan in.
         :return: The plan.
         """
-        arm = self.arm
-        grasp = self.grasp()
-        pick_up = PickUpAction(
-            grasp,
-            arm,
-            retreat_distance=self.lift,
-            held_by_contact_alone=True,
-            tolerate_grasp_stall=True,
-        )
-        pre_grasp = pick_up.grasp_pose_sequence(
-            grasp.world_T_grasp, arm.end_effector, grasp
-        ).pre_grasp
+        self.stand_where_the_hand_arrives(self.pre_grasp)
+        pick_up = self.pick_up_of(self.grasp())
         taking = [
             ParkArmsAction(self.robot.all_arms),
-            *self.arm_motions_to(pre_grasp),
+            *self.arm_motions_to(self.pre_grasp()),
             pick_up,
         ]
         if not self.puts_it_in_the_receptacle:
@@ -259,6 +311,16 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             ],
             context=context,
         ).plan
+
+    def prepare_contacts(self) -> None:
+        """
+        Have the object's contacts resolve the twisting and rolling friction it is
+        given, so it neither turns in the hand nor rolls on once it is let go.
+        """
+        for shape in self.food.root.collision.shapes:
+            shape.get_simulator_property_of_type(MujocoGeom).contact_dimensionality = (
+                ContactDimensionality.SLIDING_TWISTING_AND_ROLLING
+            )
 
 
 # %% the tasks
@@ -276,13 +338,22 @@ class PickPlaceCounterToSink(TiagoPickPlaceTask):
     of the sink.
     """
 
-    food_category: str | None = "canned_food"
+    food_category: str | None = None
     """
-    A can, which stands upright and is a shape two flat pads can hold.
+    Which kind of object RoboCasa is to put on the counter, or nothing to let it sample
+    whatever it likes.
+
+    Left open: holding the category fixed pins the object to the same corner of the
+    counter every time, and Tiago cannot stand at that corner.
     """
 
     @property
     def task_parameters(self) -> dict[str, Any]:
+        """
+        :return: What RoboCasa is told about the task beyond its name.
+        """
+        if self.food_category is None:
+            return {}
         return {"obj_groups": self.food_category}
 
     @property

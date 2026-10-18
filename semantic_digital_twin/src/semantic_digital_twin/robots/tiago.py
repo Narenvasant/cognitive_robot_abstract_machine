@@ -54,6 +54,7 @@ from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connection_properties import (
     DriveServos,
     JointServo,
+    JointDynamics,
     ServoGains,
 )
 from semantic_digital_twin.world_description.connections import (
@@ -666,6 +667,17 @@ class TiagoMujocoServo:
     The largest torque, or force, the servo may exert.
     """
 
+    armature: float = 0.1
+    """
+    The inertia of what spins behind the joint, in kilogram metres squared.
+
+    The description states none, and a joint with none is only as heavy as the links
+    beyond it, which for a wrist is almost nothing. Held by a servo this stiff, such a
+    joint oscillates apart within a second of simulated time and takes the arm with it.
+    A geared robot joint carries the inertia of its rotor, and stating it is what makes
+    the arm steady.
+    """
+
     @property
     def servo(self) -> JointServo:
         """
@@ -677,7 +689,8 @@ class TiagoMujocoServo:
                 stiffness=self.stiffness,
                 damping=self.damping,
                 torque_limit=self.force_limit,
-            )
+            ),
+            dynamics=JointDynamics(armature=self.armature),
         )
 
 
