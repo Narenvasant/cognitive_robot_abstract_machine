@@ -96,12 +96,35 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
     The grasps to try.
     """
 
+    headings_to_choose_from: int = 4
+    """
+    How many of the ways the drawn grasps come in are tried as ways for Tiago to face.
+    """
+
     grasps_to_try: int = 4
     """
-    How many grasps are tried from each stand: a stand the best couple cannot be taken
-    from is the wrong stand, and every grasp costs the arm a solve, of which a stand
-    search does hundreds.
+    How many grasps are tried from each stand.
+
+    Each one costs the arm a solve, of which a stand search does hundreds, so this is
+    what a run spends its time on.
     """
+
+    @property
+    def headings_to_try(self) -> tuple[float, ...]:
+        """
+        :return: The ways the drawn grasps come in, which are the ways Tiago faces to
+            take them.
+
+        A grasp says which side of the object the hand comes from, so it says where the
+        robot has to stand; facing the kitchen's quarter turns instead and hoping a
+        grasp fits is what left the arm reaching none of them.
+        """
+        headings = {}
+        for candidate in self.candidates_on_the_object():
+            approach = candidate.world_T_grasp.to_np()[:2, 0]
+            heading = float(np.arctan2(approach[1], approach[0]))
+            headings.setdefault(round(heading, 1), heading)
+        return tuple(headings.values())[: self.headings_to_choose_from]
 
     grasps_to_choose_from: int = 60
     """
@@ -118,14 +141,22 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
     The drawn grasps as grasps on the object, once they have been worked out.
     """
 
+    judged_by_the_grasp: bool = False
+    """
+    Whether an episode counts once a learned grasp has taken the object off its
+    support, which is what the model is asked for, rather than once the task it serves
+    is carried out.
+    """
+
     @property
     def task_is_done(self) -> bool:
         """
-        :return: Whether a learned grasp took the object off its support, which is what
-            this experiment asks of the model. Where the object ends up afterwards is
-            the pick-and-place task's own business.
+        :return: Whether the model did what it is asked, where the run is judged by the
+            grasp, and otherwise whether the task was carried out.
         """
-        return self.lifted >= self.minimum_lift
+        if self.judged_by_the_grasp:
+            return self.lifted >= self.minimum_lift
+        return super().task_is_done
 
     def grasp(self) -> GraspCandidate:
         """
@@ -192,7 +223,7 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
 
 
 def taking_the_learned_grasps(
-    task: Type[TiagoPickPlaceTask], learned: LearnedGrasps
+    task: Type[TiagoPickPlaceTask], learned: LearnedGrasps, by_the_grasp: bool
 ) -> Type[TiagoPickPlaceTask]:
     """
     Which pick-and-place task to run is asked for on the command line, while the grasps
@@ -200,6 +231,7 @@ def taking_the_learned_grasps(
 
     :param task: The task to run.
     :param learned: The grasps to take the object by.
+    :param by_the_grasp: Whether an episode counts once one of them lifts the object.
     :return: That task, taking the object by those grasps.
     """
     return make_dataclass(
@@ -209,7 +241,8 @@ def taking_the_learned_grasps(
                 "learned",
                 LearnedGrasps,
                 dataclass_field(default_factory=lambda: learned),
-            )
+            ),
+            ("judged_by_the_grasp", bool, dataclass_field(default=by_the_grasp)),
         ],
         bases=(PicksWithLearnedGrasps, task),
     )
@@ -225,6 +258,12 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, force=True)
     parser = parser_of(__doc__, list(TASKS))
     parser.add_argument("--grasps", type=Path, required=True)
+    parser.add_argument(
+        "--by-the-grasp",
+        action="store_true",
+        help="count an episode once a learned grasp has lifted the object, rather than"
+        " once the task it serves is carried out",
+    )
     arguments = parser.parse_args()
     learned = LearnedGrasps.read(arguments.grasps)
     logger.info(
@@ -235,7 +274,9 @@ def main() -> None:
         learned.attempts_the_model_was_learned_from,
         100 * learned.verified_lift_rate,
     )
-    task = taking_the_learned_grasps(TASKS[arguments.task], learned)
+    task = taking_the_learned_grasps(
+        TASKS[arguments.task], learned, arguments.by_the_grasp
+    )
     Trials(
         task=task,
         settings=settings_from(arguments),

@@ -397,10 +397,12 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         """
         :return: Which ways to try facing the receptacle: the way Tiago already faces
             first, since the receptacle is usually set into the same counter as what was
-            picked up, and the rest after, since it is not always.
+            picked up, and the kitchen's other quarter turns after, since it is not
+            always. Not the ways a grasp comes in: those say how to take the object up,
+            not where to stand to put it down.
         """
         return (self.heading,) + tuple(
-            heading for heading in self.headings_to_try if heading != self.heading
+            heading for heading in self.quarter_turns if heading != self.heading
         )
 
     def let_go_where_the_arm_reaches(self) -> Pose:

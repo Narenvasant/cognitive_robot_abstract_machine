@@ -332,17 +332,22 @@ class TiagoRoboCasaTask(ABC):
         return self.world.get_semantic_annotations_by_type(TiagoMujoco)[0]
 
     @property
-    def headings_to_try(self) -> tuple[float, ...]:
+    def quarter_turns(self) -> tuple[float, ...]:
         """
-        :return: Which ways Tiago is turned while a stand is looked for, as yaws in the
-            kitchen's frame.
+        :return: The ways a kitchen is worked from, as yaws in its frame.
 
         A RoboCasa kitchen runs its counters along both of the room's axes and sets its
         islands free of the walls, so which way the robot has to face to work at what
-        the task sampled is not known before the kitchen is composed, and every quarter
-        turn is tried.
+        the task sampled is not known before the kitchen is composed.
         """
         return (math.pi / 2, 0.0, math.pi, -math.pi / 2)
+
+    @property
+    def headings_to_try(self) -> tuple[float, ...]:
+        """
+        :return: Which ways Tiago is turned while a stand is looked for.
+        """
+        return self.quarter_turns
 
     heading: float = field(init=False, default=math.pi / 2)
     """
