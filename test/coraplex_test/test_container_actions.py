@@ -80,6 +80,41 @@ def test_the_handle_is_taken_hold_of_by_the_grasp_the_action_is_given(
     assert taking_hold.grasp is grasp
 
 
+@pytest.mark.parametrize("action_type", [OpenAction, CloseAction])
+def test_the_tuning_the_action_is_given_reaches_taking_hold_of_the_handle(
+    pr2_at_drawer, action_type
+):
+    """
+    A container action is tuned the way taking hold of a grasp is tuned, and a hold
+    that a physically simulated hand can keep needs that tuning passed on to it.
+    """
+    world, robot, context, handle = pr2_at_drawer
+    action = action_type(
+        handle,
+        left_or_only_arm(robot),
+        grasp_closing_velocity=0.05,
+        grasp_stall_minimum_time=0.3,
+        tolerate_grasp_stall=True,
+        position_threshold=0.03,
+    )
+    sequential([action], context)
+
+    [taking_hold] = [
+        motion for motion in motions_of(action) if isinstance(motion, GraspingAction)
+    ]
+    assert (
+        taking_hold.grasp_closing_velocity,
+        taking_hold.grasp_stall_minimum_time,
+        taking_hold.tolerate_grasp_stall,
+        taking_hold.position_threshold,
+    ) == (
+        action.grasp_closing_velocity,
+        action.grasp_stall_minimum_time,
+        action.tolerate_grasp_stall,
+        action.position_threshold,
+    )
+
+
 # %% how far closed
 
 

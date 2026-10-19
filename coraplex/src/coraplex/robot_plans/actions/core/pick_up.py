@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from typing_extensions import Any, Dict, List
 
@@ -163,13 +163,55 @@ class ReachAction(
 
 
 @dataclass
-class PickUpAction(
-    ActionDescription,
-    HasGraspChoice,
+class TakesHoldOfAGrasp(
     HasApproachesGraspPoses,
     PickUpTuningParameters,
     HasGraspDetectionThreshold,
     HasTcpGoalThresholds,
+):
+    """
+    An action that has the robot take hold of a grasp along the way, and that is tuned
+    the way taking hold of one is tuned.
+    """
+
+    tolerate_grasp_stall: bool = field(default=False, kw_only=True)
+    """
+    Whether the CLOSE motion's completion also tolerates a stalled grasp (see
+    :attr:`~coraplex.robot_plans.motions.gripper.MoveGripperMotion.tolerate_stall`).
+
+    Opt-in rather than always on: building the stall monitor needs a velocity variable
+    for every one of the gripper's connections, which is not guaranteed for every robot
+    -- it crashes on Tracy's real-execution gripper, whose connections do not all have
+    one.
+    """
+
+    def grasping_of(self, grasp: GraspCandidate, arm: Arm) -> GraspingAction:
+        """
+        :param grasp: The grasp to take.
+        :param arm: The arm that takes it.
+        :return: Reaching onto that grasp and closing on it, tuned as this action is.
+        """
+        return GraspingAction(
+            grasp=grasp,
+            arm=arm,
+            approach_clearance=self.approach_clearance,
+            retreat_distance=self.retreat_distance,
+            pre_approach_linear_velocity=self.pre_approach_linear_velocity,
+            final_approach_linear_velocity=self.final_approach_linear_velocity,
+            grasp_closing_velocity=self.grasp_closing_velocity,
+            grasp_stall_minimum_time=self.grasp_stall_minimum_time,
+            tolerate_grasp_stall=self.tolerate_grasp_stall,
+            grasp_detection_threshold=self.grasp_detection_threshold,
+            position_threshold=self.position_threshold,
+            orientation_threshold=self.orientation_threshold,
+        )
+
+
+@dataclass
+class PickUpAction(
+    ActionDescription,
+    HasGraspChoice,
+    TakesHoldOfAGrasp,
 ):
     """
     Let the robot pick up an object: take hold of it and lift it clear of its support.
@@ -186,17 +228,6 @@ class PickUpAction(
     the thing being shown.
     """
 
-    tolerate_grasp_stall: bool = False
-    """
-    Whether the CLOSE motion's completion also tolerates a stalled grasp (see
-    :attr:`~coraplex.robot_plans.motions.gripper.MoveGripperMotion.tolerate_stall`).
-
-    Opt-in rather than always on: building the stall monitor needs a velocity variable
-    for every one of the gripper's connections, which is not guaranteed for every robot
-    -- it crashes on Tracy's real-execution gripper, whose connections do not all have
-    one.
-    """
-
     def _grasp_attempt_plan(self) -> PlanNode:
         """
         A pick-up is a grasp the world is usually told about: the object hangs off the
@@ -206,22 +237,7 @@ class PickUpAction(
 
         :return: One attempt at taking :attr:`grasp`, without lifting the object.
         """
-        taking: List[PlanNode] = [
-            GraspingAction(
-                grasp=self.grasp,
-                arm=self.arm,
-                approach_clearance=self.approach_clearance,
-                retreat_distance=self.retreat_distance,
-                pre_approach_linear_velocity=self.pre_approach_linear_velocity,
-                final_approach_linear_velocity=self.final_approach_linear_velocity,
-                grasp_closing_velocity=self.grasp_closing_velocity,
-                grasp_stall_minimum_time=self.grasp_stall_minimum_time,
-                tolerate_grasp_stall=self.tolerate_grasp_stall,
-                grasp_detection_threshold=self.grasp_detection_threshold,
-                position_threshold=self.position_threshold,
-                orientation_threshold=self.orientation_threshold,
-            )
-        ]
+        taking: List[PlanNode] = [self.grasping_of(self.grasp, self.arm)]
         if not self.held_by_contact_alone:
             taking.append(
                 ReAttachNode(

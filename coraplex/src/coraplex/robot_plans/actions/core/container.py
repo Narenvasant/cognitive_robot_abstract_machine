@@ -16,8 +16,7 @@ from coraplex.plans.factories import sequential
 from coraplex.plans.plan_node import PlanNode
 from coraplex.querying.predicates import GripperIsFree
 from coraplex.robot_plans.actions.base import ActionDescription
-from coraplex.robot_plans.actions.core.pick_up import GraspingAction
-from coraplex.robot_plans.mixins import HasApproachesGraspPoses
+from coraplex.robot_plans.actions.core.pick_up import TakesHoldOfAGrasp
 from coraplex.robot_plans.motions.base import BaseMotion
 from coraplex.robot_plans.motions.container import OpeningMotion, ClosingMotion
 from coraplex.robot_plans.motions.gripper import (
@@ -35,7 +34,7 @@ from semantic_digital_twin.world_description.connections import ActiveConnection
 
 
 @dataclass
-class ContainerAction(ActionDescription, HasApproachesGraspPoses):
+class ContainerAction(ActionDescription, TakesHoldOfAGrasp):
     """
     Moves a container like object by its handle.
 
@@ -99,11 +98,7 @@ class ContainerAction(ActionDescription, HasApproachesGraspPoses):
         handle_grasp = self.handle_grasp
         return sequential(
             [
-                GraspingAction(
-                    handle_grasp,
-                    self.arm,
-                    approach_clearance=self.approach_clearance,
-                ),
+                self.grasping_of(handle_grasp, self.arm),
                 self._mechanism_motion,
                 MoveGripperMotion(
                     GripperState.OPEN,
@@ -114,6 +109,8 @@ class ContainerAction(ActionDescription, HasApproachesGraspPoses):
                     self.back_off_pose(handle_grasp.grasp_pose, self.arm.end_effector),
                     self.arm,
                     allow_gripper_collision=True,
+                    position_threshold=self.position_threshold,
+                    orientation_threshold=self.orientation_threshold,
                 ),
             ]
         )
