@@ -490,8 +490,11 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         """
         :return: Whether the object has come to rest over the receptacle's floor and no
             higher than it was let go, which is what being put there means, whether the
-            receptacle is a basin it falls into or a top it lands on.
+            receptacle is a basin it falls into or a top it lands on. Nothing that was
+            never let go is in it.
         """
+        if self.release_target is None:
+            return False
         floor = self.receptacle_floor
         here = self.extent(self.food.root).center.to_np()[:3]
         return bool(

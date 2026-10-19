@@ -55,8 +55,14 @@ from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.spatial_types.spatial_types import Point2, Pose
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.geometry import VolumetricBoundingBox
+from random_events.interval import closed
+from random_events.product_algebra import SimpleEvent
+from semantic_digital_twin.datastructures.variables import SpatialVariables
 from semantic_digital_twin.world_description.graph_of_convex_sets.boxes import (
     PlanarGraphOfBoundingBoxes,
+)
+from semantic_digital_twin.world_description.shape_collection import (
+    BoundingBoxCollection,
 )
 from semantic_digital_twin.world_description.world_entity import Body
 
@@ -458,6 +464,42 @@ class TiagoRoboCasaTask(ABC):
     """
     How far the planned way keeps the base off the kitchen, in metres.
     """
+    floor_clearance: float = 0.05
+    """
+    How far above the floor the base's way is planned, in metres: the floor is a body of
+    the kitchen like any other, and a way planned from the ground up has the robot
+    standing in it everywhere.
+    """
+
+    def floor_plan(self) -> PlanarGraphOfBoundingBoxes:
+        """
+        :return: The kitchen's free space as the base sees it: what is in the way
+            between just above the floor and the top of the base, so that neither the
+            floor underneath nor the counters the arm reaches over count as obstacles.
+        """
+        base = self.extent(self.robot.root)
+        search_space = BoundingBoxCollection.from_simple_event(
+            VolumetricBoundingBox,
+            reference_frame=self.world.root,
+            simple_event=SimpleEvent.from_data(
+                {
+                    SpatialVariables.x.value: closed(
+                        -self.kitchen_range, self.kitchen_range
+                    ),
+                    SpatialVariables.y.value: closed(
+                        -self.kitchen_range, self.kitchen_range
+                    ),
+                    SpatialVariables.z.value: closed(
+                        self.floor_clearance, float(base.max_z)
+                    ),
+                }
+            ),
+        )
+        return PlanarGraphOfBoundingBoxes.navigation_map_from_world(
+            world=self.world,
+            search_space=search_space,
+            bloat_obstacles=self.base_clearance,
+        )
 
     def drive_to(self, stand: Pose) -> list[NavigateAction]:
         """
@@ -469,12 +511,7 @@ class TiagoRoboCasaTask(ABC):
         :return: Driving there, one leg per corner of the planned way.
         :raises NoWayToTheStand: If the free space holds no way there.
         """
-        navigation = PlanarGraphOfBoundingBoxes.navigation_map_at_target(
-            self.world.root,
-            search_range_x=self.kitchen_range,
-            search_range_y=self.kitchen_range,
-            bloat_obstacles=self.base_clearance,
-        )
+        navigation = self.floor_plan()
         here = self.stands_at
         corners = navigation.path_from_to(
             Point2(here.position.x, here.position.y, reference_frame=self.world.root),
@@ -730,6 +767,7 @@ class TiagoRoboCasaTask(ABC):
             if isinstance(connection, ActiveConnection1DOF)
         ]
         with self.world.reset_state_context():
+            self.straighten_the_arm()
             with ExecutionEnvironment(
                 ExecutionType.KINEMATICALLY_SIMULATED,
                 collision_avoidance=self.collision_avoidance,
@@ -748,6 +786,20 @@ class TiagoRoboCasaTask(ABC):
                 names=[joint.name.name for joint in joints], positions=positions
             )
         ]
+
+    def straighten_the_arm(self) -> None:
+        """
+        Put the working arm straight out before a goal is solved for.
+
+        The solver walks the arm from wherever it stands, and out of the folded park
+        pose it gets nowhere: of the stands that leave an object on the counter within
+        reach, it finds none, while from the arm straight out it finds them. What the
+        fold costs is the solve, not the motion -- the physical run starts from the park
+        pose and gets there.
+        """
+        for connection in self.arm.active_connections:
+            if isinstance(connection, ActiveConnection1DOF):
+                connection.position = 0.0
 
     def prepare_contacts(self) -> None:
         """
