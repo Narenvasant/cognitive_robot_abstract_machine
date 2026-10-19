@@ -21,7 +21,6 @@ import numpy as np
 from coraplex.datastructures.dataclasses import Context
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan import Plan
-from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
@@ -318,47 +317,61 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             np.arange(lower + inset, upper - inset + self.release_step / 2, self.release_step)
         )
 
-    def let_go_where_the_arm_reaches(self) -> Pose:
+    def can_let_go_over_the_receptacle(self) -> bool:
         """
-        Pick the place over the receptacle the object is let go at, preferring one the
-        arm reaches from where it picked the object up: a receptacle that stands in the
-        counter is worked without driving anywhere.
+        Try the places the object could be let go at from where Tiago stands, nearest
+        first, and keep the first one the arm reaches as :attr:`release_target`.
 
-        Somewhere else to stand is looked for facing the way Tiago already faces: the
-        receptacle stands in the same counter as what was picked up, so it is worked
-        from the same side.
-
-        :return: Where Tiago stands to let it go there.
-        :raises NoPlaceToLetGo: If the arm reaches none of the places tried.
+        :return: Whether the arm reaches any of them.
         """
-        places = self.release_points()
-        for place in places:
+        for place in self.release_points():
             self.release_target = place
             if self.can_reach(self.release_tool_pose()):
-                logger.info(
-                    "letting go at %s, from where it picked the object up",
-                    place.round(3),
-                )
-                return self.stands_at
+                return True
+        self.release_target = None
+        return False
+
+    def let_go_where_the_arm_reaches(self) -> Pose:
+        """
+        Pick the place over the receptacle the object is let go at, from where it picked
+        the object up if the arm reaches that far: a receptacle set into the same counter
+        is worked without driving anywhere.
+
+        Somewhere else to stand is looked for in front of the receptacle and facing the
+        way Tiago already faces, since the receptacle is worked from the same side of
+        the counter as what was picked up.
+
+        :return: Where Tiago stands to let the object go.
+        :raises NoPlaceToLetGo: If the arm reaches no place over the receptacle from
+            anywhere it can stand.
+        """
+        if self.can_let_go_over_the_receptacle():
+            logger.info(
+                "letting go at %s, from where it picked the object up",
+                self.release_target.round(3),
+            )
+            return self.stands_at
         logger.info(
-            "none of the %d places over the %s can be reached from where the object was"
-            " picked up; looking for somewhere else to stand",
-            len(places),
+            "nowhere over the %s can be reached from where the object was picked up;"
+            " looking for somewhere to stand in front of it",
             self.receptacle.name.name,
         )
-        for place in places:
-            self.release_target = place
-            stand = self.stand_that_reaches(
-                self.release_tool_pose,
-                place,
-                self.placing_reach,
-                headings=(self.heading,),
-            ).stand
-            if stand is not None:
-                logger.info("letting go at %s, from somewhere else", place.round(3))
-                return stand
-        self.release_target = None
-        raise NoPlaceToLetGo(receptacle=self.receptacle.name.name, tried=len(places))
+        search = self.stand_that_reaches(
+            self.can_let_go_over_the_receptacle,
+            self.receptacle_floor.center.to_np()[:3],
+            self.placing_reach,
+            headings=(self.heading,),
+        )
+        if search.stand is None:
+            raise NoPlaceToLetGo(
+                receptacle=self.receptacle.name.name, tried=search.clear
+            )
+        logger.info(
+            "letting go at %s, from in front of the %s",
+            self.release_target.round(3),
+            self.receptacle.name.name,
+        )
+        return search.stand
 
     def goal(self) -> Pose:
         """
@@ -371,6 +384,14 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         return HomogeneousTransformationMatrix(
             world_T_food, reference_frame=self.world.root
         ).pose
+
+    def reaches_the_pre_grasp(self) -> bool:
+        """
+        :return: Whether the arm gets the hand to where it waits before taking the
+            object, worked out afresh because that pose follows Tiago as Tiago is moved
+            about.
+        """
+        return self.can_reach(self.pre_grasp())
 
     def pre_grasp(self) -> Pose:
         """
@@ -423,12 +444,13 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     def build_plan(self, context: Context) -> Plan:
         """
         Stand where the hand reaches the object, bring the arm there, take the object,
-        carry it to the receptacle and put it in.
+        carry it to the receptacle along a way planned through the kitchen's free space,
+        and put it in.
 
         :param context: The context to plan in.
         :return: The plan.
         """
-        self.stand_where_the_hand_arrives(self.pre_grasp)
+        self.stand_where_the_hand_arrives(self.reaches_the_pre_grasp)
         self.grasp_taken = self.grasp()
         pick_up = self.pick_up_of(self.grasp_taken)
         taking = [
@@ -441,8 +463,8 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         self.robot.root.parent_connection.origin = pick_stand
         return sequential(
             taking
+            + self.drive_to(place_stand)
             + [
-                NavigateAction(place_stand),
                 PlaceAction(self.food, self.goal(), rises_off_the_object=True),
                 ParkArmsAction(self.robot.all_arms),
             ],

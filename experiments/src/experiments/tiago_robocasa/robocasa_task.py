@@ -405,7 +405,7 @@ class TiagoRoboCasaTask(ABC):
                     ],
                 )
             )
-            self.let_the_arm_work_among(self.handled_bodies)
+            self.let_the_arms_work_among(self.handled_bodies)
         self.raise_the_torso()
         self.stand_where_nothing_touches()
         return self.world
@@ -413,27 +413,32 @@ class TiagoRoboCasaTask(ABC):
     @property
     def handled_bodies(self) -> list[Body]:
         """
-        :return: The bodies the hand works right among, which the rest of the working
-            arm may touch as the hand does. Nothing, unless the task names them.
+        :return: The bodies Tiago's arms work right among, which they may touch as the
+            hand does. Nothing, unless the task names them.
         """
         return []
 
-    def let_the_arm_work_among(self, handled: list[Body]) -> None:
+    def let_the_arms_work_among(self, handled: list[Body]) -> None:
         """
-        Allow the working arm to touch what the hand works among.
+        Allow both of Tiago's arms to touch what it works among.
 
-        The whole arm rather than its wrist alone: an arm that holds a handle while the
-        fixture swings or slides towards it has every link of its last stretch against
-        the moving part, and which one that is depends on the fixture.
+        Whole arms rather than their wrists alone: an arm that holds a handle while the
+        fixture slides or swings towards it has every link of its last stretch against
+        the moving part. Both arms rather than the working one alone: working a fixture
+        brings Tiago up against it, closer than the clearance the idle arm at its other
+        side is otherwise held to.
 
-        :param handled: What the hand works among.
+        :param handled: What the arms work among.
         """
         if not handled:
             return
         self.world.collision_manager.add_ignore_collision_rule(
             AllowCollisionBetweenGroups(
                 body_group_a=[
-                    body for body in self.arm.bodies if body.has_collision()
+                    body
+                    for arm in self.robot.all_arms
+                    for body in arm.bodies
+                    if body.has_collision()
                 ],
                 body_group_b=handled,
             )
@@ -507,22 +512,22 @@ class TiagoRoboCasaTask(ABC):
 
     def stand_that_reaches(
         self,
-        reaches: Callable[[], Pose],
+        arrives: Callable[[], bool],
         target: np.ndarray | None = None,
         reach: float | None = None,
         headings: tuple[float, ...] | None = None,
     ) -> StandSearch:
         """
-        Move Tiago among the clear stands until the arm can get its hand where the task
-        needs it, and leave it standing there.
+        Move Tiago among the clear stands until the arm can do what the task needs, and
+        leave it standing there.
 
-        Standing clear of the kitchen is not enough: the stand also has to leave the
-        goal within the arm's working envelope, which depends on the goal and so cannot
-        be read off the stand alone. Each candidate is tried in a kinematic world, which
-        costs nothing and leaves the scene as it was.
+        Standing clear of the kitchen is not enough: the stand also has to leave what the
+        arm is for within its working envelope, which depends on where that is and so
+        cannot be read off the stand alone. Each candidate is tried in a kinematic world,
+        which costs nothing and leaves the scene as it was.
 
-        :param reaches: What the hand has to get to, read afresh at each stand because
-            it is expressed against the robot.
+        :param arrives: Whether the arm gets where the task needs it from where Tiago
+            now stands, asked afresh at each stand.
         :param target: What the stand is worked out from, or nothing for the task's own
             first target.
         :param reach: How far in front of the base that target is to be, or nothing for
@@ -543,7 +548,7 @@ class TiagoRoboCasaTask(ABC):
             if self.robot.is_in_collision:
                 continue
             clear += 1
-            if self.can_reach(reaches()):
+            if arrives():
                 return StandSearch(
                     target=target, stand=stand, tried=len(stands), clear=clear
                 )
@@ -553,7 +558,7 @@ class TiagoRoboCasaTask(ABC):
 
     def stand_where_the_hand_arrives(
         self,
-        reaches: Callable[[], Pose],
+        arrives: Callable[[], bool],
         target: np.ndarray | None = None,
         reach: float | None = None,
     ) -> Pose:
@@ -563,7 +568,7 @@ class TiagoRoboCasaTask(ABC):
         :raises NoReachableStandingPose: If it stands clear somewhere but the arm
             arrives from none of those stands.
         """
-        search = self.stand_that_reaches(reaches, target, reach)
+        search = self.stand_that_reaches(arrives, target, reach)
         if search.stand is not None:
             return search.stand
         if search.clear == 0:
