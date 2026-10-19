@@ -41,7 +41,6 @@ from semantic_digital_twin.world_description.connections import (
 )
 from semantic_digital_twin.world_description.world_entity import Body
 
-
 # %% a task that moves a fixture by its handle
 
 
@@ -80,14 +79,17 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
     finger_clearance: float = 0.015
     """
     How much room the open fingers are given to pass the handle, in metres, on top of
-    how far they reach past the grasp. The hand waits that far in front of the handle
-    and backs off that far again.
+    how far they reach past the grasp.
+
+    The hand waits that far in front of the handle and backs off that far again.
     """
 
     stall_minimum_time: float = 0.3
     """
     How long the fingers have to be stalled before the handle counts as held, in
-    seconds. Closing on a bar stalls the fingers rather than shutting them.
+    seconds.
+
+    Closing on a bar stalls the fingers rather than shutting them.
     """
 
     closing_velocity: float = 0.05
@@ -97,18 +99,26 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
 
     pull_velocity: float = 0.05
     """
-    How fast the hand draws the fixture along, in metres per second. Slower than the
-    hand carries an object: the fingers only hold the handle by friction, and the
+    How fast the hand draws the fixture along, in metres per second.
+
+    Slower than the hand carries an object: the fingers only hold the handle by friction, and the
     fixture's own drag works against them the whole way.
     """
 
-    impedance_ratio: float = 30.0
+    pull_overshoot: float = 0.06
+    """
+    How far past where the fixture stops the hand is drawn, in metres: the fingers lose
+    a little of the handle to slip the whole way along, and without it the fixture ends
+    up short of where the task wants it.
+    """
+
+    impedance_ratio: float = 50.0
     """
     Stiffer friction than carrying an object needs: the fingers have to hold a bar
     against a drawer's drag rather than against an object's weight.
     """
 
-    noslip_iterations: int = 20
+    noslip_iterations: int = 30
     """
     More passes than carrying an object needs, for the same reason as
     :attr:`impedance_ratio`.
@@ -144,6 +154,15 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         """
         :return: Where the mechanism's joint is to end up.
         """
+
+    @property
+    def pull_goal(self) -> float:
+        """
+        :return: Where the hand draws the mechanism's joint to, which is
+            :attr:`pull_overshoot` past where the fixture stops.
+        """
+        goal = self.goal_position
+        return goal + math.copysign(self.pull_overshoot, goal - self.mechanism.position)
 
     # %% the fixture
 
@@ -201,9 +220,7 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         :return: The one way that faces the fixture, read off which way its handle
             stands out from the part that moves.
         """
-        outward = (
-            self.handle_middle - self.extent(self.moving_part).center.to_np()[:3]
-        )
+        outward = self.handle_middle - self.extent(self.moving_part).center.to_np()[:3]
         return (float(np.arctan2(-outward[1], -outward[0])),)
 
     @property
@@ -211,9 +228,7 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         """
         :return: How far along its joint the fixture now stands.
         """
-        return (
-            f"{self.moving_part.name.name} stands at {self.travel:.0%} of its travel"
-        )
+        return f"{self.moving_part.name.name} stands at {self.travel:.0%} of its travel"
 
     # %% where things stand once the fixture has moved
 
@@ -263,9 +278,7 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         """
         handle = self.handle
         closed = self.mechanism.dof.limits.lower.position
-        closed_middle = (
-            self.shift_to(closed) @ np.append(self.handle_middle, 1.0)
-        )[:3]
+        closed_middle = (self.shift_to(closed) @ np.append(self.handle_middle, 1.0))[:3]
         world_T_closed_grasp = HomogeneousTransformationMatrix.from_xyz_rpy(
             *closed_middle,
             roll=math.pi / 2,
@@ -311,8 +324,7 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
             envelope at a handle's height is only centimetres deep.
         """
         return float(
-            self.arm.end_effector.fingers_reach_beyond_the_grasp
-            + self.finger_clearance
+            self.arm.end_effector.fingers_reach_beyond_the_grasp + self.finger_clearance
         )
 
     def pre_grasp(self) -> Pose:
@@ -348,7 +360,7 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         )
         grasp = self.handle_grasp()
         pre_grasp = self.pre_grasp()
-        goal = self.goal_position
+        goal = self.pull_goal
         return sequential(
             [
                 ParkArmsAction(self.robot.all_arms),

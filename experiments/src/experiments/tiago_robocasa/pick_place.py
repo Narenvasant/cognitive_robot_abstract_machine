@@ -47,7 +47,6 @@ from semantic_digital_twin.world_description.world_entity import Body
 logger = logging.getLogger(__name__)
 
 
-
 # %% the objects a pick and place task names
 
 
@@ -143,6 +142,13 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     How far apart the places over the receptacle's floor are that letting go is tried
     at, in metres. Coarse, because what is let go above a receptacle falls into it
     wherever over its floor it is let go, and every place costs the arm a solve.
+    """
+
+    places_to_try: int = 4
+    """
+    How many of the places over the receptacle are tried from each stand, nearest
+    first: a stand the nearest few cannot be reached from is the wrong stand, and every
+    place costs the arm a solve.
     """
 
     release_target: np.ndarray | None = field(default=None, init=False)
@@ -314,17 +320,19 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         if upper - lower < 2 * inset:
             return [(lower + upper) / 2]
         return list(
-            np.arange(lower + inset, upper - inset + self.release_step / 2, self.release_step)
+            np.arange(
+                lower + inset, upper - inset + self.release_step / 2, self.release_step
+            )
         )
 
     def can_let_go_over_the_receptacle(self) -> bool:
         """
-        Try the places the object could be let go at from where Tiago stands, nearest
-        first, and keep the first one the arm reaches as :attr:`release_target`.
+        Try the nearest places the object could be let go at from where Tiago stands and
+        keep the first one the arm reaches as :attr:`release_target`.
 
         :return: Whether the arm reaches any of them.
         """
-        for place in self.release_points():
+        for place in self.release_points()[: self.places_to_try]:
             self.release_target = place
             if self.can_reach(self.release_tool_pose()):
                 return True
@@ -380,7 +388,9 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         """
         body = self.food.root
         world_T_food = body.global_pose.to_np()
-        world_T_food[:3, 3] += self.release_target - self.extent(body).center.to_np()[:3]
+        world_T_food[:3, 3] += (
+            self.release_target - self.extent(body).center.to_np()[:3]
+        )
         return HomogeneousTransformationMatrix(
             world_T_food, reference_frame=self.world.root
         ).pose

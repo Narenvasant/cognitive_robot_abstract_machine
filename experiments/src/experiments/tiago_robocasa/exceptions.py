@@ -72,8 +72,8 @@ class NoReachableStandingPose(DataclassException):
 @dataclass
 class NoPlaceToLetGo(DataclassException):
     """
-    Raised when the arm reaches nowhere over a receptacle that the object it holds
-    could be let go above.
+    Raised when the arm reaches nowhere over a receptacle that the object it holds could
+    be let go above.
     """
 
     receptacle: str

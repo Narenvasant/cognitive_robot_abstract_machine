@@ -30,8 +30,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EpisodeSettings:
     """
-    How each episode of a run is set up. What is left as ``None`` is left as the task
-    itself has it.
+    How each episode of a run is set up.
+
+    What is left as ``None`` is left as the task itself has it.
     """
 
     recording: SceneRecording | None = None
@@ -134,8 +135,8 @@ class Trials:
 
     tries_every_kitchen: bool = False
     """
-    Whether every kitchen is tried, to count how many the task comes off in, rather
-    than stopping at the first it does.
+    Whether every kitchen is tried, to count how many the task comes off in, rather than
+    stopping at the first it does.
     """
 
     done: int = field(init=False, default=0)
@@ -254,9 +255,11 @@ def settings_from(arguments: argparse.Namespace) -> EpisodeSettings:
     recording = None
     if arguments.record is not None:
         recording = SceneRecording(
-            path=Path(arguments.record)
-            if arguments.record
-            else Path.home() / "Downloads" / f"tiago_{arguments.task.lower()}.mp4"
+            path=(
+                Path(arguments.record)
+                if arguments.record
+                else Path.home() / "Downloads" / f"tiago_{arguments.task.lower()}.mp4"
+            )
         )
     return EpisodeSettings(
         recording=recording,

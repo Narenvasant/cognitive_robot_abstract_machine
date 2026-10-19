@@ -116,8 +116,9 @@ class StandSearch:
 @dataclass
 class TiagoRoboCasaTask(ABC):
     """
-    One of RoboCasa's tasks, performed by Tiago. Each task is a subclass named after the
-    RoboCasa task it performs.
+    One of RoboCasa's tasks, performed by Tiago.
+
+    Each task is a subclass named after the RoboCasa task it performs.
     """
 
     layout: Any = None
@@ -221,9 +222,9 @@ class TiagoRoboCasaTask(ABC):
     """
     Which constraint solver MuJoCo uses.
 
-    The conjugate-gradient one, rather than MuJoCo's default Newton: Newton factorizes
-    a Hessian that this kitchen, with the robot's hand among its fixtures, makes
-    rank-deficient, and the simulation stops dead when it does.
+    The conjugate-gradient one, rather than MuJoCo's default Newton: Newton factorizes a
+    Hessian that this kitchen, with the robot's hand among its fixtures, makes rank-
+    deficient, and the simulation stops dead when it does.
     """
 
     friction_cone: Any = mujoco.mjtCone.mjCONE_ELLIPTIC
@@ -332,7 +333,6 @@ class TiagoRoboCasaTask(ABC):
     """
     Which way Tiago faces where it now stands.
     """
-
     works_with_the_left_arm: bool = False
     """
     Which of Tiago's two arms does the work.
@@ -450,7 +450,6 @@ class TiagoRoboCasaTask(ABC):
     metres: wide enough for the whole room, since a task may send Tiago from one wall
     to another.
     """
-
     base_clearance: float = 0.05
     """
     How far the planned way keeps the base off the kitchen, in metres.
@@ -552,9 +551,7 @@ class TiagoRoboCasaTask(ABC):
                 return StandSearch(
                     target=target, stand=stand, tried=len(stands), clear=clear
                 )
-        return StandSearch(
-            target=target, stand=None, tried=len(stands), clear=clear
-        )
+        return StandSearch(target=target, stand=None, tried=len(stands), clear=clear)
 
     def stand_where_the_hand_arrives(
         self,
@@ -701,17 +698,15 @@ class TiagoRoboCasaTask(ABC):
         Bring the arm to a tool frame goal in joint space.
 
         Where the arm is to go is worked out in a kinematically simulated world, which
-        the goal is reachable in, and the joints it ends up in are what the physical
-        run is asked for. A tool frame goal given to the physical run directly stalls:
-        the arm is still on its way when the controller is satisfied, and the hand ends
-        up short of what it is reaching for.
+        the goal is reachable in, and the joints it ends up in are what the physical run
+        is asked for. A tool frame goal given to the physical run directly stalls: the
+        arm is still on its way when the controller is satisfied, and the hand ends up
+        short of what it is reaching for.
 
         :param tool_frame_goal: Where the tool frame is to be.
         :return: The motion bringing the arm there.
         """
-        context = Context(
-            world=self.world, robot=self.robot, evaluate_conditions=False
-        )
+        context = Context(world=self.world, robot=self.robot, evaluate_conditions=False)
         joints = [
             connection
             for connection in self.arm.active_connections
@@ -740,7 +735,9 @@ class TiagoRoboCasaTask(ABC):
     def prepare_contacts(self) -> None:
         """
         Set up how the task's objects make contact in MuJoCo, before the simulation is
-        built. Leaves them as RoboCasa gives them.
+        built.
+
+        Leaves them as RoboCasa gives them.
         """
 
     def camera_on(self, target: np.ndarray, distance: float = 2.5) -> ViewerCamera:

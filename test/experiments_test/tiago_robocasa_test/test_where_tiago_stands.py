@@ -30,14 +30,16 @@ def test_the_nearest_stand_facing_the_counter_is_tried_first():
 
 def test_every_heading_is_tried_at_every_stand():
     """
-    Which way Tiago has to face is not known before the kitchen is composed, so each
-    way round is tried with the same steps back and along.
+    Which way Tiago has to face is not known before the kitchen is composed, so each way
+    round is tried with the same steps back and along.
     """
     task = PickPlaceCounterToSink()
     stands = task.stands_to_try()
 
     steps_of_each_heading = {
-        heading: {(stand.back, stand.along) for stand in stands if stand.heading == heading}
+        heading: {
+            (stand.back, stand.along) for stand in stands if stand.heading == heading
+        }
         for heading in task.headings_to_try
     }
     assert len(stands) == len(task.headings_to_try) * len(
@@ -55,9 +57,7 @@ def test_the_stands_step_back_no_further_than_the_search_reaches():
     stands = task.stands_to_try()
 
     assert max(stand.back for stand in stands) == pytest.approx(task.stand_search)
-    assert max(abs(stand.along) for stand in stands) == pytest.approx(
-        task.stand_search
-    )
+    assert max(abs(stand.along) for stand in stands) == pytest.approx(task.stand_search)
 
 
 # %% the places a task tries letting go at
