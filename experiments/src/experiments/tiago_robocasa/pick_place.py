@@ -12,9 +12,10 @@ Run one with (the ``experiments`` package must be importable)::
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -24,8 +25,11 @@ from coraplex.plans.plan import Plan
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
-from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
+from experiments.hsr_robocasa.robocasa_task import FixtureReference
+from experiments.tiago_robocasa.drawers import TiagoDrawerTask
 from experiments.tiago_robocasa.exceptions import NoPlaceToLetGo
+from experiments.tiago_robocasa.handles import TiagoHandleTask
+from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
 from semantic_digital_twin.adapters.multi_sim import (
     ContactDimensionality,
@@ -484,15 +488,16 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     @property
     def object_is_in_the_receptacle(self) -> bool:
         """
-        :return: Whether the object has come to rest over the receptacle's floor and
-            below its rim, which is what being in it means.
+        :return: Whether the object has come to rest over the receptacle's floor and no
+            higher than it was let go, which is what being put there means, whether the
+            receptacle is a basin it falls into or a top it lands on.
         """
         floor = self.receptacle_floor
         here = self.extent(self.food.root).center.to_np()[:3]
         return bool(
             floor.min_x <= here[0] <= floor.max_x
             and floor.min_y <= here[1] <= floor.max_y
-            and here[2] < self.release_height
+            and here[2] <= self.release_target[2] + self.release_clearance
         )
 
     def prepare_contacts(self) -> None:
@@ -571,9 +576,82 @@ class PickPlaceCounterToStove(TiagoPickPlaceTask):
     """
 
 
+@dataclass
+class PickPlaceDrawerToCounter(TiagoPickPlaceTask, TiagoDrawerTask):
+    """
+    Tiago pulls the drawer open, takes the object out of it and puts it on the counter
+    above it.
+    """
+
+    seed: int = 9
+    """
+    The seed RoboCasa samples the task with.
+    """
+
+    grasp_pitch: float = math.pi / 3
+    """
+    Steeper than over a counter: the hand reaches down into an open drawer, and a
+    shallower approach brings the wrist against the drawer's front.
+    """
+
+    @property
+    def stages(self) -> list[Callable[[Context], Plan]]:
+        """
+        :return: Pulling the drawer open, and then taking the object out of where it
+            has come to rest and putting it on the counter.
+        """
+        return [self.open_the_drawer, self.take_the_object_out]
+
+    def open_the_drawer(self, context: Context) -> Plan:
+        """
+        :param context: The context to plan in.
+        :return: The plan that draws the drawer open by its handle.
+        """
+        return TiagoHandleTask.build_plan(self, context)
+
+    def take_the_object_out(self, context: Context) -> Plan:
+        """
+        :param context: The context to plan in.
+        :return: The plan that takes the object out of the open drawer and puts it on
+            the counter.
+        """
+        return TiagoPickPlaceTask.build_plan(self, context)
+
+    @property
+    def goal_position(self) -> float:
+        """
+        :return: The end of the drawer's rails, since the object comes out from under
+            the counter with the drawer.
+        """
+        return float(self.mechanism.dof.limits.upper.position)
+
+    @property
+    def task_is_done(self) -> bool:
+        """
+        :return: Whether the object now rests on the counter.
+        """
+        return self.object_is_in_the_receptacle
+
+    @property
+    def receptacle(self) -> Body:
+        """
+        :return: The counter above the drawer.
+        """
+        return self.task.referenced_fixtures[FixtureReference.COUNTER]
+
+    @property
+    def handled_bodies(self) -> list[Body]:
+        """
+        :return: The drawer's fixture, which Tiago stands against, and the counter it
+            reaches across.
+        """
+        return super().handled_bodies + self.colliding_bodies_below(self.receptacle)
+
+
 TASKS = {
     "PickPlaceCounterToSink": PickPlaceCounterToSink,
     "PickPlaceCounterToStove": PickPlaceCounterToStove,
+    "PickPlaceDrawerToCounter": PickPlaceDrawerToCounter,
 }
 """
 The RoboCasa tasks Tiago can be asked for, by the name RoboCasa gives them.

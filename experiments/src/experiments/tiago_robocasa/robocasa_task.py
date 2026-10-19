@@ -46,7 +46,10 @@ from semantic_digital_twin.adapters.robocasa_dataset.loader import (
 from semantic_digital_twin.collision_checking.collision_rules import (
     AllowCollisionBetweenGroups,
 )
-from semantic_digital_twin.datastructures.definitions import TorsoState
+from semantic_digital_twin.datastructures.definitions import (
+    StaticJointState,
+    TorsoState,
+)
 from semantic_digital_twin.robots.tiago import TiagoMujoco
 from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.spatial_types.spatial_types import Point2, Pose
@@ -407,6 +410,7 @@ class TiagoRoboCasaTask(ABC):
             )
             self.let_the_arms_work_among(self.handled_bodies)
         self.raise_the_torso()
+        self.park_the_arms()
         self.stand_where_nothing_touches()
         return self.world
 
@@ -587,6 +591,19 @@ class TiagoRoboCasaTask(ABC):
             self.world
         )
 
+    def park_the_arms(self) -> None:
+        """
+        Fold both arms at Tiago's sides before anything is worked out from where its
+        bodies are.
+
+        Tiago is spawned with its arms straight out, which reaches nearly a metre to
+        either side: a stand looked for with the arms like that has the robot in the
+        wall or in the counter almost wherever it is put, and the plan parks the arms
+        before it does anything anyway.
+        """
+        for arm in self.robot.all_arms:
+            arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(self.world)
+
     def stand_where_nothing_touches(self) -> None:
         """
         Put Tiago where it reaches :attr:`first_target`, stepping it back and along the
@@ -753,10 +770,38 @@ class TiagoRoboCasaTask(ABC):
             elevation=-25.0,
         )
 
+    @property
+    def stages(self) -> list[Callable[[Context], Plan]]:
+        """
+        :return: What builds the plans the task is carried out in, one after the other,
+            each from where the one before left the scene. A task that is one plan from
+            start to finish leaves this as it is.
+        """
+        return [self.build_plan]
+
+    def planned_with_the_arm_alone(
+        self, build: Callable[[Context], Plan], context: Context
+    ) -> Plan:
+        """
+        Work out one stage's plan with the base held where the task stood it, and free
+        the base to come along afterwards if the task has it.
+
+        Solving the arm moves whatever the controller is given, so a base freed while
+        the plan is worked out ends up in the joint positions the plan is made of.
+
+        :param build: What builds the plan.
+        :param context: The context to plan in.
+        :return: The plan.
+        """
+        self.robot.mobile_base.full_body_controlled = False
+        plan = build(context)
+        self.robot.mobile_base.full_body_controlled = self.base_follows_the_arm
+        return plan
+
     def run(self) -> None:
         """
-        Let the scene settle, then carry the task's plan out against MuJoCo physics,
-        recording it if a recording was asked for.
+        Let the scene settle, then carry the task's stages out against MuJoCo physics
+        one after the other, recording them if a recording was asked for.
         """
         context = Context(
             world=self.world,
@@ -780,14 +825,14 @@ class TiagoRoboCasaTask(ABC):
         simulation.start_stepped_simulation()
         try:
             simulation.step_simulation(self.settling_time)
-            plan = self.build_plan(context)
-            self.robot.mobile_base.full_body_controlled = self.base_follows_the_arm
             with self._recorder(simulation):
-                with PhysicallySimulatedRobot(
-                    simulation=simulation,
-                    collision_avoidance=self.collision_avoidance,
-                ):
-                    plan.perform()
+                for build in self.stages:
+                    plan = self.planned_with_the_arm_alone(build, context)
+                    with PhysicallySimulatedRobot(
+                        simulation=simulation,
+                        collision_avoidance=self.collision_avoidance,
+                    ):
+                        plan.perform()
                 simulation.step_simulation(self.resting_time)
         finally:
             simulation.stop_simulation()
