@@ -83,13 +83,13 @@ class NoPlaceToLetGo(DataclassException):
 
     tried: int
     """
-    How many places over that receptacle were tried.
+    How many stands in front of that receptacle were tried.
     """
 
     def error_message(self) -> str:
         return (
-            f"The arm reaches none of the {self.tried} places over the "
-            f"{self.receptacle} where the object could be let go."
+            f"From none of the {self.tried} stands in front of the {self.receptacle} "
+            f"does the arm reach anywhere over it that the object could be let go."
         )
 
     def suggest_correction(self) -> str:
