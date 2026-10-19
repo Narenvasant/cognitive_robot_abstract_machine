@@ -32,6 +32,12 @@ from coraplex.robot_plans.motions.gripper import MoveToolCenterPointMotion
 from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from experiments.hsr_robocasa.robocasa_task import KitchenBody, RoboCasaLayout
+from semantic_digital_twin.adapters.robocasa_dataset.mujoco_compat import (
+    robocasa_version_assertions_relaxed,
+)
+
+with robocasa_version_assertions_relaxed():
+    from robocasa.models.scenes.scene_registry import LayoutType, StyleType
 from experiments.tiago_robocasa.exceptions import (
     NoClearStandingPose,
     NoReachableStandingPose,
@@ -384,13 +390,12 @@ class TiagoRoboCasaTask(ABC):
 
     def build_world(self) -> World:
         """
-        Compose the RoboCasa task scene in the lowered kitchen and stand Tiago in front
-        of :attr:`first_target`.
+        Compose the RoboCasa task scene, at RoboCasa's own scale unless the task asks
+        for a counter height of its own, and stand Tiago in front of
+        :attr:`first_target`.
 
         :return: The world.
         """
-        from robocasa.models.scenes.scene_registry import LayoutType, StyleType
-
         layout = self.layout if self.layout is not None else LayoutType.LAYOUT001
         style = self.style if self.style is not None else StyleType.STYLE001
         self.task = RoboCasaDatasetLoader().load_task(

@@ -115,3 +115,29 @@ class NoWayToTheStand(DataclassException):
 
     def suggest_correction(self) -> str:
         return "Keep the way less far off the kitchen, or work from where it stands."
+
+
+@dataclass
+class NoGraspTheArmReaches(DataclassException):
+    """
+    Raised when the arm reaches none of the learned grasps of an object.
+    """
+
+    annotation_type: str
+    """
+    The kind of object the grasps were learned for.
+    """
+
+    tried: int
+    """
+    How many of them were tried.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The arm reaches none of the {self.tried} grasps tried of those learned "
+            f"for a {self.annotation_type}."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Try more of the drawn grasps, or stand somewhere else."

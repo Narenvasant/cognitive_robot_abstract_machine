@@ -15,7 +15,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
@@ -28,7 +28,6 @@ from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
 from experiments.hsr_robocasa.robocasa_task import FixtureReference
 from experiments.tiago_robocasa.drawers import TiagoDrawerTask
 from experiments.tiago_robocasa.exceptions import NoPlaceToLetGo
-from experiments.tiago_robocasa.handles import TiagoHandleTask
 from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
 from semantic_digital_twin.adapters.multi_sim import (
@@ -39,7 +38,10 @@ from semantic_digital_twin.grasping.grasp_candidates import (
     GraspCandidate,
     HasGraspCandidates,
 )
-from semantic_digital_twin.semantic_annotations.semantic_annotations import Sink
+from semantic_digital_twin.semantic_annotations.semantic_annotations import (
+    CounterTop,
+    Sink,
+)
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
     Pose,
@@ -148,6 +150,16 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     wherever over its floor it is let go, and every place costs the arm a solve.
     """
 
+    approach_from_above: float = 0.3
+    """
+    How far above where the object is let go the hand comes in, in metres.
+
+    The way from where the object was picked up to the receptacle passes over whatever
+    else stands on the worktop -- a coffee machine, a kettle -- and a hand carried at
+    the height it will let go at sweeps the forearm through it. Coming in from above
+    that and dropping onto the place keeps the arm over everything.
+    """
+
     places_to_try: int = 4
     """
     How many of the places over the receptacle are tried from each stand, nearest
@@ -220,6 +232,22 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         return self.extent(self.food.root).center.to_np()[:3]
 
     @property
+    def handled_bodies(self) -> list[Body]:
+        """
+        :return: The receptacle and the kitchen's worktops.
+
+        Taking something off a worktop and reaching over it to put it into a receptacle
+        set into one brings the whole arm, not only the hand, closer to them than the
+        clearance it is otherwise held to: the arm is held off them by eight
+        centimetres and a kitchen does not leave that much.
+        """
+        return self.colliding_bodies_below(self.receptacle) + [
+            body
+            for counter in self.world.get_semantic_annotations_by_type(CounterTop)
+            for body in self.colliding_bodies_below(counter.root)
+        ]
+
+    @property
     def grasp_heading(self) -> float:
         """
         :return: The direction the hand approaches in, as a yaw in the kitchen's frame,
@@ -290,18 +318,22 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     def release_points(self) -> list[np.ndarray]:
         """
         Where the centre of the object could be let go: over the receptacle's floor and
-        just clear of its rim, nearest to where Tiago stands first.
+        just clear of its rim, nearest its middle first.
+
+        The middle rather than the near edge, although the near edge is the easier
+        reach: the edge of a sink is where the kettle and the coffee machine stand, and
+        an arm that holds the object over it passes through them.
 
         The object is dropped rather than set down. Reaching to the floor of a sink is
         beyond the arm from anywhere Tiago can stand, while holding the object over the
         rim is not, and what is let go there falls in.
 
-        :return: The places, in the kitchen's frame, nearest first.
+        :return: The places, in the kitchen's frame, the middlemost first.
         """
         floor = self.receptacle_floor
         extent = self.extent(self.food.root)
         height = self.release_height + extent.height / 2 + self.release_clearance
-        here = self.robot.root.global_transform.to_np()[:2, 3]
+        middle = floor.center.to_np()[:2]
         places = [
             np.array([x, y, height])
             for x in self.places_across(
@@ -311,7 +343,9 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
                 floor.min_y, floor.max_y, extent.width / 2 + self.floor_margin
             )
         ]
-        return sorted(places, key=lambda place: float(np.linalg.norm(place[:2] - here)))
+        return sorted(
+            places, key=lambda place: float(np.linalg.norm(place[:2] - middle))
+        )
 
     def places_across(self, lower: float, upper: float, inset: float) -> list[float]:
         """
@@ -331,8 +365,8 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
 
     def can_let_go_over_the_receptacle(self) -> bool:
         """
-        Try the nearest places the object could be let go at from where Tiago stands and
-        keep the first one the arm reaches as :attr:`release_target`.
+        Try the middlemost places the object could be let go at from where Tiago stands
+        and keep the first one the arm reaches as :attr:`release_target`.
 
         :return: Whether the arm reaches any of them.
         """
@@ -479,7 +513,14 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             taking
             + self.drive_to(place_stand)
             + [
-                PlaceAction(self.food, self.goal(), rises_off_the_object=True),
+                PlaceAction(
+                    self.food,
+                    self.goal(),
+                    rises_off_the_object=True,
+                    retreat_distance=self.approach_from_above,
+                    position_threshold=self.arrival_tolerance,
+                    orientation_threshold=self.heading_tolerance,
+                ),
                 ParkArmsAction(self.robot.all_arms),
             ],
             context=context,
@@ -582,8 +623,10 @@ class PickPlaceCounterToStove(TiagoPickPlaceTask):
 @dataclass
 class PickPlaceDrawerToCounter(TiagoPickPlaceTask, TiagoDrawerTask):
     """
-    Tiago pulls the drawer open, takes the object out of it and puts it on the counter
-    above it.
+    Tiago takes the object out of the open drawer and puts it on the counter above it.
+
+    RoboCasa composes this task with the drawer already drawn out, which is what puts
+    the object within reach; opening a drawer is :class:`OpenDrawer`'s own task.
     """
 
     seed: int = 9
@@ -598,33 +641,10 @@ class PickPlaceDrawerToCounter(TiagoPickPlaceTask, TiagoDrawerTask):
     """
 
     @property
-    def stages(self) -> list[Callable[[Context], Plan]]:
-        """
-        :return: Pulling the drawer open, and then taking the object out of where it
-            has come to rest and putting it on the counter.
-        """
-        return [self.open_the_drawer, self.take_the_object_out]
-
-    def open_the_drawer(self, context: Context) -> Plan:
-        """
-        :param context: The context to plan in.
-        :return: The plan that draws the drawer open by its handle.
-        """
-        return TiagoHandleTask.build_plan(self, context)
-
-    def take_the_object_out(self, context: Context) -> Plan:
-        """
-        :param context: The context to plan in.
-        :return: The plan that takes the object out of the open drawer and puts it on
-            the counter.
-        """
-        return TiagoPickPlaceTask.build_plan(self, context)
-
-    @property
     def goal_position(self) -> float:
         """
-        :return: The end of the drawer's rails, since the object comes out from under
-            the counter with the drawer.
+        :return: The end of the drawer's rails, which RoboCasa has already drawn the
+            drawer most of the way to when it composes this task.
         """
         return float(self.mechanism.dof.limits.upper.position)
 

@@ -4,6 +4,8 @@ The grasps an object offers, independent of the robot performing them.
 
 from __future__ import annotations
 
+import trimesh
+
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -16,6 +18,7 @@ from semantic_digital_twin.exceptions import (
 )
 from semantic_digital_twin.semantic_annotations.mixins import HasRootBody
 from semantic_digital_twin.spatial_types import Point3, Vector3
+from semantic_digital_twin.exceptions import NoGraspGeometry
 from semantic_digital_twin.spatial_types.spatial_types import Pose, RotationMatrix
 
 # %% grasp candidates
@@ -126,6 +129,28 @@ class HasGraspCandidates(HasRootBody):
     """
     How many grasp candidates :meth:`grasp_candidates` generates.
     """
+
+    def grasp_surface(self) -> trimesh.Trimesh:
+        """
+        :return: The surface that surface grasps are placed on, in the root body's
+            frame: that of every body the annotation references, its parts included,
+            each as what it looks like, or else what it collides as.
+        :raises NoGraspGeometry: If none of the bodies has either.
+        """
+        surfaces = []
+        for body in {body.id: body for body in self.bodies}.values():
+            shapes = body.visual or body.collision
+            if not shapes:
+                continue
+            surface = shapes.combined_mesh
+            if body is not self.root:
+                surface.apply_transform(
+                    self._world.compute_forward_kinematics_np(self.root, body)
+                )
+            surfaces.append(surface)
+        if not surfaces:
+            raise NoGraspGeometry(self)
+        return trimesh.util.concatenate(surfaces)
 
     def grasp_candidates(self) -> List[GraspCandidate]:
         """

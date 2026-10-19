@@ -2257,3 +2257,30 @@ class ObjectHasNoWidthWithoutCollision(UsageError):
 
     def suggest_correction(self) -> str:
         return "Give the body collision geometry, or state the width yourself."
+
+
+@dataclass
+class SurfaceGraspNotOnSurfaceError(UsageError):
+    """
+    Raised when a surface grasp names a point the object's grasp surface does not reach.
+    """
+
+    surface_grasp: Any
+    """
+    The grasp that missed.
+    """
+
+    graspable: Any
+    """
+    The object it was meant for.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"No surface of '{self.graspable.name}' lies at azimuth "
+            f"{self.surface_grasp.azimuth:.3f} rad and height "
+            f"{self.surface_grasp.height:.3f} of the object."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Draw another grasp, or take the object by its bounding box."

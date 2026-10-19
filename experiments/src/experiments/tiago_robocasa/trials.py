@@ -85,6 +85,12 @@ class EpisodeSettings:
     What the kitchen's counters are lowered to, in metres.
     """
 
+    food_category: str | None = None
+    """
+    Which kind of object RoboCasa is to sample for a task that moves one, or nothing to
+    let it sample whatever it likes.
+    """
+
     def episode_of(self, task: Type[TiagoRoboCasaTask]) -> TiagoRoboCasaTask:
         """
         :param task: The task to set an episode of up.
@@ -106,6 +112,8 @@ class EpisodeSettings:
             episode.grasp_pitch = self.grasp_pitch
         if self.counter_height is not None:
             episode.counter_height = self.counter_height
+        if self.food_category is not None:
+            episode.food_category = self.food_category
         return episode
 
 
@@ -236,6 +244,7 @@ def parser_of(description: str, tasks: list[str]) -> argparse.ArgumentParser:
     parser.add_argument("--pyramidal", action="store_true")
     parser.add_argument("--left-arm", action="store_true")
     parser.add_argument("--counter-height", type=float, default=None)
+    parser.add_argument("--category", default=None, help="what RoboCasa is to sample")
     parser.add_argument("--attempts", type=int, default=12)
     parser.add_argument("--no-avoidance", action="store_true")
     parser.add_argument(
@@ -276,4 +285,5 @@ def settings_from(arguments: argparse.Namespace) -> EpisodeSettings:
         reach=arguments.reach,
         grasp_pitch=None if arguments.pitch is None else math.radians(arguments.pitch),
         counter_height=arguments.counter_height,
+        food_category=arguments.category,
     )
