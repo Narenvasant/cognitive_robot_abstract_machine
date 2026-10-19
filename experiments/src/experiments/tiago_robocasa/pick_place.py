@@ -23,8 +23,12 @@ from coraplex.datastructures.dataclasses import Context
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan import Plan
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
-from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
+from coraplex.robot_plans.motions.base import BaseMotion
+from coraplex.robot_plans.motions.gripper import (
+    MoveGripperMotion,
+    MoveToolCenterPointMotion,
+)
 from experiments.hsr_robocasa.robocasa_task import FixtureReference
 from experiments.tiago_robocasa.drawers import TiagoDrawerTask
 from experiments.tiago_robocasa.exceptions import NoPlaceToLetGo
@@ -38,6 +42,7 @@ from semantic_digital_twin.grasping.grasp_candidates import (
     GraspCandidate,
     HasGraspCandidates,
 )
+from semantic_digital_twin.datastructures.definitions import GripperState
 from semantic_digital_twin.semantic_annotations.semantic_annotations import (
     CounterTop,
     Sink,
@@ -135,7 +140,17 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
 
     release_clearance: float = 0.02
     """
-    How far above the receptacle's floor the object's underside is let go, in metres.
+    How far above where it comes to rest the object's underside is let go, in metres,
+    where the hand sets it down.
+    """
+
+    drop_from: float = 0.02
+    """
+    How far above the receptacle the object's underside is let go, in metres.
+
+    A basin takes a drop and a worktop does not, so a task that puts things into one
+    says how far above it lets go. Reaching down into a basin is beyond the arm anyway:
+    it holds the object over the rim, and gravity does the rest.
     """
 
     floor_margin: float = 0.03
@@ -186,8 +201,8 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
 
     minimum_lift: float = 0.05
     """
-    How far the object has to have risen above where it rested, in metres, before it
-    counts as having been taken off its support.
+    How far the object has to have risen above where it rested, in metres, to count as
+    having been taken off its support, which is what the pick alone is judged by.
     """
 
     def build_world(self) -> World:
@@ -198,11 +213,11 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     @property
     def task_is_done(self) -> bool:
         """
-        :return: Whether the object has been taken off its support and put into the
-            receptacle.
+        :return: Whether the object is in the receptacle, which is all the task asks.
+
+        Not that it rose on the way: a sink's floor lies below the counter the object
+        came from, so an object that ends up in one has gone down, not up.
         """
-        if self.lifted < self.minimum_lift:
-            return False
         return self.object_is_in_the_receptacle
 
     @property
@@ -332,7 +347,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         """
         floor = self.receptacle_floor
         extent = self.extent(self.food.root)
-        height = self.release_height + extent.height / 2 + self.release_clearance
+        height = self.release_height + extent.height / 2 + self.drop_from
         middle = floor.center.to_np()[:2]
         places = [
             np.array([x, y, height])
@@ -377,15 +392,25 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         self.release_target = None
         return False
 
+    @property
+    def headings_to_face_the_receptacle(self) -> tuple[float, ...]:
+        """
+        :return: Which ways to try facing the receptacle: the way Tiago already faces
+            first, since the receptacle is usually set into the same counter as what was
+            picked up, and the rest after, since it is not always.
+        """
+        return (self.heading,) + tuple(
+            heading for heading in self.headings_to_try if heading != self.heading
+        )
+
     def let_go_where_the_arm_reaches(self) -> Pose:
         """
         Pick the place over the receptacle the object is let go at, from where it picked
         the object up if the arm reaches that far: a receptacle set into the same counter
         is worked without driving anywhere.
 
-        Somewhere else to stand is looked for in front of the receptacle and facing the
-        way Tiago already faces, since the receptacle is worked from the same side of
-        the counter as what was picked up.
+        Somewhere else to stand is looked for in front of the receptacle, facing the way
+        Tiago already faces first.
 
         :return: Where Tiago stands to let the object go.
         :raises NoPlaceToLetGo: If the arm reaches no place over the receptacle from
@@ -406,7 +431,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             self.can_let_go_over_the_receptacle,
             self.receptacle_floor.center.to_np()[:3],
             self.placing_reach,
-            headings=(self.heading,),
+            headings=self.headings_to_face_the_receptacle,
         )
         if search.stand is None:
             raise NoPlaceToLetGo(
@@ -512,36 +537,80 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         return sequential(
             taking
             + self.drive_to(place_stand)
-            + [
-                PlaceAction(
-                    self.food,
-                    self.goal(),
-                    rises_off_the_object=True,
-                    retreat_distance=self.approach_from_above,
-                    position_threshold=self.arrival_tolerance,
-                    orientation_threshold=self.heading_tolerance,
-                ),
-                ParkArmsAction(self.robot.all_arms),
-            ],
+            + self.letting_the_object_go()
+            + [ParkArmsAction(self.robot.all_arms)],
             context=context,
         ).plan
+
+    def letting_the_object_go(self) -> list[BaseMotion]:
+        """
+        Hold the object where it is to be let go, open the fingers and lift the hand
+        off it.
+
+        The hand does not lower the object the last stretch, as setting one down does:
+        over a sink the arm is already at full stretch holding it over the rim, and the
+        goal below that is one it reaches on paper and stalls short of in the physics.
+
+        :return: The motions.
+        """
+        return [
+            MoveToolCenterPointMotion(
+                self.release_tool_pose(),
+                self.arm,
+                allow_gripper_collision=True,
+                max_linear_velocity=self.carry_velocity,
+                position_threshold=self.arrival_tolerance,
+                orientation_threshold=self.heading_tolerance,
+            ),
+            MoveGripperMotion(
+                GripperState.OPEN,
+                self.arm.end_effector,
+                allow_gripper_collision=True,
+            ),
+            MoveToolCenterPointMotion(
+                self.carried_above_the_release(),
+                self.arm,
+                allow_gripper_collision=True,
+                hold_gripper=GripperState.OPEN,
+                max_linear_velocity=self.carry_velocity,
+                position_threshold=self.arrival_tolerance,
+                orientation_threshold=self.heading_tolerance,
+            ),
+        ]
+
+    def carried_above_the_release(self) -> Pose:
+        """
+        :return: Where the hand goes once it has let the object go: straight up off it,
+            so that the fingers do not sweep it along as they leave.
+        """
+        world_T_tool = self.release_tool_pose().to_np()
+        world_T_tool[2, 3] += self.approach_from_above
+        return HomogeneousTransformationMatrix(
+            world_T_tool, reference_frame=self.world.root
+        ).pose
+
+    resting_tolerance: float = 0.05
+    """
+    How far above the receptacle's floor the object's underside may come to rest and
+    still count as resting on it, in metres: in a sink it may land on what is already
+    in the basin.
+    """
 
     @property
     def object_is_in_the_receptacle(self) -> bool:
         """
-        :return: Whether the object has come to rest over the receptacle's floor and no
-            higher than it was let go, which is what being put there means, whether the
-            receptacle is a basin it falls into or a top it lands on. Nothing that was
-            never let go is in it.
+        :return: Whether the object has come to rest over the receptacle's floor and
+            down on it, which is what being put there means, whether the receptacle is a
+            basin it falls into or a top it lands on. An object still held over the
+            receptacle, or perched on its rim, is not in it.
         """
-        if self.release_target is None:
-            return False
         floor = self.receptacle_floor
-        here = self.extent(self.food.root).center.to_np()[:3]
+        box = self.extent(self.food.root)
+        here = box.center.to_np()[:3]
         return bool(
             floor.min_x <= here[0] <= floor.max_x
             and floor.min_y <= here[1] <= floor.max_y
-            and here[2] <= self.release_target[2] + self.release_clearance
+            and box.min_z <= floor.max_z + self.resting_tolerance
         )
 
     def prepare_contacts(self) -> None:
@@ -596,11 +665,17 @@ class PickPlaceCounterToSink(TiagoPickPlaceTask):
         """
         return self.world.get_semantic_annotations_by_type(Sink)[0].root
 
+    drop_from: float = 0.2
+    """
+    Well above the rim: the arm holds the object over a sink at full stretch and stalls
+    short of any goal below that, so it lets go high and the carton falls in.
+    """
+
     @property
     def release_height(self) -> float:
         """
-        :return: The sink's rim, which the object is dropped in from just above, read
-            off the sink rather than off what the counters were set to.
+        :return: The sink's rim, which the object is dropped in from above, read off the
+            sink rather than off what the counters were set to.
         """
         return float(self.extent(self.receptacle).max_z)
 

@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 import logging
+
+import numpy as np
 from dataclasses import dataclass, field
 from dataclasses import field as dataclass_field, make_dataclass
 from pathlib import Path
@@ -96,8 +98,14 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
 
     grasps_to_try: int = 4
     """
-    How many of them are tried from each stand: a stand none of a few can be taken from
-    is the wrong stand, and every grasp costs the arm a solve.
+    How many grasps are tried from each stand: a stand the best couple cannot be taken
+    from is the wrong stand, and every grasp costs the arm a solve, of which a stand
+    search does hundreds.
+    """
+
+    grasps_to_choose_from: int = 60
+    """
+    How many of the drawn grasps the ones to try are chosen from.
     """
 
     chosen_grasp: GraspCandidate | None = field(default=None, init=False)
@@ -119,19 +127,42 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
 
     def reaches_the_pre_grasp(self) -> bool:
         """
-        Try the first few drawn grasps from where Tiago stands and keep the first one
-        the arm reaches.
+        Try the drawn grasps that come in most squarely from where Tiago stands, and
+        keep the first one the arm reaches.
 
         :return: Whether the arm reaches any of them.
         """
-        for surface_grasp in self.learned.grasps[: self.grasps_to_try]:
-            if not surface_grasp.reaches_surface_of(self.food):
-                continue
-            self.chosen_grasp = surface_grasp.grasp_candidate(self.food)
+        for candidate in self.grasps_from_tiagos_side()[: self.grasps_to_try]:
+            self.chosen_grasp = candidate
             if self.can_reach(self.pre_grasp()):
                 return True
         self.chosen_grasp = None
         return False
+
+    def grasps_from_tiagos_side(self) -> list[GraspCandidate]:
+        """
+        A grasp says which way round the object it takes hold, and the object lies in
+        the kitchen whichever way RoboCasa turned it, so much of what the model draws
+        asks the arm to reach around the object to its far side.
+
+        :return: The drawn grasps whose hand comes in from the side Tiago stands on, the
+            most squarely first.
+        """
+        towards_tiago = self.robot.root.global_transform.to_np()[:2, 3]
+        squareness = []
+        for surface_grasp in self.learned.grasps[: self.grasps_to_choose_from]:
+            if not surface_grasp.reaches_surface_of(self.food):
+                continue
+            candidate = surface_grasp.grasp_candidate(self.food)
+            world_T_grasp = candidate.world_T_grasp.to_np()
+            towards = towards_tiago - world_T_grasp[:2, 3]
+            along = float(world_T_grasp[:2, 0] @ towards / np.linalg.norm(towards))
+            if along >= 0.0:
+                continue
+            squareness.append((along, candidate))
+        return [
+            candidate for _, candidate in sorted(squareness, key=lambda row: row[0])
+        ]
 
 
 def taking_the_learned_grasps(

@@ -198,8 +198,19 @@ class Trials:
                 type(failure).__name__,
                 str(failure)[:120],
             )
+            self.count_what_the_scene_says(episode)
             return
         logger.info("episode %d finished: %s", attempt, episode.outcome)
+        self.count_what_the_scene_says(episode)
+
+    def count_what_the_scene_says(self, episode: TiagoRoboCasaTask) -> None:
+        """
+        Count the episode if the scene stands as the task asks, whatever became of the
+        plan: a plan that stumbles once the object is where it belongs has still put it
+        there, and the scene is what the task is about.
+
+        :param episode: The episode that was carried out.
+        """
         if episode.task_is_done:
             self.done += 1
 

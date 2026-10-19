@@ -590,7 +590,7 @@ class TiagoRoboCasaTask(ABC):
             self.heading = candidate.heading
             stand = self.stand_of(candidate, target, reach)
             drive.origin = stand.homogeneous_matrix
-            if self.robot.is_in_collision:
+            if not self.keeps_clear_of_the_kitchen():
                 continue
             clear += 1
             if arrives():
@@ -633,6 +633,38 @@ class TiagoRoboCasaTask(ABC):
             self.world
         )
 
+    def keeps_clear_of_the_kitchen(self) -> bool:
+        """
+        :return: Whether Tiago stands clear of the kitchen: its base by the whole
+            distance the collision avoidance holds it to, the rest of it by not
+            violating that distance.
+
+        The base is held to the wider margin because it is what drifts: it drives to
+        the stand open loop, and a wheel two millimetres inside a cabinet door ends a
+        task whose object is already in hand. What the arm does on the way is the
+        avoidance's business while the plan runs.
+        """
+        collision_manager = self.world.collision_manager
+        rolls = set(self.robot.mobile_base.bodies_with_collision)
+        robot_bodies = set(self.robot.bodies_with_collision)
+        for contact in collision_manager.compute_collisions().contacts:
+            touches_the_robot = (contact.body_a in robot_bodies) != (
+                contact.body_b in robot_bodies
+            )
+            if not touches_the_robot:
+                continue
+            if contact.body_a in rolls or contact.body_b in rolls:
+                needed = collision_manager.get_buffer_zone_distance(
+                    contact.body_a, contact.body_b
+                )
+            else:
+                needed = collision_manager.get_violated_distance(
+                    contact.body_a, contact.body_b
+                )
+            if contact.distance <= needed:
+                return False
+        return True
+
     def park_the_arms(self) -> None:
         """
         Fold both arms at Tiago's sides before anything is worked out from where its
@@ -665,7 +697,7 @@ class TiagoRoboCasaTask(ABC):
             drive.origin = self.stand_of(
                 candidate, self.first_target, self.reach
             ).homogeneous_matrix
-            if not self.robot.is_in_collision:
+            if self.keeps_clear_of_the_kitchen():
                 return
         raise NoClearStandingPose(target=self.first_target, tried=len(stands))
 
