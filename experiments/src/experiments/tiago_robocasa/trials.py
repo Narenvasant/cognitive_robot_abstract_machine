@@ -91,9 +91,15 @@ class EpisodeSettings:
     let it sample whatever it likes.
     """
 
-    def episode_of(self, task: Type[TiagoRoboCasaTask]) -> TiagoRoboCasaTask:
+    def episode_of(
+        self, task: Type[TiagoRoboCasaTask], attempt: int = 1
+    ) -> TiagoRoboCasaTask:
         """
         :param task: The task to set an episode of up.
+        :param attempt: Which attempt this is, which seeds the kitchen where the run
+            does not ask for a seed of its own: RoboCasa hands back the same kitchen
+            often enough that a run otherwise spends its attempts on one it cannot work
+            in at all.
         :return: The episode.
         """
         episode = task(
@@ -104,8 +110,7 @@ class EpisodeSettings:
             works_with_the_left_arm=self.works_with_the_left_arm,
             collision_avoidance=self.collision_avoidance,
         )
-        if self.seed is not None:
-            episode.seed = self.seed
+        episode.seed = self.seed if self.seed is not None else attempt
         if self.reach is not None:
             episode.reach = self.reach
         if self.grasp_pitch is not None:
@@ -158,7 +163,7 @@ class Trials:
         tried, reporting what became of each.
         """
         for attempt in range(1, self.attempts + 1):
-            episode = self.settings.episode_of(self.task)
+            episode = self.settings.episode_of(self.task, attempt)
             if self.done:
                 episode.recording = None
             self.try_in_a_new_kitchen(attempt, episode)

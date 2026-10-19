@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from dataclasses import field as dataclass_field, make_dataclass
 from pathlib import Path
 
@@ -96,6 +97,17 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
     The grasps to try.
     """
 
+    heading_tolerance: float = 0.35
+    """
+    How far the hand may be turned from a grasp's own twist and still count as holding
+    it, in radians.
+
+    Looser than a grasp of Tiago's own asks for: the model turns the fingers about the
+    approach by whatever suited the arm that learned it, and a wrist that has to hold
+    that exactly stalls a hand's breadth from the object. Twenty degrees out, two
+    fingers still close on the same two faces.
+    """
+
     headings_to_choose_from: int = 4
     """
     How many of the ways the drawn grasps come in are tried as ways for Tiago to face.
@@ -117,14 +129,19 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
 
         A grasp says which side of the object the hand comes from, so it says where the
         robot has to stand; facing the kitchen's quarter turns instead and hoping a
-        grasp fits is what left the arm reaching none of them.
+        grasp fits is what left the arm reaching none of them. The quarter turns follow
+        all the same, because the model draws grasps from every side of the object,
+        the side the counter is on included, and Tiago cannot stand there at all.
         """
         headings = {}
-        for candidate in self.candidates_on_the_object():
+        for candidate, _ in self.candidates_on_the_object():
             approach = candidate.world_T_grasp.to_np()[:2, 0]
             heading = float(np.arctan2(approach[1], approach[0]))
             headings.setdefault(round(heading, 1), heading)
-        return tuple(headings.values())[: self.headings_to_choose_from]
+        return (
+            tuple(headings.values())[: self.headings_to_choose_from]
+            + self.quarter_turns
+        )
 
     grasps_to_choose_from: int = 60
     """
@@ -136,9 +153,12 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
     The grasp the arm reaches from where Tiago stands.
     """
 
-    candidates: list[GraspCandidate] | None = field(default=None, init=False)
+    candidates: list[tuple[GraspCandidate, SurfaceGrasp]] | None = field(
+        default=None, init=False
+    )
     """
-    The drawn grasps as grasps on the object, once they have been worked out.
+    The drawn grasps as grasps on the object, once they have been worked out, each with
+    the grasp it was drawn as.
     """
 
     judged_by_the_grasp: bool = False
@@ -177,36 +197,51 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
 
         :return: Whether the arm reaches any of them.
         """
-        for candidate in self.grasps_from_tiagos_side()[: self.grasps_to_try]:
+        for candidate, surface_grasp in self.grasps_from_tiagos_side()[
+            : self.grasps_to_try
+        ]:
             self.chosen_grasp = candidate
             if self.can_reach(self.pre_grasp()):
+                logger.info(
+                    "taking the %s by a learned grasp: azimuth %.2f, height %.2f,"
+                    " depth %.3f m, pitch %.2f, roll %.2f",
+                    self.learned.annotation_type.lower(),
+                    surface_grasp.azimuth,
+                    surface_grasp.height,
+                    surface_grasp.depth,
+                    surface_grasp.pitch,
+                    surface_grasp.roll,
+                )
                 return True
         self.chosen_grasp = None
         return False
 
-    def grasps_from_tiagos_side(self) -> list[GraspCandidate]:
+    def grasps_from_tiagos_side(self) -> list[tuple[GraspCandidate, SurfaceGrasp]]:
         """
         A grasp says which way round the object it takes hold, and the object lies in
         the kitchen whichever way RoboCasa turned it, so much of what the model draws
         asks the arm to reach around the object to its far side.
 
-        :return: The drawn grasps whose hand comes in from the side Tiago stands on, the
-            most squarely first.
+        :return: The drawn grasps whose hand comes in from the side Tiago stands on,
+            each with the grasp it was drawn as, the most squarely first.
         """
         towards_tiago = self.robot.root.global_transform.to_np()[:2, 3]
         squareness = []
-        for candidate in self.candidates_on_the_object():
+        for candidate, surface_grasp in self.candidates_on_the_object():
             world_T_grasp = candidate.world_T_grasp.to_np()
             towards = towards_tiago - world_T_grasp[:2, 3]
             along = float(world_T_grasp[:2, 0] @ towards / np.linalg.norm(towards))
             if along >= 0.0:
                 continue
-            squareness.append((along, candidate))
+            squareness.append((along, candidate, surface_grasp))
         return [
-            candidate for _, candidate in sorted(squareness, key=lambda row: row[0])
+            (candidate, surface_grasp)
+            for _, candidate, surface_grasp in sorted(
+                squareness, key=lambda row: row[0]
+            )
         ]
 
-    def candidates_on_the_object(self) -> list[GraspCandidate]:
+    def candidates_on_the_object(self) -> list[tuple[GraspCandidate, SurfaceGrasp]]:
         """
         :return: The drawn grasps as grasps on the object, kept once they are worked
             out: a grasp is told about the object's own surface, which does not move
@@ -215,11 +250,44 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
         """
         if self.candidates is None:
             self.candidates = [
-                surface_grasp.grasp_candidate(self.food)
+                (grasp.grasp_candidate(self.food), grasp)
                 for surface_grasp in self.learned.grasps[: self.grasps_to_choose_from]
                 if surface_grasp.reaches_surface_of(self.food)
+                for grasp in self.both_ways_round(surface_grasp)
             ]
         return self.candidates
+
+    def both_ways_round(self, surface_grasp: SurfaceGrasp) -> list[SurfaceGrasp]:
+        """
+        :param surface_grasp: A drawn grasp.
+        :return: It, and the same grasp with its fingers the other way round.
+
+        Two fingers closing along a line close on the same two faces whichever way
+        round they are, so the model says as much about the one as about the other,
+        while a wrist that cannot turn far enough for one can often manage the other.
+        """
+        taken = self.as_deep_as_tiago_grips(surface_grasp)
+        return [taken, replace(taken, roll=taken.roll + math.pi)]
+
+    def as_deep_as_tiago_grips(self, surface_grasp: SurfaceGrasp) -> SurfaceGrasp:
+        """
+        :param surface_grasp: A drawn grasp.
+        :return: The same grasp, closing where Tiago's fingers have the object between
+            them.
+
+        Of what a grasp states, the depth is the one thing about the gripper rather
+        than about the object: how far past the surface *that* gripper's centre closes.
+        The PR2's couple of centimetres leave Tiago, whose pads sit four centimetres
+        either side of its grasp, with one pad on the object's face and the other well
+        inside it. Where the hand comes from and how it is turned -- what the model
+        actually learned -- are left as drawn.
+        """
+        extent = self.extent(self.food.root)
+        across = np.array([extent.depth, extent.width]) / 2
+        sight = np.array(
+            [math.cos(surface_grasp.azimuth), math.sin(surface_grasp.azimuth)]
+        )
+        return replace(surface_grasp, depth=float(np.abs(sight) @ across))
 
 
 def taking_the_learned_grasps(
