@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Callable
@@ -26,11 +27,16 @@ from coraplex.execution_environment import ExecutionEnvironment
 from coraplex.plans.factories import sequential
 from coraplex.plans.failures import PlanFailure
 from coraplex.plans.plan import Plan
+from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.motions.gripper import MoveToolCenterPointMotion
 from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from experiments.hsr_robocasa.robocasa_task import KitchenBody, RoboCasaLayout
-from experiments.tiago_robocasa.exceptions import NoClearStandingPose
+from experiments.tiago_robocasa.exceptions import (
+    NoClearStandingPose,
+    NoReachableStandingPose,
+    NoWayToTheStand,
+)
 from experiments.scene_recording import SceneRecorder, SceneRecording, ViewerCamera
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
 from semantic_digital_twin.adapters.robocasa_dataset.loader import (
@@ -43,39 +49,65 @@ from semantic_digital_twin.collision_checking.collision_rules import (
 from semantic_digital_twin.datastructures.definitions import TorsoState
 from semantic_digital_twin.robots.tiago import TiagoMujoco
 from semantic_digital_twin.specifications.robots import RobotSpecification
-from semantic_digital_twin.spatial_types.spatial_types import Pose
+from semantic_digital_twin.spatial_types.spatial_types import Point2, Pose
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.geometry import VolumetricBoundingBox
+from semantic_digital_twin.world_description.graph_of_convex_sets.boxes import (
+    PlanarGraphOfBoundingBoxes,
+)
 from semantic_digital_twin.world_description.world_entity import Body
 
-# %% how the physics is set up
+# %% looking for somewhere to stand
 
-STEP_SIZE = 1e-3
-"""
-How much simulated time one physics step covers, in seconds.
-"""
 
-SETTLING_DURATION = timedelta(seconds=1)
-"""
-How long the scene is left to settle before the robot starts and after it is done.
-"""
+@dataclass
+class StandCandidate:
+    """
+    One stand to try: how far it steps back and along from the stand that puts the
+    working hand right in front of the target, and which way round Tiago is.
+    """
 
-FRICTION_CONE = mujoco.mjtCone.mjCONE_ELLIPTIC
-"""
-How MuJoCo bounds a contact's friction: the elliptic cone is the exact one; the default
-pyramid only approximates it and lets a squeezed object creep out of the hand.
-"""
+    back: float
+    """
+    How much further back from the target than the task's reach it stands, in metres.
+    """
 
-IMPEDANCE_RATIO = 10.0
-"""
-How much stiffer MuJoCo makes friction than the push along the contact normal.
-"""
+    along: float
+    """
+    How far it steps to the robot's left along the counter, in metres.
+    """
 
-NO_SLIP_ITERATIONS = 10
-"""
-How many passes MuJoCo spends removing the slip its soft contacts leave, so a held
-object stays where the fingers hold it.
-"""
+    heading: float
+    """
+    Which way it faces, as a yaw in the kitchen's frame.
+    """
+
+
+@dataclass
+class StandSearch:
+    """
+    What came of looking for a stand the arm reaches a target from.
+    """
+
+    target: np.ndarray
+    """
+    What was to be reached.
+    """
+
+    stand: Pose | None
+    """
+    Where Tiago stands to reach it, or nothing if no stand tried does.
+    """
+
+    tried: int
+    """
+    How many stands were tried.
+    """
+
+    clear: int
+    """
+    How many of them kept Tiago clear of the kitchen.
+    """
 
 
 # %% one of RoboCasa's tasks, performed by Tiago
@@ -140,6 +172,16 @@ class TiagoRoboCasaTask(ABC):
     How far, in metres, the tool frame may stop from a goal of the task's motions.
     """
 
+    base_follows_the_arm: bool = False
+    """
+    Whether the base is driven along with the arm while the plan runs, instead of
+    staying where the task stood it.
+
+    The stand and the arm's way to it are worked out for the arm alone either way; what
+    this adds is the few centimetres of base travel a goal just outside the arm's
+    working envelope needs.
+    """
+
     collision_avoidance: bool = True
     """
     Whether Giskard keeps Tiago clear of the kitchen and of itself.
@@ -152,6 +194,18 @@ class TiagoRoboCasaTask(ABC):
     A quarter of the millisecond the rest of the kitchen is happy with: Tiago's wrist
     joints are held by servos stiff enough that a longer step lets them oscillate
     apart, and the arm runs away to tens of thousands of radians.
+    """
+
+    settling_time: timedelta = timedelta(seconds=1)
+    """
+    How long the scene is left to settle before Tiago starts, so nothing the kitchen was
+    composed with is still falling when the task begins.
+    """
+
+    resting_time: timedelta = timedelta(seconds=3)
+    """
+    How long the physics runs on after the plan, so what was let go lands and comes to
+    rest before anything is read off it.
     """
 
     integrator: Any = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
@@ -172,14 +226,23 @@ class TiagoRoboCasaTask(ABC):
     rank-deficient, and the simulation stops dead when it does.
     """
 
-    friction_cone: Any = FRICTION_CONE
+    friction_cone: Any = mujoco.mjtCone.mjCONE_ELLIPTIC
     """
     How MuJoCo bounds a contact's friction.
+
+    The elliptic cone is the exact one; the default pyramid only approximates it and
+    lets a squeezed object creep out of the hand.
     """
 
-    noslip_iterations: int = NO_SLIP_ITERATIONS
+    noslip_iterations: int = 10
     """
-    How many passes MuJoCo spends removing contact slip.
+    How many passes MuJoCo spends removing the slip its soft contacts leave, so a held
+    object stays where the fingers hold it.
+    """
+
+    impedance_ratio: float = 10.0
+    """
+    How much stiffer MuJoCo makes friction than the push along a contact's normal.
     """
 
     headless: bool = True
@@ -232,11 +295,43 @@ class TiagoRoboCasaTask(ABC):
         """
 
     @property
+    @abstractmethod
+    def task_is_done(self) -> bool:
+        """
+        :return: Whether the scene now stands as the task asks it to.
+        """
+
+    @property
+    @abstractmethod
+    def outcome(self) -> str:
+        """
+        :return: What became of what the task moves, as a line to be read in a report.
+        """
+
+    @property
     def robot(self) -> TiagoMujoco:
         """
         :return: Tiago, in the built world.
         """
         return self.world.get_semantic_annotations_by_type(TiagoMujoco)[0]
+
+    @property
+    def headings_to_try(self) -> tuple[float, ...]:
+        """
+        :return: Which ways Tiago is turned while a stand is looked for, as yaws in the
+            kitchen's frame.
+
+        A RoboCasa kitchen runs its counters along both of the room's axes and sets its
+        islands free of the walls, so which way the robot has to face to work at what
+        the task sampled is not known before the kitchen is composed, and every quarter
+        turn is tried.
+        """
+        return (math.pi / 2, 0.0, math.pi, -math.pi / 2)
+
+    heading: float = field(init=False, default=math.pi / 2)
+    """
+    Which way Tiago faces where it now stands.
+    """
 
     works_with_the_left_arm: bool = False
     """
@@ -310,19 +405,116 @@ class TiagoRoboCasaTask(ABC):
                     ],
                 )
             )
+            self.let_the_arm_work_among(self.handled_bodies)
         self.raise_the_torso()
         self.stand_where_nothing_touches()
         return self.world
 
-    def stand_where_the_hand_arrives(
+    @property
+    def handled_bodies(self) -> list[Body]:
+        """
+        :return: The bodies the hand works right among, which the rest of the working
+            arm may touch as the hand does. Nothing, unless the task names them.
+        """
+        return []
+
+    def let_the_arm_work_among(self, handled: list[Body]) -> None:
+        """
+        Allow the working arm to touch what the hand works among.
+
+        The whole arm rather than its wrist alone: an arm that holds a handle while the
+        fixture swings or slides towards it has every link of its last stretch against
+        the moving part, and which one that is depends on the fixture.
+
+        :param handled: What the hand works among.
+        """
+        if not handled:
+            return
+        self.world.collision_manager.add_ignore_collision_rule(
+            AllowCollisionBetweenGroups(
+                body_group_a=[
+                    body for body in self.arm.bodies if body.has_collision()
+                ],
+                body_group_b=handled,
+            )
+        )
+
+    kitchen_range: float = 8.0
+    """
+    How wide a square around the kitchen's origin the base's way is planned in, in
+    metres: wide enough for the whole room, since a task may send Tiago from one wall
+    to another.
+    """
+
+    base_clearance: float = 0.05
+    """
+    How far the planned way keeps the base off the kitchen, in metres.
+    """
+
+    def drive_to(self, stand: Pose) -> list[NavigateAction]:
+        """
+        Drive the base to a stand along a way planned through the kitchen's free space,
+        rather than straight at it: a kitchen has an island and a table between its
+        counters, and a straight line walks into them.
+
+        :param stand: Where Tiago is to end up.
+        :return: Driving there, one leg per corner of the planned way.
+        :raises NoWayToTheStand: If the free space holds no way there.
+        """
+        navigation = PlanarGraphOfBoundingBoxes.navigation_map_at_target(
+            self.world.root,
+            search_range_x=self.kitchen_range,
+            search_range_y=self.kitchen_range,
+            bloat_obstacles=self.base_clearance,
+        )
+        here = self.stands_at
+        corners = navigation.path_from_to(
+            Point2(here.position.x, here.position.y, reference_frame=self.world.root),
+            Point2(stand.position.x, stand.position.y, reference_frame=self.world.root),
+        )
+        if corners is None:
+            raise NoWayToTheStand(stand=stand)
+        return [NavigateAction(leg) for leg in self.legs_along(corners, stand)]
+
+    def legs_along(self, corners: list[Point2], stand: Pose) -> list[Pose]:
+        """
+        :param corners: The corners of the planned way, from where Tiago stands to
+            where it is going.
+        :param stand: Where it is going, which carries the way it is to face there.
+        :return: One pose per leg of the way: each corner turned the way the leg runs,
+            and ``stand`` itself last.
+        """
+        positions = [corner.to_np()[:2].flatten() for corner in corners]
+        legs = []
+        for start, end in zip(positions, positions[1:]):
+            step = end - start
+            legs.append(
+                Pose.from_xyz_rpy(
+                    x=float(end[0]),
+                    y=float(end[1]),
+                    yaw=float(np.arctan2(step[1], step[0])),
+                    reference_frame=self.world.root,
+                )
+            )
+        return legs[:-1] + [stand]
+
+    @property
+    def stands_at(self) -> Pose:
+        """
+        :return: Where Tiago stands at the moment.
+        """
+        return self.robot.root.parent_connection.origin.pose
+
+    def stand_that_reaches(
         self,
         reaches: Callable[[], Pose],
         target: np.ndarray | None = None,
         reach: float | None = None,
-    ) -> None:
+        headings: tuple[float, ...] | None = None,
+    ) -> StandSearch:
         """
         Move Tiago among the clear stands until the arm can get its hand where the task
-        needs it.
+        needs it, and leave it standing there.
 
         Standing clear of the kitchen is not enough: the stand also has to leave the
         goal within the arm's working envelope, which depends on the goal and so cannot
@@ -335,21 +527,50 @@ class TiagoRoboCasaTask(ABC):
             first target.
         :param reach: How far in front of the base that target is to be, or nothing for
             the task's own.
-        :raises NoClearStandingPose: If no clear stand lets the arm arrive.
+        :param headings: Which ways to try facing, or nothing for the task's own.
+        :return: What the search found.
         """
         target = self.first_target if target is None else target
         reach = self.reach if reach is None else reach
         self.world.collision_manager.update_collision_matrix()
         drive = self.robot.root.parent_connection
-        for back, along in self.stands_to_try():
-            drive.origin = self.standing_pose(
-                target + np.array([along, 0.0, 0.0]), reach + back
-            ).homogeneous_matrix
+        stands = self.stands_to_try(headings)
+        clear = 0
+        for candidate in stands:
+            self.heading = candidate.heading
+            stand = self.stand_of(candidate, target, reach)
+            drive.origin = stand.homogeneous_matrix
             if self.robot.is_in_collision:
                 continue
+            clear += 1
             if self.can_reach(reaches()):
-                return
-        raise NoClearStandingPose(target=target, tried=len(self.stands_to_try()))
+                return StandSearch(
+                    target=target, stand=stand, tried=len(stands), clear=clear
+                )
+        return StandSearch(
+            target=target, stand=None, tried=len(stands), clear=clear
+        )
+
+    def stand_where_the_hand_arrives(
+        self,
+        reaches: Callable[[], Pose],
+        target: np.ndarray | None = None,
+        reach: float | None = None,
+    ) -> Pose:
+        """
+        :return: The stand :meth:`stand_that_reaches` found, which Tiago is left at.
+        :raises NoClearStandingPose: If Tiago touches the kitchen at every stand.
+        :raises NoReachableStandingPose: If it stands clear somewhere but the arm
+            arrives from none of those stands.
+        """
+        search = self.stand_that_reaches(reaches, target, reach)
+        if search.stand is not None:
+            return search.stand
+        if search.clear == 0:
+            raise NoClearStandingPose(target=search.target, tried=search.tried)
+        raise NoReachableStandingPose(
+            target=search.target, tried=search.tried, clear=search.clear
+        )
 
     def raise_the_torso(self) -> None:
         """
@@ -377,26 +598,48 @@ class TiagoRoboCasaTask(ABC):
         """
         self.world.collision_manager.update_collision_matrix()
         drive = self.robot.root.parent_connection
-        for back, along in self.stands_to_try():
-            drive.origin = self.standing_pose(
-                self.first_target + np.array([along, 0.0, 0.0]), self.reach + back
+        stands = self.stands_to_try()
+        for candidate in stands:
+            self.heading = candidate.heading
+            drive.origin = self.stand_of(
+                candidate, self.first_target, self.reach
             ).homogeneous_matrix
             if not self.robot.is_in_collision:
                 return
-        raise NoClearStandingPose(
-            target=self.first_target, tried=len(self.stands_to_try())
-        )
+        raise NoClearStandingPose(target=self.first_target, tried=len(stands))
 
-    def stands_to_try(self) -> list[tuple[float, float]]:
+    def stands_to_try(
+        self, headings: tuple[float, ...] | None = None
+    ) -> list[StandCandidate]:
         """
-        :return: How much further back and how far along the counter to try standing,
-            nearest first.
+        :param headings: Which ways to try facing, or nothing for the task's own.
+        :return: The stands to try, nearest and facing the way the kitchen is usually
+            worked from first.
         """
         steps = np.arange(0.0, self.stand_search + self.stand_step / 2, self.stand_step)
-        slides = [0.0] + [
-            side * step for step in steps[1:] for side in (1.0, -1.0)
+        slides = [0.0] + [side * step for step in steps[1:] for side in (1.0, -1.0)]
+        return [
+            StandCandidate(back=float(back), along=float(along), heading=heading)
+            for heading in (self.headings_to_try if headings is None else headings)
+            for back in steps
+            for along in slides
         ]
-        return [(float(back), float(along)) for back in steps for along in slides]
+
+    def stand_of(
+        self, candidate: StandCandidate, target: np.ndarray, reach: float
+    ) -> Pose:
+        """
+        :param candidate: The stand to work out.
+        :param target: What it is to reach.
+        :param reach: How far in front of the base the target is to be.
+        :return: Where Tiago stands.
+        """
+        left = np.array(
+            [-math.sin(candidate.heading), math.cos(candidate.heading), 0.0]
+        )
+        return self.standing_pose(
+            target + candidate.along * left, reach + candidate.back, candidate.heading
+        )
 
     def fixture_updates(self, layout: Any) -> dict[str, Any]:
         """
@@ -527,22 +770,23 @@ class TiagoRoboCasaTask(ABC):
             headless=self.headless,
             step_size=self.step_size,
             cone=self.friction_cone,
-            impratio=IMPEDANCE_RATIO,
+            impratio=self.impedance_ratio,
             noslip_iterations=self.noslip_iterations,
             solver=self.solver,
             integrator=self.integrator,
         )
         simulation.start_stepped_simulation()
         try:
-            simulation.step_simulation(SETTLING_DURATION)
+            simulation.step_simulation(self.settling_time)
             plan = self.build_plan(context)
+            self.robot.mobile_base.full_body_controlled = self.base_follows_the_arm
             with self._recorder(simulation):
                 with PhysicallySimulatedRobot(
                     simulation=simulation,
                     collision_avoidance=self.collision_avoidance,
                 ):
                     plan.perform()
-                simulation.step_simulation(SETTLING_DURATION)
+                simulation.step_simulation(self.resting_time)
         finally:
             simulation.stop_simulation()
 
@@ -551,8 +795,6 @@ class TiagoRoboCasaTask(ABC):
         :param simulation: The running simulation frames are taken from.
         :return: What writes the video, or a context that writes nothing.
         """
-        from contextlib import nullcontext
-
         if self.recording is None:
             return nullcontext()
         return SceneRecorder(

@@ -11,15 +11,11 @@ Run one with (the ``experiments`` package must be importable)::
 
 from __future__ import annotations
 
-import argparse
 import logging
-import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
 from typing import Any
 
-import mujoco
 import numpy as np
 
 from coraplex.datastructures.dataclasses import Context
@@ -29,7 +25,8 @@ from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from coraplex.robot_plans.actions.core.placing import PlaceAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
-from experiments.scene_recording import SceneRecording
+from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
+from experiments.tiago_robocasa.exceptions import NoPlaceToLetGo
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
 from semantic_digital_twin.adapters.multi_sim import (
     ContactDimensionality,
@@ -44,21 +41,12 @@ from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
     Pose,
 )
+from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.geometry import VolumetricBoundingBox
 from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger(__name__)
 
-MINIMUM_LIFT = 0.05
-"""
-How far the object has to rise above where it rested, in metres, before the episode
-counts as one where the robot got it off its support.
-"""
-
-DEFAULT_RECORDING_DIRECTORY = Path.home() / "Downloads"
-"""
-Where a recording is written when one is asked for without a path.
-"""
 
 
 # %% the objects a pick and place task names
@@ -151,6 +139,70 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     How far in from the edge of the receptacle's floor the object is let go, in metres.
     """
 
+    release_step: float = 0.1
+    """
+    How far apart the places over the receptacle's floor are that letting go is tried
+    at, in metres. Coarse, because what is let go above a receptacle falls into it
+    wherever over its floor it is let go, and every place costs the arm a solve.
+    """
+
+    release_target: np.ndarray | None = field(default=None, init=False)
+    """
+    Where the object is let go, once a stand has been found that the arm reaches it
+    from.
+    """
+
+    grasp_taken: GraspCandidate | None = field(default=None, init=False)
+    """
+    The grasp the object is picked up by, which is how it sits in the hand for the rest
+    of the task.
+    """
+
+    rested_at: np.ndarray | None = field(default=None, init=False)
+    """
+    Where the middle of the object sat when the kitchen was composed.
+    """
+
+    minimum_lift: float = 0.05
+    """
+    How far the object has to have risen above where it rested, in metres, before it
+    counts as having been taken off its support.
+    """
+
+    def build_world(self) -> World:
+        world = super().build_world()
+        self.rested_at = self.extent(self.food.root).center.to_np()[:3].copy()
+        return world
+
+    @property
+    def task_is_done(self) -> bool:
+        """
+        :return: Whether the object has been taken off its support and put into the
+            receptacle.
+        """
+        if self.lifted < self.minimum_lift:
+            return False
+        return self.object_is_in_the_receptacle
+
+    @property
+    def lifted(self) -> float:
+        """
+        :return: How far the object stands above where it rested, in metres.
+        """
+        return float(self.extent(self.food.root).center.to_np()[2] - self.rested_at[2])
+
+    @property
+    def outcome(self) -> str:
+        """
+        :return: Where the object went, and whether it ended up in the receptacle.
+        """
+        return (
+            f"the object went from {self.rested_at.round(3)} to "
+            f"{self.extent(self.food.root).center.to_np()[:3].round(3)}, rising "
+            f"{self.lifted * 100:.1f} cm"
+            + ("; it is in the receptacle" if self.object_is_in_the_receptacle else "")
+        )
+
     @property
     def first_target(self) -> np.ndarray:
         """
@@ -161,9 +213,10 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     @property
     def grasp_heading(self) -> float:
         """
-        :return: The direction the hand approaches in, as a yaw in the kitchen's frame.
+        :return: The direction the hand approaches in, as a yaw in the kitchen's frame,
+            which is the way Tiago is turned where it stands.
         """
-        return math.pi / 2
+        return self.heading
 
     @property
     def food(self) -> HasGraspCandidates:
@@ -219,35 +272,102 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     @property
     def release_height(self) -> float:
         """
-        :return: The height above which the object is let go, in metres.
+        :return: The height the object's underside is let go at, in metres: the top of
+            the receptacle, so that the hand stays out of it and the object falls the
+            rest of the way in.
         """
-        return self.receptacle_floor.max_z
+        return self.extent(self.receptacle).max_z
 
-    @property
-    def release_point(self) -> np.ndarray:
+    def release_points(self) -> list[np.ndarray]:
         """
-        :return: Where the centre of the object is let go: over the part of the
-            receptacle's floor nearest Tiago, clear of its edge and its floor.
+        Where the centre of the object could be let go: over the receptacle's floor and
+        just clear of its rim, nearest to where Tiago stands first.
+
+        The object is dropped rather than set down. Reaching to the floor of a sink is
+        beyond the arm from anywhere Tiago can stand, while holding the object over the
+        rim is not, and what is let go there falls in.
+
+        :return: The places, in the kitchen's frame, nearest first.
         """
         floor = self.receptacle_floor
         extent = self.extent(self.food.root)
-        centre = floor.center.to_np()[:3]
-        return np.array(
-            [
-                centre[0],
-                min(centre[1], floor.min_y + extent.width / 2 + self.floor_margin),
-                self.release_height + extent.height / 2 + self.release_clearance,
-            ]
+        height = self.release_height + extent.height / 2 + self.release_clearance
+        here = self.robot.root.global_transform.to_np()[:2, 3]
+        places = [
+            np.array([x, y, height])
+            for x in self.places_across(
+                floor.min_x, floor.max_x, extent.depth / 2 + self.floor_margin
+            )
+            for y in self.places_across(
+                floor.min_y, floor.max_y, extent.width / 2 + self.floor_margin
+            )
+        ]
+        return sorted(places, key=lambda place: float(np.linalg.norm(place[:2] - here)))
+
+    def places_across(self, lower: float, upper: float, inset: float) -> list[float]:
+        """
+        :param lower: Where the receptacle's floor starts along one axis.
+        :param upper: Where it ends.
+        :param inset: How far in from either end the object has to stay.
+        :return: The places to try along that axis, or its middle alone where the
+            object only fits there.
+        """
+        if upper - lower < 2 * inset:
+            return [(lower + upper) / 2]
+        return list(
+            np.arange(lower + inset, upper - inset + self.release_step / 2, self.release_step)
         )
+
+    def let_go_where_the_arm_reaches(self) -> Pose:
+        """
+        Pick the place over the receptacle the object is let go at, preferring one the
+        arm reaches from where it picked the object up: a receptacle that stands in the
+        counter is worked without driving anywhere.
+
+        Somewhere else to stand is looked for facing the way Tiago already faces: the
+        receptacle stands in the same counter as what was picked up, so it is worked
+        from the same side.
+
+        :return: Where Tiago stands to let it go there.
+        :raises NoPlaceToLetGo: If the arm reaches none of the places tried.
+        """
+        places = self.release_points()
+        for place in places:
+            self.release_target = place
+            if self.can_reach(self.release_tool_pose()):
+                logger.info(
+                    "letting go at %s, from where it picked the object up",
+                    place.round(3),
+                )
+                return self.stands_at
+        logger.info(
+            "none of the %d places over the %s can be reached from where the object was"
+            " picked up; looking for somewhere else to stand",
+            len(places),
+            self.receptacle.name.name,
+        )
+        for place in places:
+            self.release_target = place
+            stand = self.stand_that_reaches(
+                self.release_tool_pose,
+                place,
+                self.placing_reach,
+                headings=(self.heading,),
+            ).stand
+            if stand is not None:
+                logger.info("letting go at %s, from somewhere else", place.round(3))
+                return stand
+        self.release_target = None
+        raise NoPlaceToLetGo(receptacle=self.receptacle.name.name, tried=len(places))
 
     def goal(self) -> Pose:
         """
-        :return: Where the object is to be put: its centre at :attr:`release_point`,
+        :return: Where the object is to be put: its centre at :attr:`release_target`,
             turned as it stands now.
         """
         body = self.food.root
         world_T_food = body.global_pose.to_np()
-        world_T_food[:3, 3] += self.release_point - self.extent(body).center.to_np()[:3]
+        world_T_food[:3, 3] += self.release_target - self.extent(body).center.to_np()[:3]
         return HomogeneousTransformationMatrix(
             world_T_food, reference_frame=self.world.root
         ).pose
@@ -292,37 +412,32 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     def release_tool_pose(self) -> Pose:
         """
         :return: Where the tool frame has to be for the object it holds to sit where the
-            task wants it, which is the goal carried back through the grasp.
+            task wants it, which is the goal carried back through the grasp the object
+            is held by.
         """
         return HomogeneousTransformationMatrix(
-            self.goal().to_np() @ self.grasp().grasp_pose.to_np(),
+            self.goal().to_np() @ self.grasp_taken.grasp_pose.to_np(),
             reference_frame=self.world.root,
         ).pose
 
     def build_plan(self, context: Context) -> Plan:
         """
         Stand where the hand reaches the object, bring the arm there, take the object,
-        and unless the task stops at that, carry it to the receptacle and put it in.
+        carry it to the receptacle and put it in.
 
         :param context: The context to plan in.
         :return: The plan.
         """
         self.stand_where_the_hand_arrives(self.pre_grasp)
-        pick_up = self.pick_up_of(self.grasp())
+        self.grasp_taken = self.grasp()
+        pick_up = self.pick_up_of(self.grasp_taken)
         taking = [
             ParkArmsAction(self.robot.all_arms),
             *self.arm_motions_to(self.pre_grasp()),
             pick_up,
         ]
-        if not self.puts_it_in_the_receptacle:
-            return sequential(taking, context=context).plan
         pick_stand = self.robot.root.parent_connection.origin
-        self.stand_where_the_hand_arrives(
-            self.release_tool_pose, self.release_point, self.placing_reach
-        )
-        place_stand = self.standing_pose(
-            self.release_point, self.placing_reach
-        )
+        place_stand = self.let_go_where_the_arm_reaches()
         self.robot.root.parent_connection.origin = pick_stand
         return sequential(
             taking
@@ -333,6 +448,20 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             ],
             context=context,
         ).plan
+
+    @property
+    def object_is_in_the_receptacle(self) -> bool:
+        """
+        :return: Whether the object has come to rest over the receptacle's floor and
+            below its rim, which is what being in it means.
+        """
+        floor = self.receptacle_floor
+        here = self.extent(self.food.root).center.to_np()[:3]
+        return bool(
+            floor.min_x <= here[0] <= floor.max_x
+            and floor.min_y <= here[1] <= floor.max_y
+            and here[2] < self.release_height
+        )
 
     def prepare_contacts(self) -> None:
         """
@@ -424,118 +553,17 @@ The RoboCasa tasks Tiago can be asked for, by the name RoboCasa gives them.
 
 def main() -> None:
     """
-    Run the task the command line names and report whether the object was moved.
+    Run the task the command line names over one kitchen after another.
     """
     logging.basicConfig(level=logging.INFO, force=True)
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "task", choices=["PickPlaceCounterToSink", "PickPlaceCounterToStove"]
-    )
-    parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--record", nargs="?", const="", default=None, metavar="PATH")
-    parser.add_argument("--viewer", action="store_true")
-    parser.add_argument("--noslip", type=int, default=10)
-    parser.add_argument("--reach", type=float, default=None)
-    parser.add_argument("--pyramidal", action="store_true")
-    parser.add_argument("--left-arm", action="store_true")
-    parser.add_argument("--pitch", type=float, default=None, help="grasp pitch in degrees")
-    parser.add_argument("--counter-height", type=float, default=None)
-    parser.add_argument("--attempts", type=int, default=12)
-    parser.add_argument(
-        "--benchmark",
-        action="store_true",
-        help="attempt every episode and report how many succeeded, rather than stopping"
-        " at the first that does",
-    )
-    parser.add_argument("--pick-only", action="store_true")
-    parser.add_argument("--no-avoidance", action="store_true")
-    arguments = parser.parse_args()
-
-    recording = None
-    if arguments.record is not None:
-        path = Path(arguments.record) if arguments.record else (
-            DEFAULT_RECORDING_DIRECTORY / f"tiago_{arguments.task.lower()}.mp4"
-        )
-        recording = SceneRecording(path=path)
-    task = PickPlaceCounterToSink(
-        recording=recording,
-        headless=not arguments.viewer,
-        noslip_iterations=arguments.noslip,
-        works_with_the_left_arm=arguments.left_arm,
-        friction_cone=(
-            mujoco.mjtCone.mjCONE_PYRAMIDAL
-            if arguments.pyramidal
-            else mujoco.mjtCone.mjCONE_ELLIPTIC
-        ),
-    )
-    if arguments.reach is not None:
-        task.reach = arguments.reach
-    if arguments.pitch is not None:
-        task.grasp_pitch = math.radians(arguments.pitch)
-    if arguments.counter_height is not None:
-        task.counter_height = arguments.counter_height
-    if arguments.seed is not None:
-        task.seed = arguments.seed
-    succeeded = 0
-    for attempt in range(1, arguments.attempts + 1):
-        episode = TASKS[arguments.task](
-            recording=recording,
-            headless=not arguments.viewer,
-            noslip_iterations=arguments.noslip,
-            works_with_the_left_arm=arguments.left_arm,
-            friction_cone=(
-                mujoco.mjtCone.mjCONE_PYRAMIDAL
-                if arguments.pyramidal
-                else mujoco.mjtCone.mjCONE_ELLIPTIC
-            ),
-        )
-        if arguments.seed is not None:
-            episode.seed = arguments.seed
-        if arguments.reach is not None:
-            episode.reach = arguments.reach
-        if arguments.pitch is not None:
-            episode.grasp_pitch = math.radians(arguments.pitch)
-        if arguments.counter_height is not None:
-            episode.counter_height = arguments.counter_height
-        episode.puts_it_in_the_receptacle = not arguments.pick_only
-        episode.collision_avoidance = not arguments.no_avoidance
-        if arguments.benchmark and succeeded:
-            episode.recording = None
-        try:
-            episode.build_world()
-            started = episode.extent(episode.food.root).center.to_np()[:3].copy()
-            logger.info("episode %d: %s", attempt, episode.task.instruction)
-            episode.run()
-        except Exception as failure:
-            rose = (
-                episode.extent(episode.food.root).center.to_np()[2] - started[2]
-            ) * 100
-            logger.info(
-                "episode %d stopped after the object rose %.1f cm: %s: %s",
-                attempt, rose, type(failure).__name__, str(failure)[:90],
-            )
-            continue
-        ended = episode.extent(episode.food.root).center.to_np()[:3]
-        rose = (ended[2] - started[2]) * 100
-        logger.info(
-            "episode %d finished: the object went from %s to %s, rising %.1f cm",
-            attempt, started.round(3), ended.round(3), rose,
-        )
-        if rose >= MINIMUM_LIFT * 100:
-            succeeded += 1
-            if not arguments.benchmark:
-                break
-    if arguments.benchmark:
-        logger.info(
-            "%s: %d of %d episodes ended with the object off its support",
-            arguments.task, succeeded, arguments.attempts,
-        )
-    elif succeeded == 0:
-        logger.error("no episode of %d ran to its end", arguments.attempts)
-        return
-
-    if recording is not None:
-        logger.info("wrote a video to %s", recording.path)
+    arguments = parser_of(__doc__, list(TASKS)).parse_args()
+    settings = settings_from(arguments)
+    Trials(
+        task=TASKS[arguments.task],
+        settings=settings,
+        attempts=arguments.attempts,
+        tries_every_kitchen=arguments.benchmark,
+    ).run()
 
 
 if __name__ == "__main__":
