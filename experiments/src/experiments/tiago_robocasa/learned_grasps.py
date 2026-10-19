@@ -113,6 +113,20 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
     The grasp the arm reaches from where Tiago stands.
     """
 
+    candidates: list[GraspCandidate] | None = field(default=None, init=False)
+    """
+    The drawn grasps as grasps on the object, once they have been worked out.
+    """
+
+    @property
+    def task_is_done(self) -> bool:
+        """
+        :return: Whether a learned grasp took the object off its support, which is what
+            this experiment asks of the model. Where the object ends up afterwards is
+            the pick-and-place task's own business.
+        """
+        return self.lifted >= self.minimum_lift
+
     def grasp(self) -> GraspCandidate:
         """
         :return: The grasp the stand was chosen for.
@@ -150,10 +164,7 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
         """
         towards_tiago = self.robot.root.global_transform.to_np()[:2, 3]
         squareness = []
-        for surface_grasp in self.learned.grasps[: self.grasps_to_choose_from]:
-            if not surface_grasp.reaches_surface_of(self.food):
-                continue
-            candidate = surface_grasp.grasp_candidate(self.food)
+        for candidate in self.candidates_on_the_object():
             world_T_grasp = candidate.world_T_grasp.to_np()
             towards = towards_tiago - world_T_grasp[:2, 3]
             along = float(world_T_grasp[:2, 0] @ towards / np.linalg.norm(towards))
@@ -163,6 +174,21 @@ class PicksWithLearnedGrasps(TiagoPickPlaceTask):
         return [
             candidate for _, candidate in sorted(squareness, key=lambda row: row[0])
         ]
+
+    def candidates_on_the_object(self) -> list[GraspCandidate]:
+        """
+        :return: The drawn grasps as grasps on the object, kept once they are worked
+            out: a grasp is told about the object's own surface, which does not move
+            while a stand is looked for, and casting the rays against it again at every
+            stand is what makes the search slow.
+        """
+        if self.candidates is None:
+            self.candidates = [
+                surface_grasp.grasp_candidate(self.food)
+                for surface_grasp in self.learned.grasps[: self.grasps_to_choose_from]
+                if surface_grasp.reaches_surface_of(self.food)
+            ]
+        return self.candidates
 
 
 def taking_the_learned_grasps(
