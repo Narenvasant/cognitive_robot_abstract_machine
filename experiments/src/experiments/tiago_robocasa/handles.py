@@ -20,8 +20,10 @@ from scipy.spatial.transform import Rotation
 from coraplex.datastructures.dataclasses import Context
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan import Plan
+from coraplex.robot_plans.actions.base import ActionDescription
 from coraplex.robot_plans.actions.core.pick_up import GraspingAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
+from coraplex.robot_plans.motions.base import BaseMotion
 from coraplex.robot_plans.motions.gripper import (
     MoveGripperMotion,
     MoveToolCenterPointMotion,
@@ -42,6 +44,29 @@ from semantic_digital_twin.world_description.connections import (
 from semantic_digital_twin.world_description.world_entity import Body
 
 # %% a task that moves a fixture by its handle
+
+
+@dataclass
+class HandleHold:
+    """
+    How the hand took hold of a handle and where it drew the fixture to, which letting
+    go of the handle is worked out from.
+    """
+
+    grasp: GraspCandidate
+    """
+    The grasp the handle was taken by.
+    """
+
+    pre_grasp: Pose
+    """
+    Where the hand waited in front of the handle before it took hold.
+    """
+
+    drawn_to: float
+    """
+    Where the hand drew the mechanism's joint to.
+    """
 
 
 @dataclass
@@ -130,6 +155,11 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
     """
     Where the joint of every other fixture of the kitchen stood before Tiago set to
     work.
+    """
+
+    hold: HandleHold | None = field(init=False, default=None)
+    """
+    How the hand took hold of the handle and where it drew the fixture to, once it has.
     """
 
     retreat_distance: float = 0.15
@@ -296,6 +326,29 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
             works the mechanism.
         """
         return self.colliding_bodies_below(self.fixture)
+
+    @property
+    def bodies_under_the_handle(self) -> list[Body]:
+        """
+        :return: The bodies of the kitchen that span the handle's place on the floor
+            and start below it: the counter a fixture on it stands on, and the cabinet
+            under that. Their tops cannot be read off their boxes, which RoboCasa builds
+            to take in fixtures far above.
+        """
+        handle = self.handle_middle
+        robot_bodies = set(self.robot.bodies_with_collision)
+        under = []
+        for body in self.world.bodies:
+            if not body.has_collision() or body in robot_bodies:
+                continue
+            lowest, highest = self.box_around([body])
+            if (
+                lowest[0] <= handle[0] <= highest[0]
+                and lowest[1] <= handle[1] <= highest[1]
+                and lowest[2] < handle[2]
+            ):
+                under.append(body)
+        return under
 
     @property
     def headings_to_try(self) -> tuple[float, ...]:
@@ -485,6 +538,14 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         :param context: The context to plan in.
         :return: The plan.
         """
+        self.stand_at_the_handle()
+        return self.working_the_handle(context)
+
+    def stand_at_the_handle(self) -> None:
+        """
+        Note where every other fixture stands and put Tiago where the hand closes on the
+        handle.
+        """
         robot_joints = set(self.robot.connections)
         self.other_fixtures_at_the_start = {
             joint: joint.position
@@ -496,7 +557,6 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         self.stand_where_the_hand_arrives(
             self.reaches_the_handle, self.handle_middle, self.handle_reach
         )
-        return self.working_the_handle(context)
 
     def backed_out_from(
         self, grasp: GraspCandidate, pre_grasp: Pose, position: float
@@ -524,47 +584,68 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         :param context: The context to plan in.
         :return: The plan.
         """
-        grasp = self.handle_grasp()
-        pre_grasp = self.pre_grasp()
-        goal = self.pull_goal
         return sequential(
-            [
-                ParkArmsAction(self.robot.all_arms),
-                MoveToolCenterPointMotion(
-                    pre_grasp,
-                    self.arm,
-                    allow_gripper_collision=True,
-                    position_threshold=self.tool_frame_tolerance,
-                ),
-                self.taking_hold_of(grasp),
-                *[
-                    MoveToolCenterPointMotion(
-                        self.shifted(grasp.world_T_grasp, waypoint),
-                        self.arm,
-                        allow_gripper_collision=True,
-                        max_linear_velocity=self.pull_velocity,
-                        position_threshold=self.tool_frame_tolerance,
-                    )
-                    for waypoint in self.pull_waypoints
-                ],
-                MoveGripperMotion(
-                    GripperState.OPEN,
-                    self.arm.end_effector,
-                    allow_gripper_collision=True,
-                ),
-                MoveToolCenterPointMotion(
-                    self.shifted(pre_grasp, goal),
-                    self.arm,
-                    allow_gripper_collision=True,
-                    position_threshold=self.tool_frame_tolerance,
-                ),
-                MoveToolCenterPointMotion(
-                    self.backed_out_from(grasp, pre_grasp, goal),
-                    self.arm,
-                    allow_gripper_collision=True,
-                    position_threshold=self.tool_frame_tolerance,
-                ),
-                ParkArmsAction(self.robot.all_arms),
-            ],
+            self.drawing_the_fixture() + self.letting_go_of_the_handle(),
             context=context,
         ).plan
+
+    def drawing_the_fixture(self) -> list[BaseMotion | ActionDescription]:
+        """
+        Note in :attr:`hold` how the hand is to take hold of the handle.
+
+        :return: Bringing the hand in front of the handle from where Tiago stands,
+            taking hold of it and drawing the fixture to where the task wants it.
+        """
+        self.hold = HandleHold(
+            grasp=self.handle_grasp(),
+            pre_grasp=self.pre_grasp(),
+            drawn_to=self.pull_goal,
+        )
+        return [
+            ParkArmsAction(self.robot.all_arms),
+            MoveToolCenterPointMotion(
+                self.hold.pre_grasp,
+                self.arm,
+                allow_gripper_collision=True,
+                position_threshold=self.tool_frame_tolerance,
+            ),
+            self.taking_hold_of(self.hold.grasp),
+            *[
+                MoveToolCenterPointMotion(
+                    self.shifted(self.hold.grasp.world_T_grasp, waypoint),
+                    self.arm,
+                    allow_gripper_collision=True,
+                    max_linear_velocity=self.pull_velocity,
+                    position_threshold=self.tool_frame_tolerance,
+                )
+                for waypoint in self.pull_waypoints
+            ],
+        ]
+
+    def letting_go_of_the_handle(self) -> list[BaseMotion | ActionDescription]:
+        """
+        :return: Opening the fingers on the handle :attr:`hold` took, backing the hand
+            out to where it waited and :attr:`retreat_distance` further, and parking
+            the arms.
+        """
+        hold = self.hold
+        return [
+            MoveGripperMotion(
+                GripperState.OPEN,
+                self.arm.end_effector,
+                allow_gripper_collision=True,
+            ),
+            MoveToolCenterPointMotion(
+                self.shifted(hold.pre_grasp, hold.drawn_to),
+                self.arm,
+                allow_gripper_collision=True,
+                position_threshold=self.tool_frame_tolerance,
+            ),
+            MoveToolCenterPointMotion(
+                self.backed_out_from(hold.grasp, hold.pre_grasp, hold.drawn_to),
+                self.arm,
+                allow_gripper_collision=True,
+                position_threshold=self.tool_frame_tolerance,
+            ),
+            ParkArmsAction(self.robot.all_arms),
+        ]

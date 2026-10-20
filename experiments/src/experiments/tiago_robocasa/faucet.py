@@ -16,8 +16,6 @@ from abc import ABC
 from dataclasses import dataclass
 from enum import StrEnum
 
-import numpy as np
-
 from experiments.tiago_robocasa.handles import TiagoHandleTask
 from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Handle
@@ -110,36 +108,13 @@ class TiagoFaucetTask(TiagoHandleTask, ABC):
             the arm reaching it passes over them closer than the clearance it is
             otherwise held to.
         """
-        lever = self.handle_middle
-        counters = [
-            body
-            for body in self.world.bodies
-            if body.has_collision()
-            and body not in self.robot.bodies_with_collision
-            and self.lies_under(body, lever)
-        ]
         in_the_basin = [
             body
             for body in self.world.bodies
             if body.name.name.startswith(SinkObjectPrefix.DISTRACTOR)
             and body.has_collision()
         ]
-        return super().handled_bodies + counters + in_the_basin
-
-    def lies_under(self, body: Body, point: np.ndarray) -> bool:
-        """
-        :param body: A body of the kitchen.
-        :param point: A point in the kitchen's frame.
-        :return: Whether the body spans the point's place on the floor and starts
-            below it: the counter, and the cabinet under it. Their tops cannot be read
-            off their boxes, which RoboCasa builds to take in fixtures far above.
-        """
-        lowest, highest = self.box_around([body])
-        return bool(
-            lowest[0] <= point[0] <= highest[0]
-            and lowest[1] <= point[1] <= highest[1]
-            and lowest[2] < point[2]
-        )
+        return super().handled_bodies + self.bodies_under_the_handle + in_the_basin
 
     @property
     def square_position(self) -> float:
