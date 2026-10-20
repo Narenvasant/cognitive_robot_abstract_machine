@@ -965,6 +965,14 @@ class TiagoRoboCasaTask(ABC):
             return nullcontext()
         return SceneRecorder(
             simulation=simulation,
-            camera=self.camera_on(self.first_target),
+            camera=self.recording_camera,
             recording=self.recording,
         )
+
+    @property
+    def recording_camera(self) -> ViewerCamera:
+        """
+        :return: What the recording is taken through: a camera on
+            :attr:`first_target`.
+        """
+        return self.camera_on(self.first_target)

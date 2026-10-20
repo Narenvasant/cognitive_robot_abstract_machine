@@ -19,7 +19,13 @@ import mujoco
 
 from experiments.scene_recording import SceneRecording
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
+from semantic_digital_twin.adapters.robocasa_dataset.mujoco_compat import (
+    robocasa_version_assertions_relaxed,
+)
 from typing_extensions import Type
+
+with robocasa_version_assertions_relaxed():
+    from robocasa.models.scenes.scene_registry import LayoutType
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +97,13 @@ class EpisodeSettings:
     let it sample whatever it likes.
     """
 
+    varies_the_layout: bool = False
+    """
+    Whether each attempt composes the next of RoboCasa's kitchen layouts, rather than
+    the one the task has: what a task needs, a microwave on the counter rather than
+    over the hob, say, is a matter of the layout, which a new seed does not change.
+    """
+
     def recording_of(self, attempt: int) -> SceneRecording | None:
         """
         :param attempt: Which attempt this is.
@@ -133,6 +146,8 @@ class EpisodeSettings:
             episode.counter_height = self.counter_height
         if self.food_category is not None:
             episode.food_category = self.food_category
+        if self.varies_the_layout:
+            episode.layout = LayoutType[f"LAYOUT{attempt:03d}"]
         return episode
 
 
@@ -280,6 +295,11 @@ def parser_of(description: str, tasks: list[str]) -> argparse.ArgumentParser:
     parser.add_argument("--attempts", type=int, default=12)
     parser.add_argument("--no-avoidance", action="store_true")
     parser.add_argument(
+        "--vary-layout",
+        action="store_true",
+        help="compose each attempt in the next of RoboCasa's kitchen layouts",
+    )
+    parser.add_argument(
         "--benchmark",
         action="store_true",
         help="try every kitchen and count the ones the task comes off in, rather than"
@@ -318,4 +338,5 @@ def settings_from(arguments: argparse.Namespace) -> EpisodeSettings:
         grasp_pitch=None if arguments.pitch is None else math.radians(arguments.pitch),
         counter_height=arguments.counter_height,
         food_category=arguments.category,
+        varies_the_layout=arguments.vary_layout,
     )

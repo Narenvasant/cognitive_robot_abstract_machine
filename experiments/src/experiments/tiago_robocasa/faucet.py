@@ -16,6 +16,8 @@ from abc import ABC
 from dataclasses import dataclass
 from enum import StrEnum
 
+import numpy as np
+
 from experiments.tiago_robocasa.handles import TiagoHandleTask
 from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Handle
@@ -51,6 +53,13 @@ class TiagoFaucetTask(TiagoHandleTask, ABC):
     turns it about its hinge.
     """
 
+    handle_reach: float = 0.9
+    """
+    How far in front of its base's centre Tiago takes hold of the lever, in metres:
+    the lever stands at the back of the sink, more than half a metre behind the
+    counter's edge.
+    """
+
     water_on_position: float = 0.4
     """
     How far the lever has to be turned for RoboCasa to count the water running, in
@@ -81,6 +90,38 @@ class TiagoFaucetTask(TiagoHandleTask, ABC):
         :return: The faucet's lever.
         """
         return Handle(root=self.sink_part(SinkPart.LEVER))
+
+    @property
+    def handled_bodies(self) -> list[Body]:
+        """
+        :return: The sink and the counter it is set into: the lever stands a few
+            centimetres above the counter, and the arm reaching it passes closer to the
+            counter top than the clearance it is otherwise held to.
+        """
+        lever = self.handle_middle
+        counters = [
+            body
+            for body in self.world.bodies
+            if body.has_collision()
+            and body not in self.robot.bodies_with_collision
+            and self.lies_under(body, lever)
+        ]
+        return super().handled_bodies + counters
+
+    def lies_under(self, body: Body, point: np.ndarray) -> bool:
+        """
+        :param body: A body of the kitchen.
+        :param point: A point in the kitchen's frame.
+        :return: Whether the body spans the point's place on the floor and starts
+            below it: the counter, and the cabinet under it. Their tops cannot be read
+            off their boxes, which RoboCasa builds to take in fixtures far above.
+        """
+        lowest, highest = self.box_around([body])
+        return bool(
+            lowest[0] <= point[0] <= highest[0]
+            and lowest[1] <= point[1] <= highest[1]
+            and lowest[2] < point[2]
+        )
 
     @property
     def headings_to_try(self) -> tuple[float, ...]:

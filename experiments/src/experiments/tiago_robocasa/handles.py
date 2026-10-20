@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -112,14 +112,10 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
     up short of where the task wants it.
     """
 
-    upright_handle_roll: float = 3 * math.pi / 4
+    handle_grasp_roll: float | None = field(init=False, default=None)
     """
-    How far the hand is rolled about its approach to take an upright handle, in radians,
-    which closes the fingers across the bar at an angle.
-
-    Measured in front of a RoboCasa microwave: with the hand unrolled, or rolled a
-    quarter turn either way, the arm reaches no height between 1.1 m and 1.7 m at all;
-    rolled three eighths of a turn it reaches up to 1.5 m level and 1.6 m tilted up.
+    The roll of :attr:`handle_grasp_rolls` the arm reached the handle with from where
+    Tiago stands, once a stand was found.
     """
 
     door_waypoint_angle: float = math.radians(10)
@@ -250,13 +246,21 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         return bool(size[2] > max(size[0], size[1]))
 
     @property
-    def handle_grasp_roll(self) -> float:
+    def handle_grasp_rolls(self) -> tuple[float, ...]:
         """
-        :return: How far the hand is rolled about its approach to take the handle, in
-            radians: :attr:`upright_handle_roll` on an upright handle, and a quarter
-            turn on a level one, which the fingers close across from above and below.
+        :return: The rolls of the hand about its approach the handle is tried with, in
+            radians, the first that the arm reaches being taken: a quarter turn on a
+            level handle, which closes the fingers across it from above and below;
+            on an upright one no roll, three eighths of a turn and half a turn, which
+            close them across it from the sides.
+
+        Which roll the arm reaches an upright handle with depends on where the handle
+        stands: measured at RoboCasa's sink lever, only the unrolled hand arrives;
+        at its microwave, only the hand rolled three eighths of a turn does.
         """
-        return self.upright_handle_roll if self.handle_is_upright else math.pi / 2
+        if self.handle_is_upright:
+            return 0.0, 3 * math.pi / 4, math.pi
+        return (math.pi / 2,)
 
     @property
     def first_target(self) -> np.ndarray:
@@ -338,7 +342,11 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         closed_middle = (self.shift_to(closed) @ np.append(self.handle_middle, 1.0))[:3]
         world_T_closed_grasp = HomogeneousTransformationMatrix.from_xyz_rpy(
             *closed_middle,
-            roll=self.handle_grasp_roll,
+            roll=(
+                self.handle_grasp_roll
+                if self.handle_grasp_roll is not None
+                else self.handle_grasp_rolls[0]
+            ),
             pitch=self.handle_grasp_pitch,
             yaw=self.heading,
             reference_frame=self.world.root,
@@ -361,10 +369,16 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
 
     def reaches_the_handle(self) -> bool:
         """
-        :return: Whether the arm gets the hand onto the handle from where Tiago stands,
-            worked out afresh because the grasp follows Tiago as Tiago is moved about.
+        :return: Whether the arm gets the hand onto the handle from where Tiago stands
+            with any of :attr:`handle_grasp_rolls`, keeping the first it does, worked
+            out afresh because the grasp follows Tiago as Tiago is moved about.
         """
-        return self.can_reach(self.handle_grasp().world_T_grasp)
+        for roll in self.handle_grasp_rolls:
+            self.handle_grasp_roll = roll
+            if self.can_reach(self.handle_grasp().world_T_grasp):
+                return True
+        self.handle_grasp_roll = None
+        return False
 
     def taking_hold_of(self, grasp: GraspCandidate) -> GraspingAction:
         """

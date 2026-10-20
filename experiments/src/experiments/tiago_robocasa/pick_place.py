@@ -605,7 +605,8 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         :return: Whether the object has come to rest over the receptacle's floor and
             down on it, which is what being put there means, whether the receptacle is a
             basin it falls into or a top it lands on. An object still held over the
-            receptacle, or perched on its rim, is not in it.
+            receptacle, perched on its rim, or lying under it, as in a drawer below a
+            counter, is not in it.
         """
         floor = self.receptacle_floor
         box = self.extent(self.food.root)
@@ -613,7 +614,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         return bool(
             floor.min_x <= here[0] <= floor.max_x
             and floor.min_y <= here[1] <= floor.max_y
-            and box.min_z <= floor.max_z + self.resting_tolerance
+            and abs(box.min_z - floor.max_z) <= self.resting_tolerance
         )
 
     def prepare_contacts(self) -> None:
@@ -749,10 +750,65 @@ class PickPlaceDrawerToCounter(TiagoPickPlaceTask, TiagoDrawerTask):
         return super().handled_bodies + self.colliding_bodies_below(self.receptacle)
 
 
+@dataclass
+class PickPlaceCounterToDrawer(TiagoPickPlaceTask, TiagoDrawerTask):
+    """
+    Tiago takes the object off the counter and drops it into the drawer below, which
+    RoboCasa has drawn out.
+    """
+
+    drop_from: float = 0.1
+    """
+    Above the drawer's sides: an arm reaching down into a drawer brings the wrist
+    against its front, so the object is let go over it and falls in.
+    """
+
+    @property
+    def goal_position(self) -> float:
+        """
+        :return: The end of the drawer's rails, which RoboCasa has drawn the drawer
+            towards.
+        """
+        return float(self.mechanism.dof.limits.upper.position)
+
+    @property
+    def task_is_done(self) -> bool:
+        """
+        :return: Whether the object now lies in the drawer.
+        """
+        return self.object_is_in_the_receptacle
+
+    @property
+    def receptacle(self) -> Body:
+        """
+        :return: The part of the drawer that slides out, which the object goes into.
+        """
+        return self.drawer.root
+
+    @property
+    def release_height(self) -> float:
+        """
+        :return: The top of the drawer's sides.
+        """
+        _, highest = self.box_around(self.colliding_bodies_below(self.receptacle))
+        return float(highest[2])
+
+    @property
+    def handled_bodies(self) -> list[Body]:
+        """
+        :return: The drawer's fixture, which Tiago stands against, and the counter the
+            object is taken from.
+        """
+        return super().handled_bodies + self.colliding_bodies_below(
+            self.task.referenced_fixtures[FixtureReference.COUNTER]
+        )
+
+
 TASKS = {
     "PickPlaceCounterToSink": PickPlaceCounterToSink,
     "PickPlaceCounterToStove": PickPlaceCounterToStove,
     "PickPlaceDrawerToCounter": PickPlaceDrawerToCounter,
+    "PickPlaceCounterToDrawer": PickPlaceCounterToDrawer,
 }
 """
 The RoboCasa tasks Tiago can be asked for, by the name RoboCasa gives them.
