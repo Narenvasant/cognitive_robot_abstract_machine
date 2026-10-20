@@ -843,8 +843,8 @@ class CounterContact:
 @dataclass
 class MoveAlongTheCounter(PickPlaceCounterToSink):
     """
-    Tiago picks the object up off the counter and sets it down on the same counter a
-    hand's breadth or two to one side, in the scene of RoboCasa's
+    Tiago picks the object up off the counter and lets it go just above the same
+    counter a hand's breadth or two to one side, in the scene of RoboCasa's
     ``PickPlaceCounterToSink`` task.
 
     Where it is set down is fixed relative to where it lay rather than chosen by
@@ -869,9 +869,11 @@ class MoveAlongTheCounter(PickPlaceCounterToSink):
     as lying on it, in metres.
     """
 
-    drop_from: float = 0.02
+    drop_from: float = 0.1
     """
-    Barely above the counter: the object is set down rather than dropped.
+    A hand's breadth above the counter: measured beside a RoboCasa sink, the arm
+    reaches no point along the counter lower than that, with the object in hand, from
+    where it picked the object up.
     """
 
     @classproperty
