@@ -74,10 +74,6 @@ from semantic_digital_twin.world_description.shape_collection import (
 )
 from semantic_digital_twin.world_description.world_entity import Body
 
-# %% looking for somewhere to stand
-
-
-@dataclass
 class KitchenBodyPrefix(StrEnum):
     """
     How RoboCasa begins the names of the kitchen's bodies this experiment looks for.
@@ -89,6 +85,10 @@ class KitchenBodyPrefix(StrEnum):
     """
 
 
+# %% looking for somewhere to stand
+
+
+@dataclass
 class StandCandidate:
     """
     One stand to try: how far it steps back and along from the stand that puts the
