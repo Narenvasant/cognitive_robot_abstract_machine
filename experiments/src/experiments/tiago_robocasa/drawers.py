@@ -13,8 +13,13 @@ from __future__ import annotations
 
 import logging
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from typing_extensions import Callable
+
+from coraplex.datastructures.dataclasses import Context
+from krrood.ormatic.utils import classproperty
+from coraplex.plans.plan import Plan
 from experiments.hsr_robocasa.robocasa_task import FixtureReference
 from experiments.tiago_robocasa.handles import TiagoHandleTask
 from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
@@ -123,7 +128,84 @@ class CloseDrawer(TiagoDrawerTask):
         return self.travel <= self.closed_ratio
 
 
-TASKS = {"OpenDrawer": OpenDrawer, "CloseDrawer": CloseDrawer}
+@dataclass
+class OpenAndCloseDrawer(TiagoDrawerTask):
+    """
+    Tiago pulls the drawer out and pushes it back in, in one episode of RoboCasa's
+    ``OpenDrawer`` task.
+
+    The drawer is closed from where opening it left Tiago: the base follows the hand
+    out along the drawer's travel, which leaves the drawn-out handle where it was in
+    front of Tiago.
+    """
+
+    closing: bool = field(init=False, default=False)
+    """
+    Whether the drawer is being pushed back in, once it has been pulled out.
+    """
+
+    widest_travel: float = field(init=False, default=0.0)
+    """
+    How far the drawer stood out, as a share of its travel, once it was pulled out.
+    """
+
+    @classproperty
+    def task_name(cls) -> str:
+        """
+        RoboCasa's ``OpenDrawer``, which composes the kitchen with the drawer shut.
+        """
+        return OpenDrawer.__name__
+
+    @property
+    def goal_position(self) -> float:
+        """
+        :return: The end of the drawer's rails while it is pulled out, the shut end
+            while it is pushed back in.
+        """
+        limits = self.mechanism.dof.limits
+        return float(limits.lower.position if self.closing else limits.upper.position)
+
+    @property
+    def stages(self) -> list[Callable[[Context], Plan]]:
+        """
+        :return: Pulling the drawer out, then pushing it back in.
+        """
+        return [self.build_plan, self.pushing_it_back_in]
+
+    def pushing_it_back_in(self, context: Context) -> Plan:
+        """
+        :param context: The context to plan in.
+        :return: Pushing the drawer back in from where pulling it out left Tiago.
+        """
+        self.widest_travel = self.travel
+        self.closing = True
+        return self.working_the_handle(context)
+
+    @property
+    def task_is_done(self) -> bool:
+        """
+        :return: Whether the drawer was pulled out and now stands closed again.
+        """
+        return (
+            self.widest_travel >= self.open_ratio and self.travel <= self.closed_ratio
+        )
+
+    @property
+    def outcome(self) -> str:
+        """
+        :return: How far the drawer was pulled out and where it stands now.
+        """
+        return (
+            f"{self.moving_part.name.name} was pulled out to {self.widest_travel:.0%}"
+            f" of its travel and stands at {self.travel:.0%}"
+        )
+
+
+TASKS = {
+    "OpenDrawer": OpenDrawer,
+    "CloseDrawer": CloseDrawer,
+    "OpenAndCloseDrawer": OpenAndCloseDrawer,
+}
 """
 The drawer tasks Tiago can be asked for, by the name RoboCasa gives them.
 """

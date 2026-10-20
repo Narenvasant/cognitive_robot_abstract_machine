@@ -446,6 +446,16 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         self.stand_where_the_hand_arrives(
             self.reaches_the_handle, self.handle_middle, self.handle_reach
         )
+        return self.working_the_handle(context)
+
+    def working_the_handle(self, context: Context) -> Plan:
+        """
+        Bring the hand in front of the handle from where Tiago stands, take hold of it,
+        draw the fixture to where the task wants it and let go.
+
+        :param context: The context to plan in.
+        :return: The plan.
+        """
         grasp = self.handle_grasp()
         pre_grasp = self.pre_grasp()
         goal = self.pull_goal
