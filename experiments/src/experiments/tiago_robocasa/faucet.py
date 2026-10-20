@@ -26,6 +26,17 @@ from semantic_digital_twin.world_description.world_entity import Body
 logger = logging.getLogger(__name__)
 
 
+class SinkObjectPrefix(StrEnum):
+    """
+    How RoboCasa begins the names of the objects it lays into the sink.
+    """
+
+    DISTRACTOR = "distr_sink"
+    """
+    The objects it leaves lying in the basin to be in the way.
+    """
+
+
 class SinkPart(StrEnum):
     """
     How RoboCasa's sink names the bodies this task works with, at the end of their
@@ -94,9 +105,10 @@ class TiagoFaucetTask(TiagoHandleTask, ABC):
     @property
     def handled_bodies(self) -> list[Body]:
         """
-        :return: The sink and the counter it is set into: the lever stands a few
-            centimetres above the counter, and the arm reaching it passes closer to the
-            counter top than the clearance it is otherwise held to.
+        :return: The sink, the counter it is set into and what lies in its basin:
+            the lever stands a few centimetres above the counter, behind the basin, and
+            the arm reaching it passes over them closer than the clearance it is
+            otherwise held to.
         """
         lever = self.handle_middle
         counters = [
@@ -106,7 +118,13 @@ class TiagoFaucetTask(TiagoHandleTask, ABC):
             and body not in self.robot.bodies_with_collision
             and self.lies_under(body, lever)
         ]
-        return super().handled_bodies + counters
+        in_the_basin = [
+            body
+            for body in self.world.bodies
+            if body.name.name.startswith(SinkObjectPrefix.DISTRACTOR)
+            and body.has_collision()
+        ]
+        return super().handled_bodies + counters + in_the_basin
 
     def lies_under(self, body: Body, point: np.ndarray) -> bool:
         """
@@ -122,6 +140,14 @@ class TiagoFaucetTask(TiagoHandleTask, ABC):
             and lowest[1] <= point[1] <= highest[1]
             and lowest[2] < point[2]
         )
+
+    @property
+    def square_position(self) -> float:
+        """
+        :return: The middle of the lever's travel, where it stands upright with the
+            water off.
+        """
+        return 0.0
 
     @property
     def headings_to_try(self) -> tuple[float, ...]:

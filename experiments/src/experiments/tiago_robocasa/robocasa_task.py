@@ -74,6 +74,7 @@ from semantic_digital_twin.world_description.shape_collection import (
 )
 from semantic_digital_twin.world_description.world_entity import Body
 
+
 class KitchenBodyPrefix(StrEnum):
     """
     How RoboCasa begins the names of the kitchen's bodies this experiment looks for.

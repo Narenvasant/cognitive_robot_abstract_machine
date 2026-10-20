@@ -326,19 +326,27 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
 
     # %% taking hold of the handle
 
+    @property
+    def square_position(self) -> float:
+        """
+        :return: Where the mechanism stands when its handle faces Tiago squarely: shut,
+            for a drawer or a door.
+        """
+        return float(self.mechanism.dof.limits.lower.position)
+
     def handle_grasp(self) -> GraspCandidate:
         """
         The grasp that takes the handle at its middle, approaching it from where Tiago
         stands, the fingers closing across the bar from above and below.
 
-        It is worked out where the fixture stands closed and carried back to where the
-        fixture stands now, so that a handle on an open door is taken at the angle the
-        door has turned to.
+        It is worked out where the fixture stands at :attr:`square_position` and carried
+        back to where the fixture stands now, so that a handle on an open door is taken
+        at the angle the door has turned to.
 
         :return: The grasp.
         """
         handle = self.handle
-        closed = self.mechanism.dof.limits.lower.position
+        closed = self.square_position
         closed_middle = (self.shift_to(closed) @ np.append(self.handle_middle, 1.0))[:3]
         world_T_closed_grasp = HomogeneousTransformationMatrix.from_xyz_rpy(
             *closed_middle,
