@@ -9,6 +9,8 @@ own robot, and every object it moves is held by the grip of its fingers alone.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 import math
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
@@ -31,7 +33,7 @@ from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.motions.gripper import MoveToolCenterPointMotion
 from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
-from experiments.hsr_robocasa.robocasa_task import KitchenBody, RoboCasaLayout
+from experiments.hsr_robocasa.robocasa_task import RoboCasaLayout
 from semantic_digital_twin.adapters.robocasa_dataset.mujoco_compat import (
     robocasa_version_assertions_relaxed,
 )
@@ -76,6 +78,17 @@ from semantic_digital_twin.world_description.world_entity import Body
 
 
 @dataclass
+class KitchenBodyPrefix(StrEnum):
+    """
+    How RoboCasa begins the names of the kitchen's bodies this experiment looks for.
+    """
+
+    FLOOR = "floor"
+    """
+    The floor and the slab under it.
+    """
+
+
 class StandCandidate:
     """
     One stand to try: how far it steps back and along from the stand that puts the
@@ -443,10 +456,7 @@ class TiagoRoboCasaTask(ABC):
             self.world.collision_manager.add_ignore_collision_rule(
                 AllowCollisionBetweenGroups(
                     body_group_a=robot.bodies_with_collision,
-                    body_group_b=[
-                        self.world.get_body_by_name(floor)
-                        for floor in (KitchenBody.FLOOR, KitchenBody.FLOOR_BACKING)
-                    ],
+                    body_group_b=self.floors,
                 )
             )
             self.let_the_arms_work_among(self.handled_bodies)
@@ -454,6 +464,19 @@ class TiagoRoboCasaTask(ABC):
         self.park_the_arms()
         self.stand_where_nothing_touches()
         return self.world
+
+    @property
+    def floors(self) -> list[Body]:
+        """
+        :return: The floor and the slab under it, which Tiago's base stands on and so
+            never keeps clear of. RoboCasa names them after the room they lie in, which
+            differs from layout to layout.
+        """
+        return [
+            body
+            for body in self.world.bodies
+            if body.name.name.startswith(KitchenBodyPrefix.FLOOR)
+        ]
 
     @property
     def handled_bodies(self) -> list[Body]:

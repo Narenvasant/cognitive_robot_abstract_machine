@@ -104,6 +104,12 @@ class EpisodeSettings:
     over the hob, say, is a matter of the layout, which a new seed does not change.
     """
 
+    first_layout: int = 1
+    """
+    Which of RoboCasa's kitchen layouts the first attempt composes, where each attempt
+    composes the next.
+    """
+
     def recording_of(self, attempt: int) -> SceneRecording | None:
         """
         :param attempt: Which attempt this is.
@@ -147,7 +153,8 @@ class EpisodeSettings:
         if self.food_category is not None:
             episode.food_category = self.food_category
         if self.varies_the_layout:
-            episode.layout = LayoutType[f"LAYOUT{attempt:03d}"]
+            layout = self.first_layout + attempt - 1
+            episode.layout = LayoutType[f"LAYOUT{layout:03d}"]
         return episode
 
 
@@ -300,6 +307,12 @@ def parser_of(description: str, tasks: list[str]) -> argparse.ArgumentParser:
         help="compose each attempt in the next of RoboCasa's kitchen layouts",
     )
     parser.add_argument(
+        "--first-layout",
+        type=int,
+        default=1,
+        help="the layout the first attempt composes, with --vary-layout",
+    )
+    parser.add_argument(
         "--benchmark",
         action="store_true",
         help="try every kitchen and count the ones the task comes off in, rather than"
@@ -339,4 +352,5 @@ def settings_from(arguments: argparse.Namespace) -> EpisodeSettings:
         counter_height=arguments.counter_height,
         food_category=arguments.category,
         varies_the_layout=arguments.vary_layout,
+        first_layout=arguments.first_layout,
     )
