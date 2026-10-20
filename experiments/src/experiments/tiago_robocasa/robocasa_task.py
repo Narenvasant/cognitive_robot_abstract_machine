@@ -876,17 +876,25 @@ class TiagoRoboCasaTask(ABC):
         Leaves them as RoboCasa gives them.
         """
 
+    camera_offset: float = 35.0
+    """
+    How far the recording camera is turned from looking the way Tiago faces, in
+    degrees, so that it looks over Tiago's shoulder rather than at its back.
+    """
+
     def camera_on(self, target: np.ndarray, distance: float = 2.5) -> ViewerCamera:
         """
         :param target: What the recording looks at.
         :param distance: How far the camera stands from it, in metres.
-        :return: A camera orbiting that point.
+        :return: A camera looking down at that point from behind Tiago and to its
+            side, from above the kitchen's walls, which leaves a narrow kitchen's far
+            wall behind it rather than in front of it.
         """
         return ViewerCamera(
             look_at=(float(target[0]), float(target[1]), float(target[2])),
             distance=distance,
-            azimuth=140.0,
-            elevation=-25.0,
+            azimuth=math.degrees(self.heading) + self.camera_offset,
+            elevation=-50.0,
         )
 
     @property

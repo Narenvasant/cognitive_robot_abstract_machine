@@ -291,21 +291,6 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         """
         return self.world.get_body_by_name(TaskObject.CONTAINER)
 
-    @property
-    def receptacle_floor(self) -> VolumetricBoundingBox:
-        """
-        :return: The floor of the receptacle, as the widest of the convex pieces its
-            collision geometry is built from.
-        """
-        pieces = [
-            piece
-            for body in self.colliding_bodies_below(self.receptacle)
-            for piece in body.collision.as_bounding_box_collection_in_frame(
-                self.world.root
-            ).bounding_boxes
-        ]
-        return max(pieces, key=lambda piece: piece.width * piece.depth)
-
     def grasp(self) -> GraspCandidate:
         """
         :return: The grasp that takes the object at its middle, approaching towards
@@ -602,20 +587,44 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     @property
     def object_is_in_the_receptacle(self) -> bool:
         """
-        :return: Whether the object has come to rest over the receptacle's floor and
-            down on it, which is what being put there means, whether the receptacle is a
-            basin it falls into or a top it lands on. An object still held over the
-            receptacle, perched on its rim, or lying under it, as in a drawer below a
+        :return: Whether the object has come to rest on one of the receptacle's floors,
+            which is what being put there means, whether the receptacle is a basin it
+            falls into or a top it lands on. A floor is any level piece of the
+            receptacle at least as wide as the object, so that each basin of a double
+            sink counts and a rim the object is perched on does not. An object still
+            held over the receptacle, or lying under it, as in a drawer below a
             counter, is not in it.
         """
-        floor = self.receptacle_floor
         box = self.extent(self.food.root)
         here = box.center.to_np()[:3]
-        return bool(
-            floor.min_x <= here[0] <= floor.max_x
-            and floor.min_y <= here[1] <= floor.max_y
-            and abs(box.min_z - floor.max_z) <= self.resting_tolerance
+        return any(
+            piece.min_x <= here[0] <= piece.max_x
+            and piece.min_y <= here[1] <= piece.max_y
+            and abs(box.min_z - piece.max_z) <= self.resting_tolerance
+            for piece in self.receptacle_pieces
+            if piece.width >= box.width and piece.depth >= box.depth
         )
+
+    @property
+    def receptacle_pieces(self) -> list[VolumetricBoundingBox]:
+        """
+        :return: The convex pieces the receptacle's collision geometry is built from.
+        """
+        return [
+            piece
+            for body in self.colliding_bodies_below(self.receptacle)
+            for piece in body.collision.as_bounding_box_collection_in_frame(
+                self.world.root
+            ).bounding_boxes
+        ]
+
+    @property
+    def receptacle_floor(self) -> VolumetricBoundingBox:
+        """
+        :return: The floor of the receptacle the object is let go over, as the widest
+            of its pieces.
+        """
+        return max(self.receptacle_pieces, key=lambda piece: piece.width * piece.depth)
 
     def prepare_contacts(self) -> None:
         """
