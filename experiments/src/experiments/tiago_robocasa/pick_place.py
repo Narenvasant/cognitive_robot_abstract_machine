@@ -547,7 +547,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
                 self.arm,
                 allow_gripper_collision=True,
                 max_linear_velocity=self.carry_velocity,
-                position_threshold=self.arrival_tolerance,
+                position_threshold=self.release_tolerance,
                 orientation_threshold=self.heading_tolerance,
             ),
             MoveGripperMotion(
@@ -561,7 +561,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
                 allow_gripper_collision=True,
                 hold_gripper=GripperState.OPEN,
                 max_linear_velocity=self.carry_velocity,
-                position_threshold=self.arrival_tolerance,
+                position_threshold=self.release_tolerance,
                 orientation_threshold=self.heading_tolerance,
             ),
         ]
@@ -576,6 +576,14 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         return HomogeneousTransformationMatrix(
             world_T_tool, reference_frame=self.world.root
         ).pose
+
+    release_tolerance: float = 0.08
+    """
+    How close the hand has to come to where it lets the object go, and to where it
+    lifts off it afterwards, in metres: an arm at full stretch over a basin stalls a
+    few centimetres short of the release point, and an object let go there still falls
+    onto the basin's floor.
+    """
 
     resting_tolerance: float = 0.05
     """
