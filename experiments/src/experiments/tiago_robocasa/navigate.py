@@ -19,6 +19,7 @@ import numpy as np
 from coraplex.datastructures.dataclasses import Context
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan import Plan
+from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
 from experiments.scene_recording import ViewerCamera
 from experiments.tiago_robocasa.exceptions import NoClearStandingPose
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
@@ -27,6 +28,7 @@ from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
     Pose,
 )
+from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,21 @@ class NavigateKitchen(TiagoRoboCasaTask):
     """
     How close to the destination the base has to come for the task to count as done,
     in metres: the distance RoboCasa counts a navigation done within.
+    """
+
+    driving_arm_positions: tuple[float, ...] = (
+        1.2,
+        -1.18,
+        1.13,
+        2.07,
+        -1.95,
+        -0.03,
+        0.04,
+    )
+    """
+    The joint positions, from the shoulder out, each arm is folded to for driving: the
+    elbows tucked in against the torso, so that Tiago reaches 0.41 m out from the
+    centre of its base rather than the 0.53 m of the park pose.
     """
 
     destination: Pose | None = field(init=False, default=None)
@@ -115,6 +132,12 @@ class NavigateKitchen(TiagoRoboCasaTask):
         :raises NoClearStandingPose: If Tiago touches the kitchen at every stand in
             front of the target fixture.
         """
+        arm_joints = [
+            joint for arm in self.robot.all_arms for joint in arm.active_connections
+        ]
+        parked = [float(joint.position) for joint in arm_joints]
+        folded = list(self.driving_arm_positions) * len(self.robot.all_arms)
+        self.set_positions(arm_joints, folded)
         drive = self.robot.root.parent_connection
         start = HomogeneousTransformationMatrix(
             drive.origin.to_np().copy(), reference_frame=drive.parent
@@ -124,14 +147,32 @@ class NavigateKitchen(TiagoRoboCasaTask):
         )
         drive.origin = start
         if search.stand is None:
+            self.set_positions(arm_joints, parked)
             raise NoClearStandingPose(target=search.target, tried=search.tried)
         self.destination = search.stand
+        legs = self.drive_to(self.destination)
+        self.set_positions(arm_joints, parked)
         logger.info(
             "driving from the %s to the %s",
             self.source.name.name,
             self.target.name.name,
         )
-        return sequential(self.drive_to(self.destination), context=context).plan
+        folding = MoveJointsMotion(
+            names=[joint.name.name for joint in arm_joints], positions=folded
+        )
+        return sequential([folding] + legs, context=context).plan
+
+    def set_positions(
+        self, joints: list[ActiveConnection1DOF], positions: list[float]
+    ) -> None:
+        """
+        Set joints of Tiago in the planning world, without moving the simulated robot.
+
+        :param joints: The joints.
+        :param positions: Their positions, in the same order.
+        """
+        for joint, position in zip(joints, positions):
+            joint.position = position
 
     @property
     def recording_camera(self) -> ViewerCamera:

@@ -523,6 +523,31 @@ class TiagoRoboCasaTask(ABC):
     """
     How far the planned way keeps the base off the kitchen, in metres.
     """
+    backing_range: float = 1.0
+    """
+    How far Tiago backs out of a stand at most to reach the free space the way is
+    planned through, in metres.
+    """
+    backing_step: float = 0.05
+    """
+    How far apart the points tried along the way out of a stand lie, in metres.
+    """
+
+    @property
+    def footprint_radius(self) -> float:
+        """
+        :return: How far any part of Tiago reaches out over the floor from the centre of
+            its base, in metres, with its arms as they stand.
+        """
+        vertices = np.concatenate(
+            [
+                shape.mesh_in_frame(self.robot.root).vertices
+                for body in self.robot.bodies_with_collision
+                for shape in body.collision.shapes
+            ]
+        )
+        return float(np.max(np.linalg.norm(vertices[:, :2], axis=1)))
+
     floor_clearance: float = 0.05
     """
     How far above the floor the base's way is planned, in metres: the floor is a body of
@@ -532,11 +557,12 @@ class TiagoRoboCasaTask(ABC):
 
     def floor_plan(self) -> PlanarGraphOfBoundingBoxes:
         """
-        :return: The kitchen's free space as the base sees it: what is in the way
-            between just above the floor and the top of the base, so that neither the
-            floor underneath nor the counters the arm reaches over count as obstacles.
+        :return: The kitchen's free space for the base's centre: what is in the way
+            between just above the floor and the top of Tiago, so that the floor
+            underneath does not count as an obstacle, grown by how far Tiago reaches out
+            from its base and the base's clearance.
         """
-        base = self.extent(self.robot.root)
+        _, top = self.box_around(self.robot.bodies_with_collision)
         search_space = BoundingBoxCollection.from_simple_event(
             VolumetricBoundingBox,
             reference_frame=self.world.root,
@@ -549,7 +575,7 @@ class TiagoRoboCasaTask(ABC):
                         -self.kitchen_range, self.kitchen_range
                     ),
                     SpatialVariables.z.value: closed(
-                        self.floor_clearance, float(base.max_z)
+                        self.floor_clearance, float(top[2])
                     ),
                 }
             ),
@@ -557,14 +583,17 @@ class TiagoRoboCasaTask(ABC):
         return PlanarGraphOfBoundingBoxes.navigation_map_from_world(
             world=self.world,
             search_space=search_space,
-            bloat_obstacles=self.base_clearance,
+            bloat_obstacles=self.footprint_radius + self.base_clearance,
         )
 
     def drive_to(self, stand: Pose) -> list[NavigateAction]:
         """
         Drive the base to a stand along a way planned through the kitchen's free space,
         rather than straight at it: a kitchen has an island and a table between its
-        counters, and a straight line walks into them.
+        counters, and a straight line walks into them. Tiago backs straight out of where
+        it stands into that free space, and drives straight into the stand from it,
+        since a stand in front of a fixture lies closer to it than the way keeps the
+        base.
 
         :param stand: Where Tiago is to end up.
         :return: Driving there, one leg per corner of the planned way.
@@ -572,35 +601,80 @@ class TiagoRoboCasaTask(ABC):
         """
         navigation = self.floor_plan()
         here = self.stands_at
-        corners = navigation.path_from_to(
-            Point2(here.position.x, here.position.y, reference_frame=self.world.root),
-            Point2(stand.position.x, stand.position.y, reference_frame=self.world.root),
-        )
+        way_out = self.way_into_the_free_space(navigation, here)
+        way_in = self.way_into_the_free_space(navigation, stand)
+        if way_out is None or way_in is None:
+            raise NoWayToTheStand(stand=stand)
+        corners = navigation.path_from_to(way_out, way_in)
         if corners is None:
             raise NoWayToTheStand(stand=stand)
-        return [NavigateAction(leg) for leg in self.legs_along(corners, stand)]
+        backing_out = Pose.from_xyz_rpy(
+            x=float(way_out.to_np()[0]),
+            y=float(way_out.to_np()[1]),
+            yaw=self.heading_of(here),
+            reference_frame=self.world.root,
+        )
+        stand_position = Point2(
+            stand.position.x, stand.position.y, reference_frame=self.world.root
+        )
+        legs = self.legs_along(corners + [stand_position], stand)
+        if not np.allclose(way_out.to_np()[:2], here.to_np()[:2, 3]):
+            legs = [backing_out] + legs
+        return [NavigateAction(leg) for leg in legs]
+
+    def heading_of(self, pose: Pose) -> float:
+        """
+        :param pose: A pose of the base in the kitchen's frame.
+        :return: The way it faces over the floor, in radians.
+        """
+        rotation = pose.to_np()[:3, :3]
+        return float(np.arctan2(rotation[1, 0], rotation[0, 0]))
+
+    def way_into_the_free_space(
+        self, navigation: PlanarGraphOfBoundingBoxes, stand: Pose
+    ) -> Point2 | None:
+        """
+        :param navigation: The kitchen's free space for the base's centre.
+        :param stand: A pose of the base.
+        :return: The nearest point straight behind the stand, the stand's own place
+            included, that lies in the free space, or nothing within
+            :attr:`backing_range`.
+        """
+        heading = self.heading_of(stand)
+        backwards = -np.array([np.cos(heading), np.sin(heading)])
+        for distance in np.arange(0.0, self.backing_range, self.backing_step):
+            x, y = stand.to_np()[:2, 3] + distance * backwards
+            point = Point2(float(x), float(y), reference_frame=self.world.root)
+            if any(node.contains(point) for node in navigation.graph.nodes()):
+                return point
+        return None
 
     def legs_along(self, corners: list[Point2], stand: Pose) -> list[Pose]:
         """
         :param corners: The corners of the planned way, from where Tiago stands to
             where it is going.
         :param stand: Where it is going, which carries the way it is to face there.
-        :return: One pose per leg of the way: each corner turned the way the leg runs,
-            and ``stand`` itself last.
+        :return: Two poses per leg of the way, turning on the spot at its start to face
+            the way it runs and then driving along it, and ``stand`` itself last. A base
+            that turns while it drives sweeps an arc off the planned way.
         """
         positions = [corner.to_np()[:2].flatten() for corner in corners]
         legs = []
         for start, end in zip(positions, positions[1:]):
             step = end - start
-            legs.append(
+            if np.allclose(step, 0.0):
+                continue
+            yaw = float(np.arctan2(step[1], step[0]))
+            legs += [
                 Pose.from_xyz_rpy(
-                    x=float(end[0]),
-                    y=float(end[1]),
-                    yaw=float(np.arctan2(step[1], step[0])),
+                    x=float(place[0]),
+                    y=float(place[1]),
+                    yaw=yaw,
                     reference_frame=self.world.root,
                 )
-            )
-        return legs[:-1] + [stand]
+                for place in (start, end)
+            ]
+        return legs + [stand]
 
     @property
     def stands_at(self) -> Pose:
