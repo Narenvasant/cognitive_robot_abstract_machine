@@ -379,6 +379,31 @@ class TiagoRoboCasaTask(ABC):
             self.world.root
         ).bounding_box()
 
+    def box_around(self, bodies: list[Body]) -> tuple[np.ndarray, np.ndarray]:
+        """
+        :param bodies: Bodies of the kitchen.
+        :return: The lowest and highest corner of the box around all of their pieces,
+            in the kitchen's frame.
+        """
+        pieces = [
+            piece
+            for body in bodies
+            for piece in body.collision.as_bounding_box_collection_in_frame(
+                self.world.root
+            ).bounding_boxes
+        ]
+        return self.corners_around(pieces)
+
+    @staticmethod
+    def corners_around(pieces: list) -> tuple[np.ndarray, np.ndarray]:
+        """
+        :param pieces: Bounding boxes in one frame.
+        :return: The lowest and highest corner of the box around all of them.
+        """
+        lowest = np.array([[p.min_x, p.min_y, p.min_z] for p in pieces]).min(axis=0)
+        highest = np.array([[p.max_x, p.max_y, p.max_z] for p in pieces]).max(axis=0)
+        return lowest, highest
+
     def colliding_bodies_below(self, root: Body) -> list[Body]:
         """
         :param root: A body of the kitchen.

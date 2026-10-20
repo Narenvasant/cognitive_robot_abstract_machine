@@ -112,6 +112,24 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
     up short of where the task wants it.
     """
 
+    upright_handle_roll: float = 3 * math.pi / 4
+    """
+    How far the hand is rolled about its approach to take an upright handle, in radians,
+    which closes the fingers across the bar at an angle.
+
+    Measured in front of a RoboCasa microwave: with the hand unrolled, or rolled a
+    quarter turn either way, the arm reaches no height between 1.1 m and 1.7 m at all;
+    rolled three eighths of a turn it reaches up to 1.5 m level and 1.6 m tilted up.
+    """
+
+    door_waypoint_angle: float = math.radians(10)
+    """
+    How far a door turns between the waypoints the hand is led through, in radians:
+
+    the handle travels on an arc about the hinge, and a hand led straight to where the
+    door ends up would pull across the arc rather than along it.
+    """
+
     impedance_ratio: float = 50.0
     """
     Stiffer friction than carrying an object needs: the fingers have to hold a bar
@@ -164,6 +182,19 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         goal = self.goal_position
         return goal + math.copysign(self.pull_overshoot, goal - self.mechanism.position)
 
+    @property
+    def pull_waypoints(self) -> list[float]:
+        """
+        :return: The positions of the mechanism's joint the hand is led through on its
+            way to :attr:`pull_goal`: the goal alone for a drawer, whose handle travels
+            in a straight line, and one every :attr:`door_waypoint_angle` for a door.
+        """
+        start, goal = self.mechanism.position, self.pull_goal
+        if not isinstance(self.mechanism, RevoluteConnection):
+            return [goal]
+        count = max(1, math.ceil(abs(goal - start) / self.door_waypoint_angle))
+        return [start + (goal - start) * step / count for step in range(1, count + 1)]
+
     # %% the fixture
 
     @property
@@ -195,11 +226,37 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         )
 
     @property
+    def handle_box(self) -> tuple[np.ndarray, np.ndarray]:
+        """
+        :return: The lowest and highest corner of the handle, in the kitchen's frame.
+        """
+        return self.box_around([self.handle.root])
+
+    @property
     def handle_middle(self) -> np.ndarray:
         """
-        :return: Where the handle is taken hold of: its middle.
+        :return: The middle of :attr:`handle_box`.
         """
-        return self.extent(self.handle.root).center.to_np()[:3]
+        lowest, highest = self.handle_box
+        return (lowest + highest) / 2
+
+    @property
+    def handle_is_upright(self) -> bool:
+        """
+        :return: Whether the handle stands taller than it is wide.
+        """
+        lowest, highest = self.handle_box
+        size = highest - lowest
+        return bool(size[2] > max(size[0], size[1]))
+
+    @property
+    def handle_grasp_roll(self) -> float:
+        """
+        :return: How far the hand is rolled about its approach to take the handle, in
+            radians: :attr:`upright_handle_roll` on an upright handle, and a quarter
+            turn on a level one, which the fingers close across from above and below.
+        """
+        return self.upright_handle_roll if self.handle_is_upright else math.pi / 2
 
     @property
     def first_target(self) -> np.ndarray:
@@ -281,7 +338,8 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         closed_middle = (self.shift_to(closed) @ np.append(self.handle_middle, 1.0))[:3]
         world_T_closed_grasp = HomogeneousTransformationMatrix.from_xyz_rpy(
             *closed_middle,
-            roll=math.pi / 2,
+            roll=self.handle_grasp_roll,
+            pitch=self.handle_grasp_pitch,
             yaw=self.heading,
             reference_frame=self.world.root,
         ).pose
@@ -292,6 +350,14 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
                 handle.root,
             ),
         )
+
+    @property
+    def handle_grasp_pitch(self) -> float:
+        """
+        :return: How far the hand is tilted from level as it takes the handle, in
+            radians, negative upwards: not at all.
+        """
+        return 0.0
 
     def reaches_the_handle(self) -> bool:
         """
@@ -371,13 +437,16 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
                     position_threshold=self.tool_frame_tolerance,
                 ),
                 self.taking_hold_of(grasp),
-                MoveToolCenterPointMotion(
-                    self.shifted(grasp.world_T_grasp, goal),
-                    self.arm,
-                    allow_gripper_collision=True,
-                    max_linear_velocity=self.pull_velocity,
-                    position_threshold=self.tool_frame_tolerance,
-                ),
+                *[
+                    MoveToolCenterPointMotion(
+                        self.shifted(grasp.world_T_grasp, waypoint),
+                        self.arm,
+                        allow_gripper_collision=True,
+                        max_linear_velocity=self.pull_velocity,
+                        position_threshold=self.tool_frame_tolerance,
+                    )
+                    for waypoint in self.pull_waypoints
+                ],
                 MoveGripperMotion(
                     GripperState.OPEN,
                     self.arm.end_effector,

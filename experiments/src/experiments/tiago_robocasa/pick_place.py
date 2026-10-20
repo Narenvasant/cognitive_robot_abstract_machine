@@ -328,7 +328,8 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             the receptacle, so that the hand stays out of it and the object falls the
             rest of the way in.
         """
-        return self.extent(self.receptacle).max_z
+        _, highest = self.box_around(self.colliding_bodies_below(self.receptacle))
+        return float(highest[2])
 
     def release_points(self) -> list[np.ndarray]:
         """

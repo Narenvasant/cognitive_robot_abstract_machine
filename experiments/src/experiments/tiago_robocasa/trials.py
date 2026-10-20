@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import logging
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +91,20 @@ class EpisodeSettings:
     let it sample whatever it likes.
     """
 
+    def recording_of(self, attempt: int) -> SceneRecording | None:
+        """
+        :param attempt: Which attempt this is.
+        :return: Where that attempt is recorded to: a file of its own, named after the
+            attempt, so that a kitchen the task did not come off in can be looked at
+            afterwards.
+        """
+        if self.recording is None:
+            return None
+        path = self.recording.path
+        return replace(
+            self.recording, path=path.with_stem(f"{path.stem}_kitchen{attempt}")
+        )
+
     def episode_of(
         self, task: Type[TiagoRoboCasaTask], attempt: int = 1
     ) -> TiagoRoboCasaTask:
@@ -103,7 +117,7 @@ class EpisodeSettings:
         :return: The episode.
         """
         episode = task(
-            recording=self.recording,
+            recording=self.recording_of(attempt),
             headless=self.headless,
             noslip_iterations=self.noslip_iterations,
             friction_cone=self.friction_cone,
@@ -164,8 +178,6 @@ class Trials:
         """
         for attempt in range(1, self.attempts + 1):
             episode = self.settings.episode_of(self.task, attempt)
-            if self.done:
-                episode.recording = None
             self.try_in_a_new_kitchen(attempt, episode)
             if self.done and not self.tries_every_kitchen:
                 break
@@ -202,6 +214,7 @@ class Trials:
                 episode.outcome,
                 type(failure).__name__,
                 str(failure)[:120],
+                exc_info=failure,
             )
             self.count_what_the_scene_says(episode)
             return
@@ -236,8 +249,11 @@ class Trials:
                 self.task.task_name,
                 self.attempts,
             )
-        if self.settings.recording is not None and self.done:
-            logger.info("wrote a video to %s", self.settings.recording.path)
+        if self.settings.recording is not None:
+            logger.info(
+                "wrote a video of every kitchen to %s",
+                self.settings.recording.path.parent,
+            )
 
 
 # %% asking for a run from the command line

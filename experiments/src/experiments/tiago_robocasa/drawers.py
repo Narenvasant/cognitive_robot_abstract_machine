@@ -99,6 +99,15 @@ class CloseDrawer(TiagoDrawerTask):
     Tiago pushes the drawer back in, which RoboCasa has opened.
     """
 
+    handle_reach: float = 0.6
+    """
+    Measured on a RoboCasa drawer RoboCasa has drawn half out, its handle 0.79 m high:
+
+    the hand gets onto it from 0.60 m to 0.65 m in front of the base and from nowhere
+    else. The base stands where it does for a closed drawer; the handle has come out
+    towards it.
+    """
+
     @property
     def goal_position(self) -> float:
         """
