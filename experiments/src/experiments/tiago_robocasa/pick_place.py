@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+from functools import cached_property
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -20,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from coraplex.datastructures.dataclasses import Context
+from krrood.ormatic.utils import classproperty
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan import Plan
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
@@ -821,11 +823,136 @@ class PickPlaceCounterToDrawer(TiagoPickPlaceTask, TiagoDrawerTask):
         )
 
 
+@dataclass
+class CounterContact:
+    """
+    What an object lies on: a body of the kitchen and the piece of it under the object.
+    """
+
+    body: Body
+    """
+    The body.
+    """
+
+    top: VolumetricBoundingBox
+    """
+    The piece of the body the object lies on.
+    """
+
+
+@dataclass
+class MoveAlongTheCounter(PickPlaceCounterToSink):
+    """
+    Tiago picks the object up off the counter and sets it down on the same counter a
+    hand's breadth or two to one side, in the scene of RoboCasa's
+    ``PickPlaceCounterToSink`` task.
+
+    Where it is set down is fixed relative to where it lay rather than chosen by
+    RoboCasa: along the counter, to either side.
+    """
+
+    shifts: tuple[float, ...] = (0.3, -0.3, 0.2, -0.2)
+    """
+    How far along the counter from where it lay the object may be set down, in
+    metres, the first the arm reaches being taken.
+    """
+
+    minimum_shift: float = 0.15
+    """
+    How far the object has to end up from where it lay for the task to count as done,
+    in metres.
+    """
+
+    contact_tolerance: float = 0.03
+    """
+    How far above a piece of the kitchen the object's underside may be and still count
+    as lying on it, in metres.
+    """
+
+    drop_from: float = 0.02
+    """
+    Barely above the counter: the object is set down rather than dropped.
+    """
+
+    @classproperty
+    def task_name(cls) -> str:
+        """
+        RoboCasa's ``PickPlaceCounterToSink``, which lays the object on the counter.
+        """
+        return PickPlaceCounterToSink.__name__
+
+    @cached_property
+    def counter(self) -> CounterContact:
+        """
+        :return: The body the object lies on when first asked, before Tiago has
+            touched it, and the piece of it under the object.
+        """
+        box = self.extent(self.food.root)
+        here = box.center.to_np()[:3]
+        robot_bodies = set(self.robot.bodies_with_collision)
+        return next(
+            CounterContact(body=body, top=piece)
+            for body in self.world.bodies
+            if body.has_collision()
+            and body is not self.food.root
+            and body not in robot_bodies
+            for piece in body.collision.as_bounding_box_collection_in_frame(
+                self.world.root
+            ).bounding_boxes
+            if piece.min_x <= here[0] <= piece.max_x
+            and piece.min_y <= here[1] <= piece.max_y
+            and abs(box.min_z - piece.max_z) <= self.contact_tolerance
+        )
+
+    @property
+    def receptacle(self) -> Body:
+        """
+        :return: The counter the object lies on.
+        """
+        return self.counter.body
+
+    @property
+    def release_height(self) -> float:
+        """
+        :return: The top of the counter.
+        """
+        return float(self.counter.top.max_z)
+
+    def release_points(self) -> list[np.ndarray]:
+        """
+        :return: The places along the counter the object may be set down at, centred,
+            at :attr:`shifts` from where it lay.
+        """
+        top = self.counter.top
+        along = np.zeros(3)
+        along[0 if top.width >= top.depth else 1] = 1.0
+        height = (
+            self.release_height
+            + self.extent(self.food.root).height / 2
+            + self.drop_from
+        )
+        return [
+            np.array([*(self.rested_at[:2] + shift * along[:2]), height])
+            for shift in self.shifts
+        ]
+
+    @property
+    def task_is_done(self) -> bool:
+        """
+        :return: Whether the object lies on the counter again, at least
+            :attr:`minimum_shift` from where it lay.
+        """
+        here = self.extent(self.food.root).center.to_np()[:3]
+        moved = float(np.linalg.norm(here[:2] - self.rested_at[:2]))
+        return self.object_is_in_the_receptacle and moved >= self.minimum_shift
+
+
 TASKS = {
     "PickPlaceCounterToSink": PickPlaceCounterToSink,
     "PickPlaceCounterToStove": PickPlaceCounterToStove,
     "PickPlaceDrawerToCounter": PickPlaceDrawerToCounter,
     "PickPlaceCounterToDrawer": PickPlaceCounterToDrawer,
+    "MoveAlongTheCounter": MoveAlongTheCounter,
 }
 """
 The RoboCasa tasks Tiago can be asked for, by the name RoboCasa gives them.
