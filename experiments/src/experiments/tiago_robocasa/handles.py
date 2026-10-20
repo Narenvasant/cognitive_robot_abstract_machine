@@ -118,6 +118,28 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
     Tiago stands, once a stand was found.
     """
 
+    disturbance_tolerance: float = 0.05
+    """
+    How far another fixture's joint may move while Tiago works this one before the
+    fixture counts as disturbed, in metres or radians.
+    """
+
+    other_fixtures_at_the_start: dict[ActiveConnection1DOF, float] | None = field(
+        init=False, default=None
+    )
+    """
+    Where the joint of every other fixture of the kitchen stood before Tiago set to
+    work.
+    """
+
+    retreat_distance: float = 0.15
+    """
+    How far the hand backs straight out from where it waited in front of the handle once
+    it has let go, in metres, before the arms are parked: parking swings the hand
+    sideways, and a fixture's neighbour, an oven's door bar beside a drawer, say, is
+    within a hand's breadth of the handle.
+    """
+
     door_waypoint_angle: float = math.radians(10)
     """
     How far a door turns between the waypoints the hand is led through, in radians:
@@ -285,11 +307,31 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         return (float(np.arctan2(-outward[1], -outward[0])),)
 
     @property
+    def disturbed_fixtures(self) -> list[str]:
+        """
+        :return: The joints of the other fixtures that moved while Tiago worked this
+            one, by name.
+        """
+        if self.other_fixtures_at_the_start is None:
+            return []
+        return [
+            joint.name.name
+            for joint, start in self.other_fixtures_at_the_start.items()
+            if abs(joint.position - start) > self.disturbance_tolerance
+        ]
+
+    @property
     def outcome(self) -> str:
         """
-        :return: How far along its joint the fixture now stands.
+        :return: How far along its joint the fixture now stands, and which other
+            fixtures moved.
         """
-        return f"{self.moving_part.name.name} stands at {self.travel:.0%} of its travel"
+        report = (
+            f"{self.moving_part.name.name} stands at {self.travel:.0%} of its travel"
+        )
+        if self.disturbed_fixtures:
+            report += f"; also moved: {', '.join(self.disturbed_fixtures)}"
+        return report
 
     # %% where things stand once the fixture has moved
 
@@ -443,10 +485,36 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         :param context: The context to plan in.
         :return: The plan.
         """
+        robot_joints = set(self.robot.connections)
+        self.other_fixtures_at_the_start = {
+            joint: joint.position
+            for joint in self.world.connections
+            if isinstance(joint, ActiveConnection1DOF)
+            and joint is not self.mechanism
+            and joint not in robot_joints
+        }
         self.stand_where_the_hand_arrives(
             self.reaches_the_handle, self.handle_middle, self.handle_reach
         )
         return self.working_the_handle(context)
+
+    def backed_out_from(
+        self, grasp: GraspCandidate, pre_grasp: Pose, position: float
+    ) -> Pose:
+        """
+        :param grasp: The grasp the handle was taken by.
+        :param pre_grasp: Where the hand waited in front of the handle.
+        :param position: Where the mechanism stands once the hand has let go.
+        :return: The waiting pose carried :attr:`retreat_distance` further out, along
+            the line the hand came in on.
+        """
+        held = self.shifted(grasp.world_T_grasp, position).to_np()
+        waiting = self.shifted(pre_grasp, position).to_np()
+        outward = waiting[:3, 3] - held[:3, 3]
+        waiting[:3, 3] += outward / np.linalg.norm(outward) * self.retreat_distance
+        return HomogeneousTransformationMatrix(
+            waiting, reference_frame=self.world.root
+        ).pose
 
     def working_the_handle(self, context: Context) -> Plan:
         """
@@ -486,6 +554,12 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
                 ),
                 MoveToolCenterPointMotion(
                     self.shifted(pre_grasp, goal),
+                    self.arm,
+                    allow_gripper_collision=True,
+                    position_threshold=self.tool_frame_tolerance,
+                ),
+                MoveToolCenterPointMotion(
+                    self.backed_out_from(grasp, pre_grasp, goal),
                     self.arm,
                     allow_gripper_collision=True,
                     position_threshold=self.tool_frame_tolerance,

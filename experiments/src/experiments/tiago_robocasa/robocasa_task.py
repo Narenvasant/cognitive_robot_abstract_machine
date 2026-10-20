@@ -906,7 +906,7 @@ class TiagoRoboCasaTask(ABC):
     degrees, so that it looks over Tiago's shoulder rather than at its back.
     """
 
-    def camera_on(self, target: np.ndarray, distance: float = 2.5) -> ViewerCamera:
+    def camera_on(self, target: np.ndarray, distance: float = 3.5) -> ViewerCamera:
         """
         :param target: What the recording looks at.
         :param distance: How far the camera stands from it, in metres.

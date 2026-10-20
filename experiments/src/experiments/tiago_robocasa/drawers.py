@@ -195,10 +195,13 @@ class OpenAndCloseDrawer(TiagoDrawerTask):
         """
         :return: How far the drawer was pulled out and where it stands now.
         """
-        return (
+        report = (
             f"{self.moving_part.name.name} was pulled out to {self.widest_travel:.0%}"
             f" of its travel and stands at {self.travel:.0%}"
         )
+        if self.disturbed_fixtures:
+            report += f"; also moved: {', '.join(self.disturbed_fixtures)}"
+        return report
 
 
 TASKS = {
