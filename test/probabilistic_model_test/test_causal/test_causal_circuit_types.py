@@ -195,7 +195,7 @@ def causal_circuit_of(
     """
     return CausalCircuit.from_probabilistic_circuit(
         circuit,
-        MarginalDeterminismTreeNode.from_causal_graph(query.causes, [query.effect]),
+        MarginalDeterminismTreeNode.from_variable_order(query.causes),
         query.causes,
         [query.effect],
     )
@@ -248,7 +248,9 @@ def events_over(variables: List[Variable], number_of_events: int) -> List[Event]
     return events
 
 
-def probabilities_of(circuit: ProbabilisticCircuitRepresentation, events: List[Event]) -> List[float]:
+def probabilities_of(
+    circuit: ProbabilisticCircuitRepresentation, events: List[Event]
+) -> List[float]:
     """
     :param circuit: The circuit to query.
     :param events: The events to query it with.
