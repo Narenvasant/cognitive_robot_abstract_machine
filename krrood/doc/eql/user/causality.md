@@ -221,6 +221,57 @@ overlap) has nothing for an adjustment set to correct, the same as an empty one.
 
 ---
 
+### Letting a learned graph choose the adjustment set
+
+Marking `confounder` asserts that adjusting for that variable identifies the effect, and
+nothing checks the assertion. A causal structure learned from the training data can
+choose the set instead, or check the declared one. Learn it once per fitted model and
+hand it to the backend through a
+{py:class}`~krrood.parametrization.causal_structure_registries.DictCausalStructureRegistry`:
+
+```python
+from probabilistic_model.causal_structure.background_knowledge import (
+    BackgroundKnowledge,
+)
+from probabilistic_model.causal_structure.learning import LearnedCausalStructure
+from krrood.parametrization.causal_structure_registries import (
+    DictCausalStructureRegistry,
+)
+
+structure = LearnedCausalStructure.from_rows(
+    training_rows,  # the table the circuit was fitted on, one column per variable
+    circuit_variables,
+    knowledge=BackgroundKnowledge(
+        tiers=[
+            ["SummerStatistics.season"],
+            ["SummerStatistics.ice_cream_sales", "SummerStatistics.drowning_incidents"],
+        ]
+    ),
+)
+backend = ProbabilisticBackend(
+    model_registry=CausalCircuitRegistry({SummerStatistics: causal_circuit}),
+    causal_structure_registry=DictCausalStructureRegistry({SummerStatistics: structure}),
+)
+
+# No confounder marked: the learned graph adjusts for the season by itself.
+learned = a(SummerStatistics)(season=..., ice_cream_sales=cause, drowning_incidents=...)
+learned.causes_effect(learned.drowning_incidents == DrowningLevel.HIGH)
+backend.rank_causes(learned)[0].effect_probability_given_region
+# 0.5 -- the same answer as marking season=confounder.
+```
+
+What the backend does with the learned structure:
+
+| The query marks | Without a structure registry | With one |
+|---|---|---|
+| `cause`, `confounder`, `causes_effect` | backdoor adjustment with the marked set, unchecked | the marked set is checked; a set that fails the adjustment criterion raises {py:class}`~probabilistic_model.causal_structure.exceptions.InvalidAdjustmentSet` |
+| `cause`, `causes_effect` | an empty adjustment set, which is plain conditioning | the set is chosen from the graph, among the variables the query names and the aggregation statistics; {py:class}`~krrood.entity_query_language.exceptions.EffectNotIdentified` if the graph identifies the effect by no such set |
+
+Each cause candidate gets its own set. For a relational circuit, learn the structure with
+{py:class}`~probabilistic_model.causal_structure.learning.RelationalStructureLearner`,
+which names a part attribute once for every part of its collection
+(`Class.collection.attribute`); a query on one part uses that part's copy.
+
 ## Declaring a causal query
 
 `cause` and `causes_effect()` are always used together: `cause` marks the field to
