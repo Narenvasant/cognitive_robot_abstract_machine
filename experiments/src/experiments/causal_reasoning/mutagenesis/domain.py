@@ -1,7 +1,7 @@
 """
 Domain classes mirroring the CTU relational-learning repository's Mutagenesis
 dataset (https://relational.fel.cvut.cz/dataset/Mutagenesis), used to validate the
-relational grounding and causal-query pipeline against a real, external, standard
+RSPN grounding and causal-query pipeline against a real, external, standard
 relational-learning benchmark rather than only the ``SceneRoom``/``SceneObject`` toy
 fixture.
 """
@@ -17,6 +17,8 @@ from krrood.parametrization.feature_extraction.aggregations import (
     AggregationStatistic,
     aggregation_statistic,
 )
+
+from experiments.causal_reasoning.comparison.domain import RelationalDomain
 
 
 class MutagenesisElement(StrEnum):
@@ -92,7 +94,7 @@ class MutagenesisBond:
 
     A real bond connects exactly two atoms, and the CTU dataset's own ``bonds`` table
     records which ones (``atom1_id``, ``atom2_id``). This class itself does not carry
-    that connectivity, since the relational grounding this domain feeds fits and grounds
+    that connectivity, since the RSPN grounding this domain feeds fits and grounds
     ``atoms`` and ``bonds`` as two independent exchangeable parts of the parent
     molecule, and a bond referencing specific atom objects would cross that independence
     boundary. The connectivity is not discarded, though:
@@ -146,7 +148,7 @@ class MutagenesisMolecule:
     """
 
 
-@dataclass(eq=False)
+@dataclass
 class MutagenesisMoleculeAggregations(AggregationStatistic[MutagenesisMolecule]):
     """
     Aggregation statistics for :class:`MutagenesisMolecule` over its ``atoms`` and
@@ -156,14 +158,19 @@ class MutagenesisMoleculeAggregations(AggregationStatistic[MutagenesisMolecule])
     @aggregation_statistic(variable(MutagenesisMolecule).atoms)
     def atom_count(self) -> int:
         """
-        Count of atoms, whatever their element: the size of the molecule.
+        Count of atoms, of any element.
 
-        A larger molecule holds more of every kind of atom and bond and is more often
-        mutagenic, so its size confounds every question about one of the other counts.
+        A larger molecule has more of every kind of atom and bond and is more often
+        mutagenic, so it confounds every question about a count.
         """
-        [result] = entity(
-            count_range(variable(MutagenesisAtom, self.atoms).element)
-        ).tolist()
+        element_variable = variable(MutagenesisAtom, self.atoms).element
+        [result] = (
+            entity(count_range(element_variable))
+            .where(
+                or_(*(element_variable == element for element in MutagenesisElement))
+            )
+            .tolist()
+        )
         return result
 
     @aggregation_statistic(variable(MutagenesisMolecule).atoms)
@@ -218,3 +225,31 @@ class MutagenesisMoleculeAggregations(AggregationStatistic[MutagenesisMolecule])
             .tolist()
         )
         return result
+
+
+# %% the molecule as a relational example
+
+
+class PartField(StrEnum):
+    """
+    The molecule's exchangeable-part fields.
+    """
+
+    ATOMS = "atoms"
+    BONDS = "bonds"
+
+
+def molecule_domain() -> RelationalDomain:
+    """
+    :return: The molecule as the comparison sees it: its atoms and bonds as
+        exchangeable parts, mutagenicity as the effect.
+    """
+    return RelationalDomain(
+        example_class=MutagenesisMolecule,
+        aggregation_class=MutagenesisMoleculeAggregations,
+        effect_field="mutagenic",
+        noun="molecule",
+        plural="molecules",
+        effect_phrase="the molecule is mutagenic",
+        part_nouns={PartField.ATOMS: "atom", PartField.BONDS: "bond"},
+    )
