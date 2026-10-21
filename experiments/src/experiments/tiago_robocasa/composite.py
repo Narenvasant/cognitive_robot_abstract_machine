@@ -266,6 +266,30 @@ class MoveOffTheTray(MoveAlongTheCounter):
     metres.
     """
 
+    shifts: tuple[float, ...] = (0.45, -0.45, 0.35, -0.35)
+    """
+    How far along the counter from where it lay the object may be set down, in
+    metres, the first the arm reaches being taken: past the edge of a baking tray.
+    """
+
+    counter_contact: float = 0.01
+    """
+    How far above the counter the object's underside may be and still count as lying
+    on the counter rather than on the tray, in metres.
+    """
+
+    @property
+    def task_is_done(self) -> bool:
+        """
+        :return: As :attr:`MoveAlongTheCounter.task_is_done`, with the object lying on
+            the counter itself rather than on the tray.
+        """
+        underside = self.extent(self.food.root).min_z
+        return (
+            super().task_is_done
+            and underside - self.counter.top.max_z <= self.counter_contact
+        )
+
     @cached_property
     def counter(self) -> CounterContact:
         """
