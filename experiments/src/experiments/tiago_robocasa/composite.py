@@ -12,6 +12,7 @@ Run a task with::
 from __future__ import annotations
 
 import logging
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -34,7 +35,11 @@ from experiments.tiago_robocasa.pick_place import (
 )
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
 from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
+from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
 from semantic_digital_twin.semantic_annotations.semantic_annotations import CounterTop
+from semantic_digital_twin.spatial_types.spatial_types import (
+    HomogeneousTransformationMatrix,
+)
 from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger(__name__)
@@ -335,6 +340,54 @@ class MoveOffTheTray(MoveAlongTheCounter):
         )
 
 
+@dataclass
+class DropABowlInTheSink(PickPlaceCounterToSink):
+    """
+    Tiago takes the bowl by its near rim and drops it into the sink: a bowl is wider
+    than the hand opens.
+    """
+
+    grasp_pitch: float = 1.2
+    """
+    Steep, so that the fingers close across the rim's wall from above.
+    """
+
+    rim_inset: float = 0.01
+    """
+    How far inside the bowl's outline the fingers close, in metres: the middle of the
+    rim's wall.
+    """
+
+    rim_grip_depth: float = 0.02
+    """
+    How far below the rim's top the fingers close, in metres.
+    """
+
+    def grasp(self) -> GraspCandidate:
+        """
+        :return: The grasp that takes the bowl's rim nearest Tiago, the fingers
+            closing across the rim's wall.
+        """
+        box = self.extent(self.food.root)
+        towards_tiago = -np.array(
+            [math.cos(self.grasp_heading), math.sin(self.grasp_heading), 0.0]
+        )
+        rim = box.center.to_np()[:3] + towards_tiago * (
+            min(box.width, box.depth) / 2 - self.rim_inset
+        )
+        rim[2] = box.max_z - self.rim_grip_depth
+        world_T_grasp = HomogeneousTransformationMatrix.from_xyz_rpy(
+            *rim,
+            roll=math.pi / 2,
+            pitch=self.grasp_pitch,
+            yaw=self.grasp_heading,
+            reference_frame=self.world.root,
+        )
+        return GraspCandidate(
+            self.food, self.world.transform(world_T_grasp.pose, self.food.root)
+        )
+
+
 # %% the tasks
 
 
@@ -366,7 +419,7 @@ class CupcakeCleanup(TiagoCompositeTask):
     def step_sequence(self) -> list[TiagoRoboCasaTask]:
         return [
             MoveOffTheTray(object_name=CompositeObject.CUPCAKE),
-            PickPlaceCounterToSink(object_name=CompositeObject.BOWL),
+            DropABowlInTheSink(object_name=CompositeObject.BOWL),
         ]
 
 
