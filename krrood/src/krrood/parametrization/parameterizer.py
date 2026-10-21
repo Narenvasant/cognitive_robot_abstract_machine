@@ -263,6 +263,14 @@ class UnderspecifiedParameters(ModelQueryParameters):
     search should optimize the interventional probability of.
     """
 
+    derived_adjustment_variables: dict[str, list[random_events.variable.Variable]] = (
+        field(init=False, default_factory=dict)
+    )
+    """
+    Per cause variable, by its name, the variables a learned causal structure chose to
+    adjust for, among those the query names.
+    """
+
     def __post_init__(self):
         self.statement._get_expression_().build()
         self._random_event_compiler = WhereExpressionToRandomEventTranslator(
@@ -274,6 +282,47 @@ class UnderspecifiedParameters(ModelQueryParameters):
             )
         _ = self.variables  # make variables available
         self._extract_effect_variables_from_causes_effect_conditions()
+
+    def record_derived_adjustment(
+        self,
+        cause_variable: random_events.variable.Variable,
+        adjustment: list[random_events.variable.Variable],
+    ) -> None:
+        """
+        :param cause_variable: A cause variable of the query.
+        :param adjustment: The variables a learned causal structure chose to adjust for
+            when intervening on it.
+        """
+        self.derived_adjustment_variables[cause_variable.name] = adjustment
+
+    def adjustment_variables_of(
+        self, cause_variable: random_events.variable.Variable
+    ) -> list[random_events.variable.Variable]:
+        """
+        :param cause_variable: A cause variable of the query.
+        :return: The variables intervening on it adjusts for: those marked
+            ``confounder``, and those a learned causal structure chose for it.
+        """
+        return self.search_confounder_variables + [
+            variable
+            for variable in self.derived_adjustment_variables.get(
+                cause_variable.name, []
+            )
+            if variable not in self.search_confounder_variables
+        ]
+
+    @property
+    def adjustment_variables(self) -> list[random_events.variable.Variable]:
+        """
+        :return: The variables any cause of the query adjusts for, each once.
+        """
+        return list(
+            dict.fromkeys(
+                variable
+                for cause_variable in self.search_cause_variables
+                for variable in self.adjustment_variables_of(cause_variable)
+            )
+        ) or list(self.search_confounder_variables)
 
     def _extract_effect_variables_from_causes_effect_conditions(self) -> None:
         """
