@@ -94,6 +94,13 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
     half a metre, so the hand can only stay on the handle if the base comes too.
     """
 
+    waits_in_joint_space: bool = False
+    """
+    The hand is brought to where it waits in front of the handle by the joint positions
+    solved for that pose, and a stand counts only if the arm reaches that pose too: a
+    hand steered there directly may stall turning towards it.
+    """
+
     tool_frame_tolerance: float = 0.03
     """
     How close the tool frame has to come to a goal, in metres: a simulated arm trails
@@ -473,12 +480,15 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
     def reaches_the_handle(self) -> bool:
         """
         :return: Whether the arm gets the hand onto the handle from where Tiago stands
-            with any of :attr:`handle_grasp_rolls`, keeping the first it does, worked
+            with any of :attr:`handle_grasp_rolls`, and to where it waits in front of it
+            if it :attr:`waits_in_joint_space`, keeping the first roll it does, worked
             out afresh because the grasp follows Tiago as Tiago is moved about.
         """
         for roll in self.handle_grasp_rolls:
             self.handle_grasp_roll = roll
-            if self.can_reach(self.handle_grasp().world_T_grasp):
+            if self.can_reach(self.handle_grasp().world_T_grasp) and (
+                not self.waits_in_joint_space or self.can_reach(self.pre_grasp())
+            ):
                 return True
         self.handle_grasp_roll = None
         return False
@@ -603,12 +613,7 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         )
         return [
             ParkArmsAction(self.robot.all_arms),
-            MoveToolCenterPointMotion(
-                self.hold.pre_grasp,
-                self.arm,
-                allow_gripper_collision=True,
-                position_threshold=self.tool_frame_tolerance,
-            ),
+            *self.reaching_the_waiting_pose(),
             self.taking_hold_of(self.hold.grasp),
             *[
                 MoveToolCenterPointMotion(
@@ -620,6 +625,22 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
                 )
                 for waypoint in self.pull_waypoints
             ],
+        ]
+
+    def reaching_the_waiting_pose(self) -> list[BaseMotion]:
+        """
+        :return: Bringing the hand to where :attr:`hold` has it wait in front of the
+            handle, in joint space if it :attr:`waits_in_joint_space`.
+        """
+        if self.waits_in_joint_space:
+            return self.arm_motions_to(self.hold.pre_grasp)
+        return [
+            MoveToolCenterPointMotion(
+                self.hold.pre_grasp,
+                self.arm,
+                allow_gripper_collision=True,
+                position_threshold=self.tool_frame_tolerance,
+            )
         ]
 
     def letting_go_of_the_handle(self) -> list[BaseMotion | ActionDescription]:
