@@ -365,6 +365,37 @@ warns when that product is large, as a diagnostic against discovering the cost o
 time -- not a guarantee, since it is read off however the adjustment variables actually got
 grounded.
 
+## Learning the causal structure
+
+Backdoor adjustment is only correct for an adjustment set that meets the adjustment
+criterion (Shpitser, VanderWeele and Robins, 2010; Perković et al., 2015) in the true
+causal graph. `probabilistic_model.causal_structure` learns that graph from the training
+rows and chooses the set from it.
+
+- `learning.PCStructureLearner` runs the PC algorithm (through causal-learn) on the rows,
+  discretized into a few levels per column. From observational data alone it recovers
+  the graph up to its equivalence class: the edges, and the directions every graph in
+  the class agrees on, such as the arrows into a collider.
+- `background_knowledge.BackgroundKnowledge` adds what data cannot: tiers (a variable is
+  never caused by one in a later tier), required and forbidden edges, and deterministic
+  copies, which are left out of the tests and restored as children of their source.
+  Tiers usually orient most of the remaining edges.
+- `identification.AdjustmentSelector` checks every candidate set in every directed
+  acyclic graph of the equivalence class and returns the best valid one, ranked by how
+  many of its combinations with the cause the training rows support thinly, then by size.
+  If the graphs disagree on the cause's parents, the effect is only partially
+  identified: there is one candidate set per parent set (Maathuis, Kalisch and
+  Bühlmann, 2009), and the answer is one of the effects they give.
+- `learning.RelationalStructureLearner` learns from the tables a relational circuit is
+  fitted on: the class table for the instances' attributes and aggregation statistics,
+  and each part's table for that part's attributes. A part attribute is one template node
+  for every part of its collection.
+
+Setting an aggregation statistic is ambiguous once the statistic has parents among part
+attributes: many configurations of the parts give the same count (Spirtes and Scheines,
+2004). The structure says which variables to adjust for; it does not resolve what
+intervening on a count means.
+
 ## Literature position
 
 | Work | Relational | Causal | Substrate | Tractability mechanism |
