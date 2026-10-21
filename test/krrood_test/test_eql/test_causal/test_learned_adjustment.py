@@ -314,9 +314,7 @@ def summer_circuit_registry(causes: list[str]) -> CausalCircuitRegistry:
         {
             SummerDay: CausalCircuit.from_probabilistic_circuit(
                 circuit,
-                MarginalDeterminismTreeNode.from_causal_graph(
-                    cause_variables, [effect_variable]
-                ),
+                MarginalDeterminismTreeNode.from_variable_order(cause_variables),
                 cause_variables,
                 [effect_variable],
             )
