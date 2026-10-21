@@ -16,13 +16,13 @@ from functools import cached_property
 import networkx
 import pandas as pd
 
-from probabilistic_model.probabilistic_circuit.causal.structure.discretization import (
+from probabilistic_model.causal_structure.discretization import (
     Discretization,
 )
-from probabilistic_model.probabilistic_circuit.causal.structure.exceptions import (
+from probabilistic_model.causal_structure.exceptions import (
     InvalidAdjustmentSet,
 )
-from probabilistic_model.probabilistic_circuit.causal.structure.graph import (
+from probabilistic_model.causal_structure.graph import (
     CausalGraph,
 )
 

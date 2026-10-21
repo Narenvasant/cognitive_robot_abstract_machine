@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from random_events.variable import Continuous
 
-from probabilistic_model.probabilistic_circuit.causal.structure.graph import (
+from probabilistic_model.causal_structure.graph import (
     CausalGraph,
     EdgeMark,
     GraphEdge,

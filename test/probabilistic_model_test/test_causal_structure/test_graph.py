@@ -3,14 +3,14 @@ import pytest
 from krrood.adapters.json_serializer import from_json, to_json
 from random_events.variable import Continuous
 
-from probabilistic_model.probabilistic_circuit.causal.structure.discretization import (
+from probabilistic_model.causal_structure.discretization import (
     Discretization,
 )
-from probabilistic_model.probabilistic_circuit.causal.structure.exceptions import (
+from probabilistic_model.causal_structure.exceptions import (
     EquivalenceClassTooLarge,
     PartialAncestralGraphNotSupported,
 )
-from probabilistic_model.probabilistic_circuit.causal.structure.graph import (
+from probabilistic_model.causal_structure.graph import (
     CausalGraph,
     GraphNode,
     NodeLevel,

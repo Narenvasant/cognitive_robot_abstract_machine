@@ -9,11 +9,11 @@ from krrood.exceptions import DataclassException
 from typing_extensions import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from probabilistic_model.probabilistic_circuit.causal.structure.graph import (
+    from probabilistic_model.causal_structure.graph import (
         GraphEdge,
         GraphNode,
     )
-    from probabilistic_model.probabilistic_circuit.causal.structure.identification import (
+    from probabilistic_model.causal_structure.identification import (
         InvalidAdjustmentReason,
     )
 

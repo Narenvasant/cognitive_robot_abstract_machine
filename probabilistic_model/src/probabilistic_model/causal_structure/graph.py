@@ -14,7 +14,7 @@ import networkx
 from random_events.variable import Variable
 from typing_extensions import Callable
 
-from probabilistic_model.probabilistic_circuit.causal.structure.exceptions import (
+from probabilistic_model.causal_structure.exceptions import (
     CyclicGraph,
     EquivalenceClassTooLarge,
     GraphNodesDiffer,
