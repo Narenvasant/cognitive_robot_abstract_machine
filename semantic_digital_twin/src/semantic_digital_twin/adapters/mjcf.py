@@ -1,5 +1,6 @@
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -23,6 +24,7 @@ from semantic_digital_twin.adapters.multi_sim import (
     MujocoLight,
     MujocoTendon,
 )
+from semantic_digital_twin.adapters.package_resolver import PackageUriResolver
 from semantic_digital_twin.adapters.world_model_parser import WorldModelParser
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.exceptions import WorldEntityNotFoundError
@@ -107,6 +109,9 @@ class MJCFParser(WorldModelParser):
     """
 
     def __post_init__(self):
+        package_uri_resolver = PackageUriResolver()
+        if package_uri_resolver.supports(self.file_path):
+            self.file_path = package_uri_resolver.resolve(self.file_path)
         if self.prefix is None:
             self.prefix = os.path.basename(self.file_path).split(".")[0]
         self.spec: mujoco.MjSpec = mujoco.MjSpec.from_file(self.file_path)
@@ -150,8 +155,10 @@ class MJCFParser(WorldModelParser):
             part in contact collides with the geoms it does have.
         :return: A parser for the world described by that document.
         """
-        file_path = "/tmp/scene.xml"
-        with open(file_path, "w") as f:
+        # A file of its own, so that parsers created at the same time, e.g. by parallel
+        # test workers, never overwrite each other's scene.
+        file_descriptor, file_path = tempfile.mkstemp(prefix="scene_", suffix=".xml")
+        with os.fdopen(file_descriptor, "w") as f:
             f.write(xml_string)
         return cls(
             file_path, use_visual_as_collision_backup=use_visual_as_collision_backup

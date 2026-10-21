@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
-from typing import Dict, Self, List
+from typing import Self, List
 
 from krrood.ormatic.utils import classproperty
 from semantic_digital_twin.adapters.mjcf import MJCFParser
@@ -50,12 +50,11 @@ from semantic_digital_twin.robots.robot_parts import (
 )
 from semantic_digital_twin.datastructures.field_of_view import FieldOfView
 from semantic_digital_twin.spatial_types import Vector3
-from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connection_properties import (
     DriveServos,
     JointServo,
-    JointDynamics,
     ServoGains,
+    VelocityServoGains,
 )
 from semantic_digital_twin.world_description.connections import (
     ActiveConnection,
@@ -548,44 +547,6 @@ class TiagoMobileBase(
     def setup_joint_states(self) -> List[JointState]:
         return []
 
-    @property
-    def drive_servos(self) -> DriveServos:
-        """
-        Servos stiff enough for the base to follow its commanded pose while carrying the
-        whole robot.
-
-        They stand in for the wheels, which a simulation turns into neither traction nor
-        steering, so they are not taken from the real robot; each is critically damped
-        for the mass it moves.
-        """
-        mass = sum(
-            body.inertial.mass
-            for body in self._robot.bodies
-            if body.inertial is not None
-        )
-        translation_stiffness = 300000.0
-        rotation_stiffness = 100000.0
-        return DriveServos(
-            translation_gains=ServoGains(
-                stiffness=translation_stiffness,
-                damping=2.0 * math.sqrt(translation_stiffness * mass),
-                torque_limit=10000.0,
-            ),
-            rotation_gains=ServoGains(
-                stiffness=rotation_stiffness,
-                damping=2.0 * math.sqrt(rotation_stiffness * mass),
-                torque_limit=5000.0,
-            ),
-        )
-
-    def _setup_servos(self) -> None:
-        """
-        Declare the drive's servos, see :meth:`MobileBase._setup_servos`, and let a
-        physical simulation carry the weight of every body standing on the base.
-        """
-        super()._setup_servos()
-        self._compensate_gravity()
-
     @classmethod
     def setup_default_configuration_in_world_below_robot_root(
         cls, robot_root: KinematicStructureEntity
@@ -639,138 +600,124 @@ class Tiago(AbstractRobot, HasMobileBase[TiagoMobileBase]):
         self.tighten_dof_velocity_limits_of_1dof_connections(new_limits=vel_limits)
 
 
+# %% names in MuJoCo's own model of the robot
+
+
+class TiagoMujocoFingerJoint(StrEnum):
+    """
+    Names of the sliding finger joints of MuJoCo's own model of the Tiago, which has
+    them in place of the URDF's linkage; its other joints are named as in
+    :class:`TiagoJoint`.
+    """
+
+    LEFT_GRIPPER_LEFT_FINGER = "gripper_left_left_finger_joint"
+    LEFT_GRIPPER_RIGHT_FINGER = "gripper_left_right_finger_joint"
+    RIGHT_GRIPPER_LEFT_FINGER = "gripper_right_left_finger_joint"
+    RIGHT_GRIPPER_RIGHT_FINGER = "gripper_right_right_finger_joint"
+
+
+class TiagoMujocoBody(StrEnum):
+    """
+    Names of the bodies of MuJoCo's own model of the Tiago that its parts are rooted in
+    or end at.
+    """
+
+    BASE = "base_link"
+    TORSO_LIFT = "torso_lift_link"
+    HEAD = "head_2_link"
+
+    LEFT_WRIST = "arm_left_7_link"
+    LEFT_GRIPPER_GRASPING_FRAME = "gripper_left_grasping_frame"
+    LEFT_GRIPPER_LEFT_FINGER_PAD = "gripper_left_left_finger_pad"
+    LEFT_GRIPPER_RIGHT_FINGER_PAD = "gripper_left_right_finger_pad"
+
+    RIGHT_WRIST = "arm_right_7_link"
+    RIGHT_GRIPPER_GRASPING_FRAME = "gripper_right_grasping_frame"
+    RIGHT_GRIPPER_LEFT_FINGER_PAD = "gripper_right_left_finger_pad"
+    RIGHT_GRIPPER_RIGHT_FINGER_PAD = "gripper_right_right_finger_pad"
+
+
 # %% what MuJoCo's own model of the robot drives its joints with
-
-
-@dataclass(frozen=True)
-class TiagoMujocoServo:
-    """
-    What one joint of this robot is driven with in MuJoCo's own model of it.
-
-    The stiffness and the force limit are the model's own. The damping is what MuJoCo
-    works out from the joint's inertia for the critical damping the model asks for, so
-    the two arms differ a little even where their stiffnesses match.
-    """
-
-    stiffness: float
-    """
-    Restoring torque per radian, or newton per metre, away from the commanded position.
-    """
-
-    damping: float
-    """
-    Opposing torque per radian per second.
-    """
-
-    force_limit: float
-    """
-    The largest torque, or force, the servo may exert.
-    """
-
-    armature: float = 0.1
-    """
-    The inertia of what spins behind the joint, in kilogram metres squared.
-
-    The description states none, and a joint with none is only as heavy as the links
-    beyond it, which for a wrist is almost nothing. Held by a servo this stiff, such a
-    joint oscillates apart within a second of simulated time and takes the arm with it.
-    A geared robot joint carries the inertia of its rotor, and stating it is what makes
-    the arm steady.
-    """
-
-    @property
-    def servo(self) -> JointServo:
-        """
-        The servo these values describe, leaving the joint's own inertia and friction as
-        the description states them.
-        """
-        return JointServo(
-            gains=ServoGains(
-                stiffness=self.stiffness,
-                damping=self.damping,
-                torque_limit=self.force_limit,
-            ),
-            dynamics=JointDynamics(armature=self.armature),
-        )
 
 
 @dataclass(eq=False)
 class ServoedByItsMujocoModel(AbstractRobotPart, ABC):
     """
-    A robot part whose joints are driven by the servos MuJoCo's own model of the robot
-    states, so that a physical simulation moves it instead of a kinematic one placing
-    it.
+    A part of the MuJoCo Tiago whose joints are driven in a physical simulation by the
+    servos of :attr:`servo_of_each_joint`.
     """
 
     @classproperty
-    def servo_of_each_joint(cls) -> Dict[str, TiagoMujocoServo]:
+    def servo_of_each_joint(cls) -> dict[str, JointServo]:
         """
         What drives every servoed joint of the MuJoCo description, by the name that
-        description gives it.
+        description gives it: the stiffness and force limit of the position actuators
+        of ``tiago_dual_position.xml``, and the damping MuJoCo works out for the damping
+        ratio of 1 they state.
         """
         return {
-            "torso_lift_joint": TiagoMujocoServo(
-                stiffness=50000.0, damping=2361.08, force_limit=500.0
+            TiagoJoint.TORSO_LIFT: JointServo(
+                gains=ServoGains(stiffness=50000.0, damping=2361.08, torque_limit=500.0)
             ),
-            "head_1_joint": TiagoMujocoServo(
-                stiffness=20.0, damping=0.83, force_limit=5.197
+            TiagoJoint.HEAD_1: JointServo(
+                gains=ServoGains(stiffness=20.0, damping=0.83, torque_limit=5.197)
             ),
-            "head_2_joint": TiagoMujocoServo(
-                stiffness=20.0, damping=0.87, force_limit=5.197
+            TiagoJoint.HEAD_2: JointServo(
+                gains=ServoGains(stiffness=20.0, damping=0.87, torque_limit=5.197)
             ),
-            "arm_left_1_joint": TiagoMujocoServo(
-                stiffness=250.0, damping=48.53, force_limit=43.0
+            TiagoJoint.LEFT_ARM_1: JointServo(
+                gains=ServoGains(stiffness=250.0, damping=48.53, torque_limit=43.0)
             ),
-            "arm_left_2_joint": TiagoMujocoServo(
-                stiffness=1500.0, damping=94.28, force_limit=43.0
+            TiagoJoint.LEFT_ARM_2: JointServo(
+                gains=ServoGains(stiffness=1500.0, damping=94.28, torque_limit=43.0)
             ),
-            "arm_left_3_joint": TiagoMujocoServo(
-                stiffness=600.0, damping=4.36, force_limit=26.0
+            TiagoJoint.LEFT_ARM_3: JointServo(
+                gains=ServoGains(stiffness=600.0, damping=4.36, torque_limit=26.0)
             ),
-            "arm_left_4_joint": TiagoMujocoServo(
-                stiffness=1000.0, damping=35.38, force_limit=26.0
+            TiagoJoint.LEFT_ARM_4: JointServo(
+                gains=ServoGains(stiffness=1000.0, damping=35.38, torque_limit=26.0)
             ),
-            "arm_left_5_joint": TiagoMujocoServo(
-                stiffness=80.0, damping=0.97, force_limit=3.0
+            TiagoJoint.LEFT_ARM_5: JointServo(
+                gains=ServoGains(stiffness=80.0, damping=0.97, torque_limit=3.0)
             ),
-            "arm_left_6_joint": TiagoMujocoServo(
-                stiffness=80.0, damping=2.57, force_limit=6.6
+            TiagoJoint.LEFT_ARM_6: JointServo(
+                gains=ServoGains(stiffness=80.0, damping=2.57, torque_limit=6.6)
             ),
-            "arm_left_7_joint": TiagoMujocoServo(
-                stiffness=80.0, damping=0.54, force_limit=6.6
+            TiagoJoint.LEFT_ARM_7: JointServo(
+                gains=ServoGains(stiffness=80.0, damping=0.54, torque_limit=6.6)
             ),
-            "arm_right_1_joint": TiagoMujocoServo(
-                stiffness=250.0, damping=45.14, force_limit=43.0
+            TiagoJoint.RIGHT_ARM_1: JointServo(
+                gains=ServoGains(stiffness=250.0, damping=45.14, torque_limit=43.0)
             ),
-            "arm_right_2_joint": TiagoMujocoServo(
-                stiffness=1500.0, damping=87.68, force_limit=43.0
+            TiagoJoint.RIGHT_ARM_2: JointServo(
+                gains=ServoGains(stiffness=1500.0, damping=87.68, torque_limit=43.0)
             ),
-            "arm_right_3_joint": TiagoMujocoServo(
-                stiffness=600.0, damping=3.90, force_limit=26.0
+            TiagoJoint.RIGHT_ARM_3: JointServo(
+                gains=ServoGains(stiffness=600.0, damping=3.90, torque_limit=26.0)
             ),
-            "arm_right_4_joint": TiagoMujocoServo(
-                stiffness=1000.0, damping=33.51, force_limit=26.0
+            TiagoJoint.RIGHT_ARM_4: JointServo(
+                gains=ServoGains(stiffness=1000.0, damping=33.51, torque_limit=26.0)
             ),
-            "arm_right_5_joint": TiagoMujocoServo(
-                stiffness=80.0, damping=0.66, force_limit=3.0
+            TiagoJoint.RIGHT_ARM_5: JointServo(
+                gains=ServoGains(stiffness=80.0, damping=0.66, torque_limit=3.0)
             ),
-            "arm_right_6_joint": TiagoMujocoServo(
-                stiffness=80.0, damping=2.56, force_limit=6.6
+            TiagoJoint.RIGHT_ARM_6: JointServo(
+                gains=ServoGains(stiffness=80.0, damping=2.56, torque_limit=6.6)
             ),
-            "arm_right_7_joint": TiagoMujocoServo(
-                stiffness=80.0, damping=0.53, force_limit=6.6
+            TiagoJoint.RIGHT_ARM_7: JointServo(
+                gains=ServoGains(stiffness=80.0, damping=0.53, torque_limit=6.6)
             ),
-            "gripper_left_left_finger_joint": TiagoMujocoServo(
-                stiffness=500.0, damping=14.63, force_limit=5.197
+            TiagoMujocoFingerJoint.LEFT_GRIPPER_LEFT_FINGER: JointServo(
+                gains=ServoGains(stiffness=500.0, damping=14.63, torque_limit=5.197)
             ),
-            "gripper_left_right_finger_joint": TiagoMujocoServo(
-                stiffness=500.0, damping=14.63, force_limit=5.197
+            TiagoMujocoFingerJoint.LEFT_GRIPPER_RIGHT_FINGER: JointServo(
+                gains=ServoGains(stiffness=500.0, damping=14.63, torque_limit=5.197)
             ),
-            "gripper_right_left_finger_joint": TiagoMujocoServo(
-                stiffness=500.0, damping=14.63, force_limit=5.197
+            TiagoMujocoFingerJoint.RIGHT_GRIPPER_LEFT_FINGER: JointServo(
+                gains=ServoGains(stiffness=500.0, damping=14.63, torque_limit=5.197)
             ),
-            "gripper_right_right_finger_joint": TiagoMujocoServo(
-                stiffness=500.0, damping=14.63, force_limit=5.197
+            TiagoMujocoFingerJoint.RIGHT_GRIPPER_RIGHT_FINGER: JointServo(
+                gains=ServoGains(stiffness=500.0, damping=14.63, torque_limit=5.197)
             ),
         }
 
@@ -779,7 +726,7 @@ class ServoedByItsMujocoModel(AbstractRobotPart, ABC):
             if not isinstance(connection, ActiveConnection1DOF):
                 continue
             self._declare_servo(
-                connection, self.servo_of_each_joint[connection.name.name].servo
+                connection, self.servo_of_each_joint[connection.name.name]
             )
         self._compensate_gravity()
 
@@ -799,10 +746,10 @@ class TiagoMujocoLeftThumb(Finger):
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "arm_left_7_link"
+                robot_root, TiagoMujocoBody.LEFT_WRIST
             ),
             tip=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "gripper_left_left_finger_pad"
+                robot_root, TiagoMujocoBody.LEFT_GRIPPER_LEFT_FINGER_PAD
             ),
         )
 
@@ -822,10 +769,10 @@ class TiagoMujocoLeftIndexFinger(Finger):
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "arm_left_7_link"
+                robot_root, TiagoMujocoBody.LEFT_WRIST
             ),
             tip=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "gripper_left_right_finger_pad"
+                robot_root, TiagoMujocoBody.LEFT_GRIPPER_RIGHT_FINGER_PAD
             ),
         )
 
@@ -845,10 +792,10 @@ class TiagoMujocoRightThumb(Finger):
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "arm_right_7_link"
+                robot_root, TiagoMujocoBody.RIGHT_WRIST
             ),
             tip=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "gripper_right_left_finger_pad"
+                robot_root, TiagoMujocoBody.RIGHT_GRIPPER_LEFT_FINGER_PAD
             ),
         )
 
@@ -868,10 +815,10 @@ class TiagoMujocoRightIndexFinger(Finger):
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "arm_right_7_link"
+                robot_root, TiagoMujocoBody.RIGHT_WRIST
             ),
             tip=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "gripper_right_right_finger_pad"
+                robot_root, TiagoMujocoBody.RIGHT_GRIPPER_RIGHT_FINGER_PAD
             ),
         )
 
@@ -888,10 +835,7 @@ class TiagoMujocoLeftGripper(
 
     def setup_joint_states(self) -> List[JointState]:
         """
-        The hand stands at the ends of its fingers' own travel: wide open leaves the
-        most room to reach around an object, and shut all the way has whatever is
-        between the pads stop them, so the servos hold it with the force they are rated
-        for.
+        The hand opens and closes to the ends of its fingers' travel.
         """
         gripper_joints = self.active_connections
         gripper_open = JointState.from_mapping(
@@ -926,10 +870,10 @@ class TiagoMujocoLeftGripper(
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "arm_left_7_link"
+                robot_root, TiagoMujocoBody.LEFT_WRIST
             ),
             tool_frame=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "gripper_left_grasping_frame"
+                robot_root, TiagoMujocoBody.LEFT_GRIPPER_GRASPING_FRAME
             ),
         )
 
@@ -946,10 +890,7 @@ class TiagoMujocoRightGripper(
 
     def setup_joint_states(self) -> List[JointState]:
         """
-        The hand stands at the ends of its fingers' own travel: wide open leaves the
-        most room to reach around an object, and shut all the way has whatever is
-        between the pads stop them, so the servos hold it with the force they are rated
-        for.
+        The hand opens and closes to the ends of its fingers' travel.
         """
         gripper_joints = self.active_connections
         gripper_open = JointState.from_mapping(
@@ -984,10 +925,10 @@ class TiagoMujocoRightGripper(
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "arm_right_7_link"
+                robot_root, TiagoMujocoBody.RIGHT_WRIST
             ),
             tool_frame=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "gripper_right_grasping_frame"
+                robot_root, TiagoMujocoBody.RIGHT_GRIPPER_GRASPING_FRAME
             ),
         )
 
@@ -1017,10 +958,10 @@ class TiagoMujocoLeftArm(Arm[TiagoMujocoLeftGripper], ServoedByItsMujocoModel):
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "torso_lift_link"
+                robot_root, TiagoMujocoBody.TORSO_LIFT
             ),
             tip=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "arm_left_7_link"
+                robot_root, TiagoMujocoBody.LEFT_WRIST
             ),
         )
 
@@ -1050,10 +991,10 @@ class TiagoMujocoRightArm(Arm[TiagoMujocoRightGripper], ServoedByItsMujocoModel)
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "torso_lift_link"
+                robot_root, TiagoMujocoBody.TORSO_LIFT
             ),
             tip=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "arm_right_7_link"
+                robot_root, TiagoMujocoBody.RIGHT_WRIST
             ),
         )
 
@@ -1061,11 +1002,9 @@ class TiagoMujocoRightArm(Arm[TiagoMujocoRightGripper], ServoedByItsMujocoModel)
 @dataclass(eq=False)
 class TiagoMujocoCamera(Camera):
     """
-    Tiago's head camera, rooted in the head itself.
-
-    The MuJoCo model draws no separate optical frame, so the head's own frame stands in
-    for it: the field of view is the camera's, while its origin sits a few centimetres
-    behind and below where the lens really is.
+    Tiago's head camera, rooted in the head, since the MuJoCo model has no optical
+    frame: the field of view is the camera's, while its origin sits a few centimetres
+    behind and below the lens.
     """
 
     @property
@@ -1078,7 +1017,7 @@ class TiagoMujocoCamera(Camera):
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "head_2_link"
+                robot_root, TiagoMujocoBody.HEAD
             ),
             field_of_view=FieldOfView(horizontal_angle=0.99483, vertical_angle=0.75049),
             minimal_height=1.0665,
@@ -1108,9 +1047,11 @@ class TiagoMujocoNeck(Neck[TiagoMujocoCamera], ServoedByItsMujocoModel):
     ) -> Self:
         return cls(
             root=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "torso_lift_link"
+                robot_root, TiagoMujocoBody.TORSO_LIFT
             ),
-            tip=robot_root._world.get_body_in_branch_by_name(robot_root, "head_2_link"),
+            tip=robot_root._world.get_body_in_branch_by_name(
+                robot_root, TiagoMujocoBody.HEAD
+            ),
         )
 
 
@@ -1149,9 +1090,11 @@ class TiagoMujocoTorso(
         cls, robot_root: KinematicStructureEntity
     ) -> Self:
         return cls(
-            root=robot_root._world.get_body_in_branch_by_name(robot_root, "base_link"),
+            root=robot_root._world.get_body_in_branch_by_name(
+                robot_root, TiagoMujocoBody.BASE
+            ),
             tip=robot_root._world.get_body_in_branch_by_name(
-                robot_root, "torso_lift_link"
+                robot_root, TiagoMujocoBody.TORSO_LIFT
             ),
         )
 
@@ -1172,9 +1115,13 @@ class TiagoMujocoMobileBase(MobileBase[DifferentialDrive], HasTorso[TiagoMujocoT
     @property
     def drive_servos(self) -> DriveServos:
         """
-        See :attr:`TiagoMobileBase.drive_servos`.
+        Servos tuned for the base, which carries the whole robot, to follow its
+        commanded velocity; they are not taken from the real robot.
         """
-        return TiagoMobileBase.drive_servos.fget(self)
+        return DriveServos(
+            translation_gains=VelocityServoGains(damping=20000.0, torque_limit=10000.0),
+            rotation_gains=VelocityServoGains(damping=5000.0, torque_limit=5000.0),
+        )
 
     def _setup_servos(self) -> None:
         """
@@ -1189,7 +1136,9 @@ class TiagoMujocoMobileBase(MobileBase[DifferentialDrive], HasTorso[TiagoMujocoT
         cls, robot_root: KinematicStructureEntity
     ) -> Self:
         return cls(
-            root=robot_root._world.get_body_in_branch_by_name(robot_root, "base_link"),
+            root=robot_root._world.get_body_in_branch_by_name(
+                robot_root, TiagoMujocoBody.BASE
+            ),
             full_body_controlled=False,
         )
 
@@ -1199,52 +1148,34 @@ class TiagoMujoco(AbstractRobot, HasMobileBase[TiagoMujocoMobileBase]):
     """
     Class that describes the Take It And Go Robot (TIAGo).
 
-    Described by MuJoCo's own model of the robot rather than by the URDF, which is
-    what makes its hand able to hold something: the model's gripper is two sliding
-    fingers with flat faces, where the URDF's is a four-bar linkage whose fingers follow
-    each other through a mimic, and a simulation turns that mimic into a constraint
-    whose pads sweep forwards as they close and push an object out of the hand.
-
-    The model carries fewer bodies than the URDF, and leaves out some the URDF has,
-    the camera among them.
+    Described by MuJoCo's own model of the robot, whose gripper is two sliding fingers,
+    rather than by the URDF, whose gripper is a linkage. The model carries fewer bodies
+    than the URDF, the camera's optical frame among those it leaves out.
     """
 
     @classmethod
     def get_ros_file_path(cls) -> str:
-        return str(
-            Path(files("semantic_digital_twin")).parent.parent
-            / "resources"
-            / "mjcf"
-            / "tiago_dual"
-            / "tiago_dual.xml"
-        )
+        return "package://iai_tiago_description/mjcf/tiago_dual.xml"
 
     @classmethod
-    def parse_description(cls) -> World:
+    def from_description(cls) -> Self:
         """
-        Read the MuJoCo description, dropping the body that stands for the scene the
-        robot was described in.
-
-        MJCF describes every body inside a world body, so parsing the description leaves
-        that world body above the robot's own root. A robot is attached to the rest of
-        the world by its root, so a frame above that root would sit between the robot
-        and the drive that moves it.
-
-        :return: The world holding nothing but this robot.
+        :return: This robot, read from its MJCF without the world body MJCF puts above
+            every robot's root.
         """
         world = MJCFParser(cls.get_ros_file_path()).parse()
         with world.modify_world():
             world.remove_kinematic_structure_entity(world.root)
-        return world
+        return cls.from_world(world)
 
     @classmethod
     def _get_root_body_name(cls) -> str:
-        return "base_link"
+        return TiagoMujocoBody.BASE
 
     def _setup_collision_rules(self):
         """
-        The description states which of its own bodies may touch, so only the rules
-        about touching anything else are added.
+        Avoid collisions with everything but the robot itself, whose description states
+        which of its own bodies may touch.
         """
         self._world.collision_manager.extend_default_rules(
             [

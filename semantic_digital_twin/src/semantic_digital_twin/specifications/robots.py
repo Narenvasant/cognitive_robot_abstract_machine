@@ -72,8 +72,8 @@ class RobotSpecification:
 
     def spawn(self, world: World) -> AbstractRobot:
         """
-        Parse the robot from its own description, which the robot itself reads, and
-        merge it into ``world`` as ``world.root -> odom -> connection -> robot``.
+        Parse the robot from its own description, as the robot reads it, and merge it
+        into ``world`` as ``world.root -> odom -> connection -> robot``.
 
         The ``odom`` is fixed to the world root at the localization pose. The connection
         attaching the robot to it is the drive declared by the robot's mobile base, or a
@@ -83,8 +83,7 @@ class RobotSpecification:
 
         The robot is annotated while it still owns the world it was parsed into, so that
         the annotation's name-based lookups cannot be confused by an equally named joint
-        of a robot already present in ``world``. The servos of an active drive are
-        declared once the drive exists.
+        of a robot already present in ``world``.
 
         :param world: The world the robot is merged into.
         :return: The semantic annotation of the merged robot.
@@ -95,8 +94,9 @@ class RobotSpecification:
         is_active = issubclass(connection_type, ActiveConnection)
         drive_velocity_limits = self._drive_velocity_limits(connection_type)
 
-        robot_world = self.semantic_annotation_type.parse_description()
-        robot_id = self.semantic_annotation_type.from_world(robot_world).id
+        described_robot = self.semantic_annotation_type.from_description()
+        robot_world = described_robot._world
+        robot_id = described_robot.id
 
         with world.modify_world():
             odom_body = self._create_odom_body()

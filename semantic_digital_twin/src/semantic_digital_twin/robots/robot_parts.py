@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import types
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -32,6 +33,7 @@ from krrood.class_diagrams.attribute_introspector import (
 from krrood.entity_query_language.factories import variable, contains, a, entity
 from krrood.ormatic.utils import classproperty
 from krrood.utils import get_generic_type_parameters
+from semantic_digital_twin.adapters.package_resolver import CompositePathResolver
 from semantic_digital_twin.adapters.urdf import URDFParser
 from semantic_digital_twin.datastructures.definitions import JointStateType
 from semantic_digital_twin.datastructures.field_of_view import FieldOfView
@@ -42,6 +44,7 @@ from semantic_digital_twin.exceptions import (
     MoreThanOneBodyHeld,
     NoJointStateWithType,
     NothingHeld,
+    PathResolutionError,
     UselessConceptError,
     DuplicateRobotAssignmentsError,
     MissingDefaultCameraError,
@@ -98,15 +101,15 @@ from semantic_digital_twin.world_description.geometry import (
 from semantic_digital_twin.world_description.connection_properties import (
     DriveServos,
     JointServo,
-    ServoGains,
 )
 from semantic_digital_twin.world_description.world_entity import (
     Body,
-    ContactExclusion,
     GravityCompensation,
     KinematicStructureEntity,
     Connection,
+    Actuator,
     PositionServo,
+    VelocityServo,
 )
 from semantic_digital_twin.world_description.world_modification import (
     synchronized_attribute_modification,
@@ -416,7 +419,8 @@ class AbstractRobotPart(HasRootBody, HasRobotParts, ABC):
         Drive one of this part's joints with a position servo in a physical simulation:
         the servo's gains become a
         :class:`~semantic_digital_twin.world_description.world_entity.PositionServo`
-        actuator on the joint's degree of freedom, its dynamics the joint's own.
+        actuator on the joint's degree of freedom, its dynamics, if it states any, the
+        joint's own.
 
         A joint that follows another joint's degree of freedom, such as a gripper's
         mimic joints, gets the dynamics but no actuator of its own: the servo already
@@ -427,33 +431,31 @@ class AbstractRobotPart(HasRootBody, HasRobotParts, ABC):
         """
         if servo.dynamics is not None:
             connection.dynamics = servo.dynamics
-        self._declare_position_servo(
-            connection.raw_dof,
-            servo.gains,
-            PrefixedName(
-                f"{connection.raw_dof.name.name}_servo",
-                prefix=connection.raw_dof.name.prefix,
+        self._add_servo(
+            PositionServo(
+                name=PrefixedName(
+                    f"{connection.raw_dof.name.name}_servo",
+                    prefix=connection.raw_dof.name.prefix,
+                ),
+                gains=servo.gains,
             ),
+            connection.raw_dof,
         )
 
-    def _declare_position_servo(
-        self, degree_of_freedom: DegreeOfFreedom, gains: ServoGains, name: PrefixedName
-    ) -> None:
+    def _add_servo(self, servo: Actuator, degree_of_freedom: DegreeOfFreedom) -> None:
         """
-        Drive a degree of freedom with a position servo in a physical simulation, unless
-        a servo drives it already.
+        Drive a degree of freedom with a servo in a physical simulation, unless a servo
+        drives it already.
 
+        :param servo: The servo, not yet driving anything.
         :param degree_of_freedom: The degree of freedom to drive.
-        :param gains: How hard the servo pulls it towards its commanded position.
-        :param name: The name of the servo.
         """
         if any(
             degree_of_freedom in actuator.dofs for actuator in self._world.actuators
         ):
             return
-        actuator = PositionServo(name=name, gains=gains)
-        actuator.add_dof(degree_of_freedom)
-        self._world.add_actuator(actuator)
+        servo.add_dof(degree_of_freedom)
+        self._world.add_actuator(servo)
 
     def _compensate_gravity(self) -> None:
         """
@@ -682,7 +684,7 @@ class EndEffector(AbstractRobotPart, ABC):
         :attr:`tool_frame`.
 
         It is the x-axis of the grasp frame
-        :meth:`~semantic_digital_twin.grasping.grasp_candidates.HasGraspCandidates.grasp_candidates`
+        :meth:`~semantic_digital_twin.semantic_annotations.mixins.HasGraspCandidates.grasp_candidates`
         describes.
         """
 
@@ -693,7 +695,7 @@ class EndEffector(AbstractRobotPart, ABC):
         The axis the fingers close along, expressed in :attr:`tool_frame`.
 
         It is the y-axis of the grasp frame
-        :meth:`~semantic_digital_twin.grasping.grasp_candidates.HasGraspCandidates.grasp_candidates`
+        :meth:`~semantic_digital_twin.semantic_annotations.mixins.HasGraspCandidates.grasp_candidates`
         describes, and has to be perpendicular to :attr:`approach_axis`.
         """
 
@@ -900,13 +902,6 @@ class MobileBase(
         """
 
     @property
-    def rolling_bodies(self) -> list[Body]:
-        """
-        The wheels and casters this base rolls on.
-        """
-        return []
-
-    @property
     def drive_servos(self) -> DriveServos | None:
         """
         The servos moving this base across the floor in a physical simulation, or
@@ -922,31 +917,30 @@ class MobileBase(
 
     def declare_drive_servos(self, drive: WheeledDrive) -> None:
         """
-        Drive the x, y and yaw of the drive attaching this base to its ``odom`` with
-        the servos of :attr:`drive_servos`, if it has any. The base then slides on its
-        drive rather than rolling, so its :attr:`rolling_bodies` are kept out of contact.
+        Drive every degree of freedom the drive attaching this base to its ``odom`` is
+        commanded with, such as its translational velocities and its yaw, with the
+        velocity servos of :attr:`drive_servos`, if it has any.
 
         :param drive: The drive attaching this base's robot to its ``odom``.
         """
         drive_servos = self.drive_servos
         if drive_servos is None:
             return
-        for degree_of_freedom, gains in (
-            (drive.x, drive_servos.translation_gains),
-            (drive.y, drive_servos.translation_gains),
-            (drive.yaw, drive_servos.rotation_gains),
-        ):
-            self._declare_position_servo(
-                degree_of_freedom,
-                gains,
-                PrefixedName(
-                    f"{drive.name.name}_{degree_of_freedom.name.name}_servo",
-                    prefix=degree_of_freedom.name.prefix,
+        for degree_of_freedom in drive.active_dofs:
+            self._add_servo(
+                VelocityServo(
+                    name=PrefixedName(
+                        f"{drive.name.name}_{degree_of_freedom.name.name}_servo",
+                        prefix=degree_of_freedom.name.prefix,
+                    ),
+                    gains=(
+                        drive_servos.rotation_gains
+                        if degree_of_freedom == drive.yaw
+                        else drive_servos.translation_gains
+                    ),
                 ),
+                degree_of_freedom,
             )
-        for body in self.rolling_bodies:
-            if body.get_simulator_property_of_type(ContactExclusion) is None:
-                body.add_simulator_property(ContactExclusion())
 
     @property
     def base_R_front(self) -> RotationMatrix:
@@ -1067,14 +1061,14 @@ class AbstractRobot(Agent, HasRobotParts, ABC):
     @property
     def is_in_collision(self) -> bool:
         """
-        :return: Whether any body of this robot is at or below the violated distance the
+        :return: Whether any body of this robot is below the violated distance the
             active collision rules set for it.
         """
         own_bodies = set(self.bodies_with_collision)
         collision_manager = self._world.collision_manager
         return any(
             contact.distance
-            <= collision_manager.get_violated_distance(contact.body_a, contact.body_b)
+            < collision_manager.get_violated_distance(contact.body_a, contact.body_b)
             for contact in collision_manager.compute_collisions().contacts
             if contact.body_a in own_bodies or contact.body_b in own_bodies
         )
@@ -1086,6 +1080,19 @@ class AbstractRobot(Agent, HasRobotParts, ABC):
         Returns a ROS file path pointing to the description of this robot, for example a
         URDF file.
         """
+
+    @classmethod
+    def is_description_installed(cls) -> bool:
+        """
+        :return: Whether the file :meth:`get_ros_file_path` points to is on this
+            machine.
+        """
+        try:
+            return os.path.isfile(
+                CompositePathResolver().resolve(cls.get_ros_file_path())
+            )
+        except PathResolutionError:
+            return False
 
     @classproperty
     def uses_visual_as_collision_backup(cls) -> bool:
@@ -1100,19 +1107,18 @@ class AbstractRobot(Agent, HasRobotParts, ABC):
         return False
 
     @classmethod
-    def parse_description(cls) -> World:
+    def from_description(cls) -> Self:
         """
-        Read this robot's own description into a world of its own, rooted in the body
-        the robot is attached to the rest of the world by.
-
-        Overridden by a robot described in another format than a URDF.
-
-        :return: The world holding nothing but this robot.
+        :return: This robot, in a world holding nothing but it, read from its own
+            description: the URDF :meth:`get_ros_file_path` points to, unless the robot
+            is described in another format.
         """
-        return URDFParser.from_file(
-            cls.get_ros_file_path(),
-            use_visual_as_collision_backup=cls.uses_visual_as_collision_backup,
-        ).parse()
+        return cls.from_world(
+            URDFParser.from_file(
+                cls.get_ros_file_path(),
+                use_visual_as_collision_backup=cls.uses_visual_as_collision_backup,
+            ).parse()
+        )
 
     @classmethod
     @abstractmethod

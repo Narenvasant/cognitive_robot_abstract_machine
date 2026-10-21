@@ -1,31 +1,27 @@
-"""
-Grasps described by where on an object's surface they take hold and how the gripper
-comes in, statements of where an object may be grasped, and what happened when one was
-tried.
-
-Every field of :class:`SurfaceGrasp` and :class:`GraspResult` is a number, a truth value,
-a vector or a rotation, so a probabilistic model can be learned over tried grasps.
-
-.. note:: Taken from the grasp learning work, whose statements over these grasps and the
-    model registry that answers them are not on this branch.
-"""
-
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 import numpy as np
 from numpy.typing import NDArray
-from typing_extensions import TYPE_CHECKING, Optional
+from scipy.spatial.transform import Rotation
+from typing_extensions import TYPE_CHECKING, List, Optional
 
+from krrood.entity_query_language.backends import ProbabilisticBackend
+from krrood.entity_query_language.factories import ConditionType, a
+from krrood.entity_query_language.query.match import Match
+from krrood.parametrization.model_registries import (
+    ModelRegistry,
+    UniformPriorRegistry,
+)
 from semantic_digital_twin.exceptions import SurfaceGraspNotOnSurfaceError
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
 from semantic_digital_twin.spatial_types import (
     HomogeneousTransformationMatrix,
     Vector3,
 )
-from semantic_digital_twin.spatial_types.spatial_types import AxisAngle
+from semantic_digital_twin.spatial_types.spatial_types import AxisAngle, Quaternion
 
 if TYPE_CHECKING:
     from semantic_digital_twin.semantic_annotations.mixins import HasGraspCandidates
@@ -38,22 +34,7 @@ class GraspResult:
     """
     What happened to an object when a robot tried to pick it up by a grasp.
 
-    The object's displacement and rotation compare where it rested before the grasp
-    with where it is held at the end, along the world's axes, so that a use that cares
-    about another goal than lifting, such as pulling the object out of a shelf, can ask
-    for it.
-
-    The slip compares where the object sits in the gripper once the fingers have closed
-    on it with where it sits after it was lifted and held: an object held firmly does
-    not move relative to the fingers at all, one that was never held stays behind by the
-    whole lift. It is measured along the grasp's own axes, the direction of approach,
-    the closing direction and their normal, so that it means the same for every robot.
-
-    A rotation is stated as :func:`axis_angle_of` states it: an angle in [0, pi] about a
-    unit axis, no rotation being the angle zero about the z-axis.
-
-    The vectors and rotations carry no reference frame; each field says which axes it
-    is measured along.
+    Rotations are stated as :func:`axis_angle_of` states them.
     """
 
     object_raised: bool
@@ -105,24 +86,12 @@ class GraspResult:
 @dataclass
 class SurfaceGrasp:
     """
-    A grasp described relative to the surface of the object it takes, and independent of
+    A grasp of an object, described relative to the object's surface and independent of
     the robot taking it.
 
-    The point to take hold of lies on the outside of the object's grasp surface: looking
-    horizontally at the object's vertical axis from :attr:`azimuth`, at :attr:`height`
-    of its bounding box, it is the first point of the surface in that line of sight. The
-    gripper's center closes :attr:`depth` further along the line of sight, so that its
-    fingers straddle a wall as thick as twice that, or reach that far along a handle
-    seen from its end.
-
-    The gripper comes in from straight above when :attr:`pitch` is zero and tilts
-    towards the line of sight as it grows. With :attr:`roll` zero the fingers close
-    along the line of sight; a roll turns the closing direction about the direction of
-    approach.
-
-    The line of sight, not the surface normal, sets these directions, so that they stay
-    meaningful where a scanned mesh's normals are noisy or where the line meets the
-    surface at a slant.
+    The grasped point is the first point of the object's grasp surface seen horizontally
+    from :attr:`azimuth` at :attr:`height`; the gripper closes :attr:`depth` behind it,
+    approaching from above tilted by :attr:`pitch` and turned by :attr:`roll`.
     """
 
     azimuth: float
@@ -186,51 +155,6 @@ class SurfaceGrasp:
             ).pose,
         )
 
-    def with_object_between_fingers(
-        self, graspable: HasGraspCandidates, finger_separation: float
-    ) -> SurfaceGrasp:
-        """
-        :param graspable: The object to take hold of.
-        :param finger_separation: How far apart the fingers stand as they close in, in
-            metres.
-        :return: A copy of this grasp at the depth nearest its own at which fingers that
-            far apart have the object's bounding box between them along the closing
-            direction; at the object's middle where it is wider than that.
-        :raises SurfaceGraspNotOnSurfaceError: If the object's grasp surface does not
-            reach the point this grasp names.
-        """
-        outward = self._line_of_sight()
-        surface_point = self._surface_point(graspable, outward)
-        if surface_point is None:
-            raise SurfaceGraspNotOnSurfaceError(surface_grasp=self, graspable=graspable)
-        closing = self._closing_direction(self._approach_direction(outward), outward)
-        shallower_per_metre_deeper = float(closing @ outward)
-        if np.isclose(shallower_per_metre_deeper, 0.0):
-            return self
-
-        lowest, highest = graspable.grasp_surface().bounds
-        middle, half_extent = (lowest + highest) / 2, (highest - lowest) / 2
-        object_middle = float(closing @ middle)
-        object_reach = float(np.abs(closing) @ half_extent)
-        finger_reach = finger_separation / 2
-        surface_along_closing = float(closing @ surface_point)
-        drawn = surface_along_closing - self.depth * shallower_per_metre_deeper
-        if object_reach > finger_reach:
-            between_fingers = object_middle
-        else:
-            between_fingers = float(
-                np.clip(
-                    drawn,
-                    object_middle + object_reach - finger_reach,
-                    object_middle - object_reach + finger_reach,
-                )
-            )
-        depth = (surface_along_closing - between_fingers) / shallower_per_metre_deeper
-        through_the_object = float(
-            outward @ surface_point - (outward @ middle - np.abs(outward) @ half_extent)
-        )
-        return replace(self, depth=float(np.clip(depth, 0.0, through_the_object)))
-
     def reaches_surface_of(self, graspable: HasGraspCandidates) -> bool:
         """
         :param graspable: The object to take hold of.
@@ -289,3 +213,103 @@ class SurfaceGrasp:
         return math.cos(self.roll) * across + math.sin(self.roll) * np.cross(
             approach, across
         )
+
+
+# %% stating where an object may be grasped
+
+
+def any_surface_grasp(require_lifting: bool = False) -> Match[SurfaceGrasp]:
+    """
+    :param require_lifting: Whether to ask only for grasps that lift the object, by
+        stating the grasp's result as well; only a model learned over tried grasps and
+        their results can answer that.
+    :return: A statement asking for a surface grasp with every parameter left free, for
+        an annotation to narrow down with ``where``.
+    """
+    if require_lifting:
+        result = a(GraspResult)(
+            object_raised=True,
+            motion_completed=True,
+            object_displacement=_any_vector(),
+            object_rotation=_any_rotation(),
+            translational_slip=_any_vector(),
+            rotational_slip=_any_rotation(),
+        )
+    else:
+        result = None
+    return a(SurfaceGrasp)(
+        azimuth=..., height=..., depth=..., pitch=..., roll=..., result=result
+    )
+
+
+def _any_vector() -> Match[Vector3]:
+    """
+    :return: A statement asking for a vector with every component left free.
+    """
+    return a(Vector3)(x=..., y=..., z=...)
+
+
+def _any_rotation() -> Match[AxisAngle]:
+    """
+    :return: A statement asking for a rotation with its axis and angle left free.
+    """
+    return a(AxisAngle)(axis=_any_vector(), angle=...)
+
+
+def axis_angle_of(rotation: NDArray[np.float64]) -> AxisAngle:
+    """
+    :param rotation: A rotation matrix.
+    :return: The rotation as an angle in [0, pi] about a unit axis. No rotation is the
+        angle zero about the z-axis, as
+        :meth:`~semantic_digital_twin.spatial_types.spatial_types.AxisAngle.from_quaternion`
+        reads it.
+    """
+    x, y, z, w = Rotation.from_matrix(rotation).as_quat(canonical=True)
+    axis_angle = AxisAngle.from_quaternion(Quaternion(x=x, y=y, z=z, w=w))
+    return AxisAngle(
+        axis=Vector3(*axis_angle.axis.to_np()[:3]), angle=float(axis_angle.angle)
+    )
+
+
+def from_any_side(
+    grasp: Match[SurfaceGrasp],
+    largest_pitch: float = 1.2,
+    largest_roll: float = math.pi / 4,
+) -> List[ConditionType]:
+    """
+    :param grasp: A statement's grasp.
+    :param largest_pitch: How far the approach may tilt off vertical, in radians.
+    :param largest_roll: How far the fingers may turn off closing along the line of
+        sight, either way, in radians.
+    :return: The conditions that the grasp comes from any direction around the object,
+        tilted and turned at most as far as given.
+    """
+    return [
+        grasp.azimuth >= 0.0,
+        grasp.azimuth < 2 * math.pi,
+        grasp.pitch >= 0.0,
+        grasp.pitch < largest_pitch,
+        grasp.roll >= -largest_roll,
+        grasp.roll < largest_roll,
+    ]
+
+
+def draw_surface_grasps(
+    statement: Match[SurfaceGrasp],
+    number_of_grasps: int,
+    model_registry: Optional[ModelRegistry] = None,
+) -> List[SurfaceGrasp]:
+    """
+    :param statement: A statement of where an object may be grasped.
+    :param number_of_grasps: How many grasps to draw, as the statement's limit.
+    :param model_registry: Answers the statement; ``None`` draws uniformly from what it
+        allows, which cannot answer a statement that requires lifting.
+    :return: Grasps answering the statement; none when none are to be drawn.
+    """
+    if number_of_grasps == 0:
+        return []
+    return list(
+        statement.limit(number_of_grasps).evaluate(
+            backend=ProbabilisticBackend(model_registry or UniformPriorRegistry())
+        )
+    )
