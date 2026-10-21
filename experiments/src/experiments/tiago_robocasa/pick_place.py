@@ -207,10 +207,24 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     having been taken off its support, which is what the pick alone is judged by.
     """
 
+    object_name: str = TaskObject.FOOD
+    """
+    The name of the body of the object the task moves.
+    """
+
+    receptacle_name: str = TaskObject.CONTAINER
+    """
+    The name of the root body of what the object is to be put into.
+    """
+
     def build_world(self) -> World:
         world = super().build_world()
         self.rested_at = self.extent(self.food.root).center.to_np()[:3].copy()
         return world
+
+    def work_in(self, kitchen: TiagoRoboCasaTask) -> None:
+        super().work_in(kitchen)
+        self.rested_at = self.extent(self.food.root).center.to_np()[:3].copy()
 
     @property
     def task_is_done(self) -> bool:
@@ -277,7 +291,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         """
         :return: The annotation of the object the task moves.
         """
-        body = self.world.get_body_by_name(TaskObject.FOOD)
+        body = self.world.get_body_by_name(self.object_name)
         return [
             annotation
             for annotation in self.world.get_semantic_annotations_by_type(
@@ -291,7 +305,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         """
         :return: The root of what the object is to be put into.
         """
-        return self.world.get_body_by_name(TaskObject.CONTAINER)
+        return self.world.get_body_by_name(self.receptacle_name)
 
     def grasp(self) -> GraspCandidate:
         """

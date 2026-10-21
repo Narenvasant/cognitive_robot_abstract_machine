@@ -451,6 +451,7 @@ class TiagoRoboCasaTask(ABC):
             fixture_updates=self.fixture_updates(layout),
         )
         self.world = self.task.world
+        self.prepare_for_the_kitchen()
         robot = RobotSpecification(TiagoMujoco).spawn(self.world)
         robot.mobile_base.full_body_controlled = False
         with self.world.modify_world():
@@ -465,6 +466,22 @@ class TiagoRoboCasaTask(ABC):
         self.park_the_arms()
         self.stand_where_nothing_touches()
         return self.world
+
+    def prepare_for_the_kitchen(self) -> None:
+        """
+        Set up what the task needs of the kitchen once it is composed, before Tiago is
+        put into it. Nothing, unless the task needs something.
+        """
+
+    def work_in(self, kitchen: TiagoRoboCasaTask) -> None:
+        """
+        Take on the kitchen another task has composed, to be carried out in it as one
+        step of that task.
+
+        :param kitchen: The task that composed the kitchen.
+        """
+        self.task = kitchen.task
+        self.world = kitchen.world
 
     @property
     def floors(self) -> list[Body]:
