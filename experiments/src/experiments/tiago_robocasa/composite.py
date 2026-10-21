@@ -65,6 +65,31 @@ class CompositeObject(StrEnum):
     The bowl the cupcake batter was mixed in.
     """
 
+    FIRST_FRUIT = "obj0_main"
+    """
+    The first of the two fruits to be defrosted in the sink.
+    """
+
+    SECOND_FRUIT = "obj1_main"
+    """
+    The second of the two fruits to be defrosted in the sink.
+    """
+
+    FIRST_VEGETABLE = "obj2_main"
+    """
+    The first of the two vegetables to be put in the bowl.
+    """
+
+    SECOND_VEGETABLE = "obj3_main"
+    """
+    The second of the two vegetables to be put in the bowl.
+    """
+
+    CONTAINER = "container_main"
+    """
+    The bowl the vegetables are put in.
+    """
+
 
 # %% a task made of steps
 
@@ -296,7 +321,32 @@ class CupcakeCleanup(TiagoCompositeTask):
         ]
 
 
-TASKS = {task.__name__: task for task in (ServeWarmCroissant, CupcakeCleanup)}
+@dataclass
+class DefrostByCategory(TiagoCompositeTask):
+    """
+    Tiago drops the two frozen fruits on the counter into the sink and the two frozen
+    vegetables into the bowl beside it.
+    """
+
+    def step_sequence(self) -> list[TiagoRoboCasaTask]:
+        return [
+            PickPlaceCounterToSink(object_name=CompositeObject.FIRST_FRUIT),
+            PickPlaceCounterToSink(object_name=CompositeObject.SECOND_FRUIT),
+            TiagoPickPlaceTask(
+                object_name=CompositeObject.FIRST_VEGETABLE,
+                receptacle_name=CompositeObject.CONTAINER,
+            ),
+            TiagoPickPlaceTask(
+                object_name=CompositeObject.SECOND_VEGETABLE,
+                receptacle_name=CompositeObject.CONTAINER,
+            ),
+        ]
+
+
+TASKS = {
+    task.__name__: task
+    for task in (ServeWarmCroissant, CupcakeCleanup, DefrostByCategory)
+}
 """
 The composite tasks Tiago can be asked for, by the name RoboCasa gives them.
 """
