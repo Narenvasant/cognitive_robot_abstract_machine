@@ -58,6 +58,12 @@ class TiagoCompositeTask(TiagoRoboCasaTask, ABC):
     a task Tiago performs on its own, carried out in the kitchen this task composes.
     """
 
+    recording_distance: float = 2.2
+    """
+    How far the recording camera stands from where the first step reaches first, in
+    metres: close enough to see the hand, far enough to follow it between the steps.
+    """
+
     steps: list[TiagoRoboCasaTask] = field(init=False, default_factory=list)
     """
     The steps, in the order they are carried out, once the kitchen is composed.
@@ -94,9 +100,9 @@ class TiagoCompositeTask(TiagoRoboCasaTask, ABC):
     @property
     def recording_camera(self) -> ViewerCamera:
         """
-        :return: The camera the first step is recorded through.
+        :return: A camera on where the first step reaches first.
         """
-        return self.steps[0].recording_camera
+        return self.camera_on(self.first_target, self.recording_distance)
 
     def build_plan(self, context: Context) -> Plan:
         """
@@ -150,6 +156,10 @@ class OpenToasterOvenDoor(TiagoOpensADoor):
     """
     Tiago swings the toaster oven's door down open.
     """
+
+    handle_reach: float = 0.7
+
+    waits_in_joint_space: bool = True
 
     @property
     def fixture(self) -> Body:
