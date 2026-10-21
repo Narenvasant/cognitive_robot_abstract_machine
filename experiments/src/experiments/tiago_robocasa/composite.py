@@ -60,6 +60,11 @@ class CompositeObject(StrEnum):
     The cupcake fresh off the baking tray.
     """
 
+    CUPCAKE_TRAY = "cupcake_container_main"
+    """
+    The baking tray the cupcake lies on.
+    """
+
     BOWL = "bowl_main"
     """
     The bowl the cupcake batter was mixed in.
@@ -260,6 +265,16 @@ class MoveOffTheTray(MoveAlongTheCounter):
     beside it.
     """
 
+    tray_name: str = CompositeObject.CUPCAKE_TRAY
+    """
+    The name of the body of the tray the object lies on.
+    """
+
+    grasp_pitch: float = 1.2
+    """
+    Steeper than off a bare counter: the fingers reach down past the tray's rim.
+    """
+
     tray_height: float = 0.1
     """
     How far above the counter the underside of an object lying on a tray may be, in
@@ -288,6 +303,16 @@ class MoveOffTheTray(MoveAlongTheCounter):
         return (
             super().task_is_done
             and underside - self.counter.top.max_z <= self.counter_contact
+        )
+
+    @property
+    def handled_bodies(self) -> list[Body]:
+        """
+        :return: As :attr:`TiagoPickPlaceTask.handled_bodies`, and the tray, whose rim
+            the fingers pass to close on the object.
+        """
+        return super().handled_bodies + self.colliding_bodies_below(
+            self.world.get_body_by_name(self.tray_name)
         )
 
     @cached_property
