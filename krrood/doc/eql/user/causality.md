@@ -268,6 +268,12 @@ What the backend does with the learned structure:
 | `cause`, `confounder`, `causes_effect` | backdoor adjustment with the marked set, unchecked | the marked set is checked; a set that fails the adjustment criterion raises {py:class}`~probabilistic_model.causal_structure.exceptions.InvalidAdjustmentSet` |
 | `cause`, `causes_effect` | an empty adjustment set, which is plain conditioning | the set is chosen from the graph, among the variables the query names and the aggregation statistics; {py:class}`~krrood.entity_query_language.exceptions.EffectNotIdentified` if the graph identifies the effect by no such set |
 
+When the graph leaves the direction of an edge at the cause open, the effect is only
+partially identified: `backend.interventional_range(query)` then returns, per region of
+the cause, the lowest and highest effect probability across the candidate sets. And a
+query that marks only `causes_effect(...)` lets `backend.rank_causes(query)` rank every
+variable it names that may be a cause of the effect in the learned graph.
+
 Each cause candidate gets its own set. For a relational circuit, learn the structure with
 {py:class}`~probabilistic_model.causal_structure.learning.RelationalStructureLearner`,
 which names a part attribute once for every part of its collection
