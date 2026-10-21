@@ -29,7 +29,10 @@ from probabilistic_model.probabilistic_circuit.causal.causal_circuit import (
 from random_events.variable import Integer
 
 from krrood.entity_query_language.backends import ProbabilisticBackend
-from krrood.entity_query_language.exceptions import EffectNotIdentified
+from krrood.entity_query_language.exceptions import (
+    EffectNotIdentified,
+    NoCauseVariablesForRanking,
+)
 from krrood.entity_query_language.factories import a, cause, confounder
 from krrood.parametrization.causal_structure_registries import (
     DictCausalStructureRegistry,
@@ -135,29 +138,10 @@ def structure_of(graph: CausalGraph) -> DictCausalStructureRegistry:
 @pytest.fixture
 def summer_backend_registry() -> CausalCircuitRegistry:
     """
-    :return: A causal circuit over the summer's rows, stratified by the season and the
-        ice cream sales so that both can be intervened on and adjusted for.
+    :return: A causal circuit over the summer's rows with the ice cream sales and the
+        season as causes, so that both can be intervened on and adjusted for.
     """
-    rows = summer_rows()
-    variables = infer_variables_from_dataframe(rows)
-    by_name = {annotated.variable.name: annotated.variable for annotated in variables}
-    circuit = StratifiedLearning(
-        variables=["SummerDay.ice_cream", "SummerDay.season"],
-        method=JointProbabilityTree(),
-    ).fit(rows, variables)
-    ice_cream, season = by_name["SummerDay.ice_cream"], by_name["SummerDay.season"]
-    return CausalCircuitRegistry(
-        {
-            SummerDay: CausalCircuit.from_probabilistic_circuit(
-                circuit,
-                MarginalDeterminismTreeNode.from_causal_graph(
-                    [ice_cream, season], [by_name["SummerDay.drowning"]]
-                ),
-                [ice_cream, season],
-                [by_name["SummerDay.drowning"]],
-            )
-        }
-    )
+    return summer_circuit_registry(["ice_cream", "season"])
 
 
 def ice_cream_query(declares_the_season: bool):
@@ -307,3 +291,128 @@ def test_derived_count_survives_the_relational_trim(fitted_circuit, request):
     assert count.name in {
         variable.name for variable in causal_circuit.probabilistic_circuit.variables
     }
+
+
+# %% an effect identified only up to a few adjustment sets
+
+
+def summer_circuit_registry(causes: list[str]) -> CausalCircuitRegistry:
+    """
+    :param causes: The ``SummerDay`` fields to stratify by and register as causes.
+    :return: A causal circuit over the summer's rows with those causes.
+    """
+    rows = summer_rows()
+    variables = infer_variables_from_dataframe(rows)
+    by_name = {annotated.variable.name: annotated.variable for annotated in variables}
+    cause_variables = [by_name[f"SummerDay.{name}"] for name in causes]
+    effect_variable = by_name["SummerDay.drowning"]
+    circuit = StratifiedLearning(
+        variables=[variable.name for variable in cause_variables],
+        method=JointProbabilityTree(),
+    ).fit(rows, variables)
+    return CausalCircuitRegistry(
+        {
+            SummerDay: CausalCircuit.from_probabilistic_circuit(
+                circuit,
+                MarginalDeterminismTreeNode.from_causal_graph(
+                    cause_variables, [effect_variable]
+                ),
+                cause_variables,
+                [effect_variable],
+            )
+        }
+    )
+
+
+def effect_probability_within(interventional, region, effect_event) -> float:
+    """
+    :return: The effect's probability within one region of the cause.
+    """
+    truncated, _ = interventional.truncated(
+        region.fill_missing_variables_pure(interventional.variables)
+    )
+    return float(
+        truncated.probability(
+            effect_event.fill_missing_variables_pure(truncated.variables)
+        )
+    )
+
+
+def test_range_spans_the_answers_of_each_candidate():
+    registry = summer_circuit_registry(["ice_cream", "season"])
+    undecided = summer_graph(
+        [("season", "drowning"), ("ice_cream", "drowning")],
+        [("season", "ice_cream")],
+    )
+    query = ice_cream_query(declares_the_season=False)
+    [answer] = ProbabilisticBackend(
+        model_registry=registry, causal_structure_registry=structure_of(undecided)
+    ).interventional_range(query)
+    causal_circuit = registry.circuits[SummerDay]
+    [ice_cream, season] = causal_circuit.causal_variables
+    [drowning] = causal_circuit.effect_variables
+    effect_event = UnderspecifiedParameters(
+        query
+    ).truncation_assignments_from_where_conditions
+    candidates = [
+        causal_circuit.backdoor_adjustment(ice_cream, drowning, adjustment)
+        for adjustment in ([], [season])
+    ]
+
+    assert [
+        (region.lowest_effect_probability, region.highest_effect_probability)
+        for region in answer.regions
+    ] == [
+        (
+            min(probabilities),
+            max(probabilities),
+        )
+        for probabilities in (
+            [
+                effect_probability_within(candidate, region.event, effect_event)
+                for candidate in candidates
+            ]
+            for region in causal_circuit._extract_disjoint_regions_for_variable(
+                ice_cream
+            )
+        )
+    ]
+
+
+# %% ranking every possible cause of an effect
+
+
+def drowning_query(**causes):
+    """
+    :return: What causes drowning, with the given fields marked.
+    """
+    fields = dict(season=..., ice_cream=..., sunscreen=..., heat=..., drowning=...)
+    fields.update(causes)
+    query = a(SummerDay)(**fields)
+    query.causes_effect(query.drowning == 1)
+    return query
+
+
+def test_effect_only_ranking_equals_marking_every_possible_ancestor():
+    backend = ProbabilisticBackend(
+        model_registry=summer_circuit_registry(["season", "heat"]),
+        causal_structure_registry=structure_of(summer_graph(TRUE_SUMMER_EDGES)),
+    )
+
+    effect_only = backend.rank_causes(drowning_query())
+    marked = backend.rank_causes(drowning_query(season=cause, heat=cause))
+
+    assert [
+        (candidate.cause_variable.name, candidate.effect_probability_given_region)
+        for candidate in effect_only
+    ] == [
+        (candidate.cause_variable.name, candidate.effect_probability_given_region)
+        for candidate in marked
+    ]
+
+
+def test_effect_only_ranking_without_structure_registry_raises():
+    with pytest.raises(NoCauseVariablesForRanking):
+        ProbabilisticBackend(
+            model_registry=summer_circuit_registry(["season", "heat"])
+        ).rank_causes(drowning_query())
