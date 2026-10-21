@@ -275,7 +275,7 @@ class MoveOffTheTray(MoveAlongTheCounter):
     The name of the body of the tray the object lies on.
     """
 
-    grasp_pitch: float = 1.2
+    grasp_pitch: float = 1.0
     """
     Steeper than off a bare counter: the fingers reach down past the tray's rim.
     """
@@ -347,7 +347,7 @@ class DropABowlInTheSink(PickPlaceCounterToSink):
     than the hand opens.
     """
 
-    grasp_pitch: float = 1.2
+    grasp_pitch: float = 1.0
     """
     Steep, so that the fingers close across the rim's wall from above.
     """
