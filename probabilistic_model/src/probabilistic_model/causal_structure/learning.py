@@ -317,11 +317,11 @@ class RelationalCausalStructureLearner:
             knowledge.restricted_to(example_names),
         )
         nodes, edges = list(example_nodes), example_graph.edges()
-        for part, rows in tables.part_rows.items():
+        for part, table in tables.part_tables.items():
             part_nodes = self.create_part_nodes(circuit, part)
             nodes += part_nodes
             edges += self.learn_part_edges(
-                part, rows, part_nodes, example_nodes, knowledge
+                part, table.rows, part_nodes, example_nodes, knowledge
             )
         return LearnedCausalStructure(
             relations=self.record_in_class_diagram(circuit, edges),
