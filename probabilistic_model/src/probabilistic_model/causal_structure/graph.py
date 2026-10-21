@@ -6,6 +6,7 @@ as the data settles it, and the directed acyclic graphs it stands for.
 from __future__ import annotations
 
 import itertools
+import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from functools import cached_property
@@ -213,6 +214,33 @@ class MemberGraph(DirectedAcyclicGraph[str]):
         return result
 
 
+@dataclass(frozen=True)
+class NodeReference:
+    """
+    A graph node as a query's variable refers to it: a part attribute's template node
+    together with the position of the part the variable is a copy for.
+    """
+
+    node: GraphNode
+    """
+    The node.
+    """
+
+    part_index: int | None = None
+    """
+    The position of the part, for a part attribute's node; ``None`` otherwise.
+    """
+
+    @property
+    def variable_name(self) -> str:
+        """
+        :return: The name of the variable the reference stands for.
+        """
+        if self.part_index is None:
+            return self.node.name
+        return self.node.variable_of_part(self.part_index).name
+
+
 # %% the graph
 
 
@@ -293,6 +321,26 @@ class CausalGraph(Graph[GraphNode], SubclassJSONSerializer):
             if node.name == name:
                 return node
         raise UnknownGraphNode(name, self.node_names)
+
+    def reference_of(self, variable_name: str) -> NodeReference | None:
+        """
+        :param variable_name: The name of a query's variable, such as
+            ``Class.attribute`` or, for one part's copy of a part attribute,
+            ``Class.collection[index].attribute``.
+        :return: The node the variable stands for, with the part's position for a part
+            attribute; ``None`` if the graph has no node for it.
+        """
+        for node in self.nodes():
+            if node.name == variable_name:
+                return NodeReference(node)
+        indexed = re.fullmatch(r"(.+)\.(\w+)\[(\d+)\]\.(.+)", variable_name)
+        if indexed is None:
+            return None
+        owner, collection, index, attribute = indexed.groups()
+        for node in self.nodes():
+            if node.name == f"{owner}.{collection}.{attribute}":
+                return NodeReference(node, int(index))
+        return None
 
     @property
     def node_names(self) -> list[str]:

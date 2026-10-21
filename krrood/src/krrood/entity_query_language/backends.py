@@ -31,6 +31,8 @@ from krrood.entity_query_language.operators.probabilistic_queries import (
 from krrood.entity_query_language.operators.aggregators import Average
 from krrood.entity_query_language.evaluable import Evaluable
 from krrood.entity_query_language.exceptions import (
+    EffectNotIdentified,
+    VariableNotInCausalGraph,
     BackendCannotEvaluateCause,
     NoCauseVariablesForRanking,
     NoCausesEffectConditionForCause,
@@ -61,6 +63,13 @@ try:
         SelectedAttributesParameters,
     )
     from probabilistic_model.probabilistic_model import ProbabilisticModel
+    from probabilistic_model.causal_structure.graph import (
+        CausalGraph,
+        NodeLevel,
+        NodeReference,
+    )
+    from probabilistic_model.causal_structure.identification import IdentifiedEffect
+    from probabilistic_model.causal_structure.learning import LearnedCausalStructure
 except ImportError as e:
     logger.debug(f"Couldn't import probabilistic model needed classes: {e}")
     CausalCircuit = NoneType
@@ -71,6 +80,11 @@ except ImportError as e:
     SelectedAttributesParameters = NoneType
     UnderspecifiedParameters = NoneType
     ProbabilisticModel = NoneType
+    CausalGraph = NoneType
+    NodeReference = NoneType
+    NodeLevel = NoneType
+    IdentifiedEffect = NoneType
+    LearnedCausalStructure = NoneType
 
 T = TypeVar("T")
 
@@ -319,6 +333,18 @@ class ProbabilisticBackend(GenerativeBackend):
     This is only used if the query does not specify a limit.
     """
 
+    causal_structures: dict[type, LearnedCausalStructure] = field(
+        kw_only=True, default_factory=dict
+    )
+    """
+    The causal structure learned for each class, which chooses the variables each cause
+    of a causal query about the class adjusts for, or checks those marked
+    ``confounder``.
+
+    A query about a class without one adjusts for the variables marked ``confounder``
+    alone, unchecked.
+    """
+
     def evaluate(self, expression: Evaluable) -> Iterable[T]:
         if isinstance(expression, ProbabilisticQuery):
             yield expression._resolve_(self.model_registry)
@@ -456,6 +482,7 @@ class ProbabilisticBackend(GenerativeBackend):
             match, and narrowed to the region of its primary cause if it searches one.
         :raises NoSolutionFound: If the match's conditions leave the model no solution.
         """
+        self.choose_adjustment_sets(parameters, expression)
         model = self.model_registry.get_model(parameters)
 
         if parameters.search_cause_variables:
@@ -473,7 +500,7 @@ class ProbabilisticBackend(GenerativeBackend):
                 cause_effect.effect_variable,
                 parameters.truncation_assignments_from_where_conditions,
                 expression,
-                cause_effect.confounder_variables,
+                cause_effect.adjustment_variables_by_cause,
             )
             truncated = parameters.apply_krrood_variable_truncation(
                 primary.narrowed_circuit
@@ -521,8 +548,104 @@ class ProbabilisticBackend(GenerativeBackend):
         return CauseEffectVariables(
             parameters.search_cause_variables,
             effect_variable,
-            parameters.search_confounder_variables,
+            {
+                cause_variable: parameters.adjustment_variables_of(cause_variable)
+                for cause_variable in parameters.search_cause_variables
+            },
         )
+
+    def choose_adjustment_sets(
+        self, parameters: UnderspecifiedParameters, expression: Match[T]
+    ) -> None:
+        """
+        Let the causal structure learned for the queried class choose, for every cause
+        candidate, the variables its intervention adjusts for, among those the query
+        names and the aggregation statistics a relational grounding keeps; or check the
+        variables marked ``confounder`` against it. A chosen statistic the query does
+        not name is added to its parameters' variables. Does nothing for a class without
+        a structure in :attr:`causal_structures`, or a query without a ``cause``.
+
+        A part attribute's template node stands for the copy on the part the cause, or
+        else the effect, sits on.
+
+        :param parameters: The parameters extracted from *expression*, which record the
+            chosen variables.
+        :param expression: The match being evaluated.
+        :raises VariableNotInCausalGraph: If the cause or the effect has no node in the
+            learned graph.
+        :raises InvalidAdjustmentSet: If the variables marked ``confounder`` fail the
+            adjustment criterion in the learned graph.
+        :raises EffectNotIdentified: If the learned graph identifies the effect by no
+            set of the variables the query names.
+        """
+        structure = self.causal_structures.get(parameters.queried_class)
+        if structure is None or not parameters.search_cause_variables:
+            return
+        cause_effect = self._resolve_cause_and_effect_variables(parameters, expression)
+        selector = structure.selector
+        graph = selector.graph
+        effect = self._reference_in(graph, cause_effect.effect_variable)
+        for cause_variable in cause_effect.cause_variables:
+            cause = self._reference_in(graph, cause_variable)
+            part_index = (
+                cause.part_index if cause.part_index is not None else effect.part_index
+            )
+            named = {
+                reference.node.name: reference
+                for reference in (
+                    graph.reference_of(name) for name in parameters.variables
+                )
+                if reference is not None and reference.part_index in (None, part_index)
+            }
+            eligible = named | {
+                node.name: NodeReference(node)
+                for node in graph.nodes()
+                if node.level is NodeLevel.AGGREGATION_STATISTIC
+            }
+            if parameters.search_confounder_variables:
+                selector.check_declared(
+                    cause.node.name,
+                    effect.node.name,
+                    frozenset(
+                        self._reference_in(graph, variable).node.name
+                        for variable in parameters.search_confounder_variables
+                    ),
+                )
+                continue
+            identification = selector.identify(
+                cause.node.name,
+                effect.node.name,
+                set(eligible),
+                structure.training_rows,
+            )
+            if not isinstance(identification, IdentifiedEffect):
+                raise EffectNotIdentified(
+                    cause_variable, cause_effect.effect_variable, identification
+                )
+            parameters.record_derived_adjustment(
+                cause_variable,
+                [
+                    parameters.variables.setdefault(
+                        eligible[name].variable_name, eligible[name].node.variable
+                    )
+                    for name in sorted(identification.adjustment)
+                ],
+            )
+
+    @staticmethod
+    def _reference_in(
+        graph: CausalGraph, variable: random_events.variable.Variable
+    ) -> NodeReference:
+        """
+        :param graph: A learned causal graph.
+        :param variable: A query variable.
+        :return: The node it stands for.
+        :raises VariableNotInCausalGraph: If the graph has no node for it.
+        """
+        reference = graph.reference_of(variable.name)
+        if reference is None:
+            raise VariableNotInCausalGraph(variable)
+        return reference
 
     @classmethod
     def _resolve_primary_intervention(
@@ -532,7 +655,10 @@ class ProbabilisticBackend(GenerativeBackend):
         effect_variable: random_events.variable.Variable,
         effect_truncation_event: Event | None,
         expression: Match[T],
-        confounder_variables: Iterable[random_events.variable.Variable] = (),
+        adjustment_variables_by_cause: (
+            dict[random_events.variable.Variable, list[random_events.variable.Variable]]
+            | None
+        ) = None,
     ) -> ScoredIntervention:
         """
         Search every candidate cause variable independently for the region whose
@@ -553,8 +679,8 @@ class ProbabilisticBackend(GenerativeBackend):
             translates to, used to narrow each candidate's interventional joint to the
             effect before ranking its regions.
         :param expression: The match being evaluated, for error reporting.
-        :param confounder_variables: Variables marked ``confounder`` in the query,
-            passed through to ``backdoor_adjustment`` as its adjustment set.
+        :param adjustment_variables_by_cause: Per candidate, the variables passed to
+            ``backdoor_adjustment`` as its adjustment set; none if not given.
         :raises NoSolutionFound: If no candidate has a region with positive probability.
         :return: The highest-scoring candidate.
         """
@@ -563,7 +689,7 @@ class ProbabilisticBackend(GenerativeBackend):
             cause_variables,
             effect_variable,
             effect_truncation_event,
-            confounder_variables,
+            adjustment_variables_by_cause,
         )
         if not scored_interventions:
             raise NoSolutionFound(expression._get_expression_())
@@ -576,7 +702,10 @@ class ProbabilisticBackend(GenerativeBackend):
         cause_variables: list[random_events.variable.Variable],
         effect_variable: random_events.variable.Variable,
         effect_truncation_event: Event | None,
-        confounder_variables: Iterable[random_events.variable.Variable] = (),
+        adjustment_variables_by_cause: (
+            dict[random_events.variable.Variable, list[random_events.variable.Variable]]
+            | None
+        ) = None,
     ) -> list[ScoredIntervention]:
         """
         Score every candidate cause variable independently for the region whose
@@ -593,9 +722,8 @@ class ProbabilisticBackend(GenerativeBackend):
         :param effect_truncation_event: The event the declared effect condition
             translates to, used to narrow each candidate's interventional joint to the
             effect before ranking its regions.
-        :param confounder_variables: Variables marked ``confounder`` in the query,
-            passed through to ``backdoor_adjustment`` as its adjustment set for every
-            candidate.
+        :param adjustment_variables_by_cause: Per candidate, the variables passed to
+            ``backdoor_adjustment`` as its adjustment set; none if not given.
         :return: Every candidate with a region of positive probability and a positive
             effect probability within it, highest-scoring first.
         """
@@ -608,7 +736,7 @@ class ProbabilisticBackend(GenerativeBackend):
                     cause_variable,
                     effect_variable,
                     effect_truncation_event,
-                    confounder_variables,
+                    (adjustment_variables_by_cause or {}).get(cause_variable, []),
                 )
             )
             is not None
@@ -632,9 +760,10 @@ class ProbabilisticBackend(GenerativeBackend):
         :meth:`_evaluate` and the primary-cause search it uses entirely unchanged; this
         is an additional, independent read of the same candidates.
 
-        Any field marked ``confounder`` is passed to every candidate's search as
-        ``backdoor_adjustment``'s adjustment set, so a variable that drives both a
-        candidate and the effect does not inflate that candidate's score with mere
+        Each candidate's search adjusts for its own set: the fields marked
+        ``confounder``, or, with a structure in :attr:`causal_structures`, the set the learned
+        structure chooses (see :meth:`choose_adjustment_sets`), so a variable that drives
+        both a candidate and the effect does not inflate that candidate's score with mere
         correlation.
 
         :param expression: A match with one or more ``cause`` fields and a
@@ -651,6 +780,7 @@ class ProbabilisticBackend(GenerativeBackend):
         parameters = UnderspecifiedParameters(expression)
         if not parameters.search_cause_variables:
             raise NoCauseVariablesForRanking(expression._get_expression_())
+        self.choose_adjustment_sets(parameters, expression)
         model = self.model_registry.get_model(parameters)
         if not isinstance(model, CausalCircuit):
             raise DoRequiresCausalCircuitModel(model)
@@ -660,7 +790,7 @@ class ProbabilisticBackend(GenerativeBackend):
             cause_effect.cause_variables,
             cause_effect.effect_variable,
             parameters.truncation_assignments_from_where_conditions,
-            cause_effect.confounder_variables,
+            cause_effect.adjustment_variables_by_cause,
         )
 
     @staticmethod
@@ -669,7 +799,7 @@ class ProbabilisticBackend(GenerativeBackend):
         cause_variable: random_events.variable.Variable,
         effect_variable: random_events.variable.Variable,
         effect_truncation_event: Event | None,
-        confounder_variables: Iterable[random_events.variable.Variable] = (),
+        adjustment_variables: Iterable[random_events.variable.Variable] = (),
     ) -> ScoredIntervention | None:
         """
         Compute ``cause_variable``'s best-region search result and score it by how
@@ -701,13 +831,13 @@ class ProbabilisticBackend(GenerativeBackend):
         :param effect_variable: The declared effect variable.
         :param effect_truncation_event: The event the declared effect condition
             translates to.
-        :param confounder_variables: Variables marked ``confounder`` in the query,
-            passed through to ``backdoor_adjustment`` as its adjustment set.
+        :param adjustment_variables: The variables passed to ``backdoor_adjustment`` as
+            its adjustment set.
         :return: The scored candidate, or ``None`` if it has no region with positive
             probability, or the effect has zero probability within that region.
         """
         interventional = model.backdoor_adjustment(
-            cause_variable, effect_variable, list(confounder_variables)
+            cause_variable, effect_variable, list(adjustment_variables)
         )
 
         # `.truncated()` fills in missing variables *in place* on the event it is
