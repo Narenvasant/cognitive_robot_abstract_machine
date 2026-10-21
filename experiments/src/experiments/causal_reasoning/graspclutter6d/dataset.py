@@ -563,6 +563,6 @@ def graspability_summaries(dataset: ExampleDataset) -> Dict[str, Dict[Any, Effec
             ).occluded_object_count()
         ),
         "objects": dataset.effect_rate_by(
-            lambda scene: GraspClutterSceneAggregations(instance=scene).object_count()
+            lambda scene: GraspClutterSceneAggregations(role_taker=scene).object_count()
         ),
     }

@@ -30,6 +30,7 @@ from experiments.causal_reasoning.comparison.evaluation import (
     KnownTruth,
 )
 from experiments.causal_reasoning.comparison.queries import CausalQueryCase
+from experiments.causal_reasoning.comparison.structure_study import KnowsItsGraph
 from experiments.causal_reasoning.tracy_clutter_picking.domain import ClutterEnvironment
 from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     UnreadableQuestionError,
@@ -201,7 +202,7 @@ class MechanismSetting:
 
 
 @dataclass
-class ClutterTruth(KnownTruth):
+class ClutterTruth(KnownTruth, KnowsItsGraph):
     """
     The interventional probabilities the closed-form mechanism implies.
 
@@ -241,6 +242,39 @@ class ClutterTruth(KnownTruth):
     @property
     def configurations(self) -> Sequence[MechanismSetting]:
         return self.settings
+
+    def true_edges(self, configuration: MechanismSetting) -> List[Tuple[str, str]]:
+        """
+        The edges the layout sampler and :class:`SyntheticPickOutcomes` draw along.
+        The environment sets how far apart the cartons stand and, when confounded, how
+        slippery they are; a neighbour's offset from the target sets its distance, its
+        band and, with the grasp's yaw, its side of the fingers; an adjacent neighbour
+        counts towards the crowding and is shoved; the friction and the crowding set the
+        hold, and a held target rises.
+        """
+        scene = "ClutterPickScene"
+        crowding = "ClutterPickSceneAggregations.crowding_count()"
+        neighbour = f"{scene}.neighbours"
+        edges = [
+            (f"{scene}.environment", crowding),
+            (f"{scene}.environment", f"{neighbour}.x"),
+            (f"{scene}.environment", f"{neighbour}.y"),
+            (f"{neighbour}.x", f"{neighbour}.distance_to_target"),
+            (f"{neighbour}.y", f"{neighbour}.distance_to_target"),
+            (f"{neighbour}.distance_to_target", f"{neighbour}.distance_band"),
+            (f"{neighbour}.distance_band", crowding),
+            (f"{neighbour}.distance_band", f"{neighbour}.displacement"),
+            (f"{neighbour}.displacement", f"{neighbour}.disturbed"),
+            (f"{neighbour}.x", f"{neighbour}.closing_axis_side"),
+            (f"{neighbour}.y", f"{neighbour}.closing_axis_side"),
+            (f"{scene}.grasp_yaw", f"{neighbour}.closing_axis_side"),
+            (f"{scene}.friction_coefficient", f"{scene}.lifted"),
+            (crowding, f"{scene}.lifted"),
+            (f"{scene}.lifted", f"{scene}.lift_height"),
+        ]
+        if configuration.confounded:
+            edges.append((f"{scene}.environment", f"{scene}.friction_coefficient"))
+        return edges
 
     def describe(self, configuration: MechanismSetting) -> Dict[str, str]:
         return {

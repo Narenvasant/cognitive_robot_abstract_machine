@@ -122,7 +122,7 @@ class CountCausesGraspability(SceneQueryCase, AdjustedCountCase):
             **{self.statistic_name: cause},
             **{adjusted.name: confounder for adjusted in self.confounders},
         )
-        query.causes_effect(query.variable.all_objects_graspable == True)
+        query.causes_effect(query.all_objects_graspable == True)
         return query
 
     def describe_cause(self, region: str) -> str:
@@ -168,7 +168,7 @@ class CatalogueCausesGraspability(SceneQueryCase):
             object_catalogue=cause,
             **{self.confounder_name: confounder},
         )
-        query.causes_effect(query.variable.all_objects_graspable == True)
+        query.causes_effect(query.all_objects_graspable == True)
         return query
 
     def describe_cause(self, region: str) -> str:
@@ -209,7 +209,7 @@ class CatalogueCausesOcclusion(SceneQueryCase):
             self._open_objects(), self._open_viewpoints(), object_catalogue=cause
         )
         query.causes_effect(
-            query.variable.objects[self.object_index].occlusion
+            query.objects[self.object_index].occlusion
             == Occlusion.HEAVILY_OCCLUDED
         )
         return query
@@ -252,7 +252,7 @@ class OccludedObjectsCauseBlockedObject(SceneQueryCase):
             self._open_objects(), self._open_viewpoints(), occluded_object_count=cause
         )
         query.causes_effect(
-            query.variable.objects[self.object_index].graspability
+            query.objects[self.object_index].graspability
             == Graspability.BLOCKED
         )
         return query
@@ -294,7 +294,7 @@ class SizeCausesBlockedObject(SceneQueryCase):
         objects[self.object_index] = part_query(GraspClutterObject, size=cause)
         query = self._scene_query(objects, self._open_viewpoints())
         query.causes_effect(
-            query.variable.objects[self.object_index].graspability
+            query.objects[self.object_index].graspability
             == Graspability.BLOCKED
         )
         return query

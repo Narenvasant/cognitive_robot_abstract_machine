@@ -20,7 +20,6 @@ from enum import Enum
 
 import numpy as np
 import pandas as pd
-from krrood.ormatic.data_access_objects.helper import to_dao
 from krrood.parametrization.model_registries import (
     ModelRegistry,
     RelationalCircuitRegistry,
@@ -37,6 +36,9 @@ from probabilistic_model.learning.learning_method import (
 )
 from probabilistic_model.probabilistic_circuit.relational.causal import (
     RelationalCausalCircuit,
+)
+from probabilistic_model.probabilistic_circuit.relational.part_learning_methods import (
+    PartLearningMethods,
 )
 from probabilistic_model.probabilistic_circuit.relational.relational_probabilistic_circuit import (
     ExchangeableDistributionTemplate,
@@ -578,14 +580,30 @@ class RelationalPipeline(CausalQueryPipeline):
             learning_method=self._learning_method(
                 min_samples_per_leaf, stratification.class_columns
             ),
-            part_learning_methods={
+            part_learning_methods=self._part_learning_methods(
+                min_samples_per_leaf, stratification
+            ),
+        )
+
+    def _part_learning_methods(
+        self, min_samples_per_leaf: float, stratification: CauseStratification
+    ) -> PartLearningMethods:
+        """
+        :param min_samples_per_leaf: The fewest training rows a leaf may hold.
+        :param stratification: What the fit is stratified by.
+        :return: The learning method of every part template, by the part's field.
+        """
+        methods = PartLearningMethods(default=None)
+        methods.methods_by_path.update(
+            {
                 part_field: self._learning_method(
                     min_samples_per_leaf,
                     stratification.part_attributes.get(part_field),
                 )
                 for part_field in self.schema.part_fields
-            },
+            }
         )
+        return methods
 
     @staticmethod
     def _size_of(model: RelationalProbabilisticCircuit) -> CircuitSize:
@@ -602,14 +620,13 @@ class RelationalPipeline(CausalQueryPipeline):
 
     def _training_rows(self) -> List[Any]:
         """
-        The training examples as data access objects, each with its parts in a canonical
-        order, so that the fit is the same whatever order the examples list their parts
+        The training examples, each with its parts in a canonical order, so that the fit is the same whatever order the examples list their parts
         in. The tree learner the templates are fitted with breaks ties by row order, and
         the parts of every example are pooled into its rows.
 
-        :return: One data access object per training example.
+        :return: One canonically ordered copy per training example.
         """
-        return [to_dao(self._canonical(example)) for example in self.training_examples]
+        return [self._canonical(example) for example in self.training_examples]
 
     def _canonical(self, example: Any) -> Any:
         """

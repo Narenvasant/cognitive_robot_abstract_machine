@@ -358,7 +358,7 @@ class FlatTable:
             for name in self.schema.scalar_fields
         }
         if self.layout.has_counts:
-            aggregations = self.schema.domain.aggregation_class(instance=example)
+            aggregations = self.schema.domain.aggregation_class(role_taker=example)
             row.update(
                 {
                     self.schema.aggregation_column(statistic.__name__): statistic(

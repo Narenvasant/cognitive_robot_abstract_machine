@@ -91,7 +91,7 @@ class FrictionCausesLift(AttemptQueryCase):
         query = self._attempt_query(
             self._open_neighbours(), friction_coefficient=cause, environment=confounder
         )
-        query.causes_effect(query.variable.lifted == True)
+        query.causes_effect(query.lifted == True)
         return query
 
     def describe_cause(self, region: str) -> str:
@@ -150,7 +150,7 @@ class CrowdingCausesLift(AttemptQueryCase, AdjustedCountCase):
             **{self.statistic_name: cause},
             **{adjusted.name: confounder for adjusted in self.confounders},
         )
-        query.causes_effect(query.variable.lifted == True)
+        query.causes_effect(query.lifted == True)
         return query
 
     def describe_cause(self, region: str) -> str:
@@ -197,7 +197,7 @@ class ClosingAxisSideCausesDisturbance(AttemptQueryCase):
         )
         query = self._attempt_query(neighbours)
         query.causes_effect(
-            query.variable.neighbours[self.neighbour_index].disturbed == True
+            query.neighbours[self.neighbour_index].disturbed == True
         )
         return query
 

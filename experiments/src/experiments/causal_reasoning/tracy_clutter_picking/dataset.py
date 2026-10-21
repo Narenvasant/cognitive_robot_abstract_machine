@@ -91,7 +91,7 @@ def lift_summaries(dataset: ExampleDataset) -> Dict[str, Dict[Any, EffectRate]]:
             lambda scene: scene.friction_coefficient
         ),
         "adjacent neighbours": dataset.effect_rate_by(
-            lambda scene: ClutterPickSceneAggregations(instance=scene).crowding_count()
+            lambda scene: ClutterPickSceneAggregations(role_taker=scene).crowding_count()
         ),
     }
 

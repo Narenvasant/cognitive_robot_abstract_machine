@@ -28,6 +28,7 @@ from experiments.causal_reasoning.comparison.evaluation import (
     KnownTruth,
 )
 from experiments.causal_reasoning.comparison.queries import CausalQueryCase
+from experiments.causal_reasoning.comparison.structure_study import KnowsItsGraph
 from experiments.causal_reasoning.graspclutter6d.domain import (
     CameraModel,
     GraspClutterObject,
@@ -634,7 +635,7 @@ def region_value(effect: InterventionalEffect, cause: Cause) -> Any:
 
 
 @dataclass
-class SceneTruth(KnownTruth):
+class SceneTruth(KnownTruth, KnowsItsGraph):
     """
     The synthetic model's interventional probabilities under several settings, each
     computed once per intervention and effect.
@@ -671,6 +672,52 @@ class SceneTruth(KnownTruth):
     @property
     def configurations(self) -> Sequence[ModelSetting]:
         return self.settings
+
+    def true_edges(self, configuration: ModelSetting) -> List[Tuple[str, str]]:
+        """
+        The edges :meth:`SceneStructuralCausalModel.sample` draws along. The number of
+        objects sets the crowding, which spreads the clutter, obstructs the viewpoints
+        and, with the confounding strength, makes the catalogue less likely to be the
+        grasp one, the objects more likely to be small and every object harder to
+        grasp; a small object is more often occluded, an occluded or small object or a
+        non-grasp catalogue blocks more often, and the counts count the parts.
+        """
+        scene = "GraspClutterScene"
+        statistic = "GraspClutterSceneAggregations"
+        count = f"{statistic}.object_count()"
+        item = f"{scene}.objects"
+        view = f"{scene}.viewpoints"
+        edges = [
+            (count, f"{scene}.extent"),
+            (count, f"{view}.clarity"),
+            (count, f"{statistic}.small_object_count()"),
+            (count, f"{statistic}.occluded_object_count()"),
+            (count, f"{scene}.all_objects_graspable"),
+            (f"{item}.size", f"{item}.diameter"),
+            (f"{item}.size", f"{item}.occlusion"),
+            (f"{item}.occlusion", f"{item}.visibility"),
+            (f"{item}.size", f"{item}.graspability"),
+            (f"{item}.occlusion", f"{item}.graspability"),
+            (f"{scene}.object_catalogue", f"{item}.graspability"),
+            (f"{item}.size", f"{statistic}.small_object_count()"),
+            (f"{item}.occlusion", f"{statistic}.occluded_object_count()"),
+            (f"{item}.graspability", f"{scene}.all_objects_graspable"),
+            (f"{statistic}.small_object_count()", f"{statistic}.occluded_object_count()"),
+            (f"{statistic}.small_object_count()", f"{scene}.all_objects_graspable"),
+            (f"{statistic}.occluded_object_count()", f"{scene}.all_objects_graspable"),
+            (f"{scene}.object_catalogue", f"{scene}.all_objects_graspable"),
+            (f"{view}.clarity", f"{view}.distance"),
+            (f"{view}.clarity", f"{view}.proximity"),
+            (f"{view}.clarity", f"{statistic}.clear_viewpoint_count()"),
+            (f"{view}.proximity", f"{statistic}.near_viewpoint_count()"),
+        ]
+        if configuration.confounding_strength > 0:
+            edges += [
+                (count, f"{scene}.object_catalogue"),
+                (count, f"{item}.size"),
+                (count, f"{item}.graspability"),
+            ]
+        return edges
 
     def describe(self, configuration: ModelSetting) -> Dict[str, str]:
         return {

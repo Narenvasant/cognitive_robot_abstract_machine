@@ -122,7 +122,7 @@ class CountCausesMutagenicity(MoleculeQueryCase, AdjustedCountCase):
             **{self.statistic_name: cause},
             **{adjusted.name: confounder for adjusted in self.confounders},
         )
-        query.causes_effect(query.variable.mutagenic == True)
+        query.causes_effect(query.mutagenic == True)
         return query
 
     def describe_cause(self, region: str) -> str:
@@ -168,7 +168,7 @@ class IndicatorCausesMutagenicity(MoleculeQueryCase):
             indicator_1=cause,
             **{self.confounder_name: confounder},
         )
-        query.causes_effect(query.variable.mutagenic == True)
+        query.causes_effect(query.mutagenic == True)
         return query
 
     def describe_cause(self, region: str) -> str:
@@ -214,7 +214,7 @@ class IndicatorCausesElement(MoleculeQueryCase):
             self._open_atoms(), self._open_bonds(), indicator_1=cause
         )
         query.causes_effect(
-            query.variable.atoms[self.atom_index].element == self.element
+            query.atoms[self.atom_index].element == self.element
         )
         return query
 
@@ -255,7 +255,7 @@ class BranchingAtomsCauseTerminalAtom(MoleculeQueryCase):
         query = self._molecule_query(
             self._open_atoms(), self._open_bonds(), branching_atom_count=cause
         )
-        query.causes_effect(query.variable.atoms[self.atom_index].bond_count == 1)
+        query.causes_effect(query.atoms[self.atom_index].bond_count == 1)
         return query
 
     def describe_cause(self, region: str) -> str:
@@ -294,7 +294,7 @@ class ElementCausesTerminalAtom(MoleculeQueryCase):
         atoms = self._open_atoms()
         atoms[self.atom_index] = part_query(MutagenesisAtom, element=cause)
         query = self._molecule_query(atoms, self._open_bonds())
-        query.causes_effect(query.variable.atoms[self.atom_index].bond_count == 1)
+        query.causes_effect(query.atoms[self.atom_index].bond_count == 1)
         return query
 
     def describe_cause(self, region: str) -> str:
