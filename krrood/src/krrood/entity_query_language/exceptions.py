@@ -1415,3 +1415,25 @@ class VariableNotInCausalGraph(DataclassException):
 
     def suggest_correction(self) -> str:
         return "Learn the structure over the variables the query's model is fitted on."
+
+
+@dataclass
+class NoCausalStructureRegistry(DataclassException):
+    """
+    Raised when a causal query needs the learned causal structure of its class and the
+    backend has none.
+    """
+
+    expression: Query
+    """
+    The query.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"{self.expression} needs a learned causal structure, and the backend has "
+            f"no causal structure registry."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Give the ProbabilisticBackend a causal_structure_registry."
