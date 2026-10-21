@@ -195,7 +195,7 @@ def causal_circuit_of(
     """
     return CausalCircuit.from_probabilistic_circuit(
         circuit,
-        MarginalDeterminismTreeNode.from_causal_graph(query.causes, [query.effect]),
+        MarginalDeterminismTreeNode.from_variable_order(query.causes),
         query.causes,
         [query.effect],
     )
