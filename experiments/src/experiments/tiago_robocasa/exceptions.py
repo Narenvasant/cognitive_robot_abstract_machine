@@ -141,3 +141,27 @@ class NoGraspTheArmReaches(DataclassException):
 
     def suggest_correction(self) -> str:
         return "Try more of the drawn grasps, or stand somewhere else."
+
+
+@dataclass
+class StepLeftUndone(DataclassException):
+    """
+    Raised when a step of a composite task left the scene other than it asks, so that
+    the steps after it have nothing to build on.
+    """
+
+    step: str
+    """
+    The name of the step.
+    """
+
+    outcome: str
+    """
+    What became of it.
+    """
+
+    def error_message(self) -> str:
+        return f"{self.step} was left undone: {self.outcome}."
+
+    def suggest_correction(self) -> str:
+        return "Make the step come off on its own first."

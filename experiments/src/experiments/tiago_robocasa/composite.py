@@ -25,6 +25,7 @@ from coraplex.plans.plan import Plan
 from experiments.scene_recording import ViewerCamera
 from experiments.tiago_robocasa.appliances import AppliancePart, SlideToasterOvenRack
 from experiments.tiago_robocasa.doors import TiagoOpensADoor
+from experiments.tiago_robocasa.exceptions import StepLeftUndone
 from experiments.tiago_robocasa.pick_place import (
     CounterContact,
     MoveAlongTheCounter,
@@ -140,13 +141,20 @@ class TiagoCompositeTask(TiagoRoboCasaTask, ABC):
     ) -> Plan:
         """
         Plan the stage as the step it belongs to plans it, whose base may follow its
-        arm where this task's does not.
+        arm where this task's does not, once every step before it has come off.
 
         :param build: One of the stages of a step.
         :param context: The context to plan in.
         :return: The plan.
+        :raises StepLeftUndone: If a step before it left the scene other than it asks.
         """
-        return build.__self__.planned_with_the_arm_alone(build, context)
+        step = build.__self__
+        for earlier in self.steps[: self.steps.index(step)]:
+            if not earlier.task_is_done:
+                raise StepLeftUndone(
+                    step=type(earlier).__name__, outcome=earlier.outcome
+                )
+        return step.planned_with_the_arm_alone(build, context)
 
     @property
     def task_is_done(self) -> bool:
@@ -177,6 +185,40 @@ class OpenToasterOvenDoor(TiagoOpensADoor):
     handle_reach: float = 0.7
 
     waits_in_joint_space: bool = True
+
+    fingertip_clearance: float = 0.005
+    """
+    How far in front of the door's face the closed fingertips stop, in metres.
+    """
+
+    @property
+    def handle_box(self) -> tuple[np.ndarray, np.ndarray]:
+        """
+        :return: The handle bar's box, carried out from the door as far as it takes for
+            the fingertips, which stick out past where the fingers close, to stop in
+            front of the door's face: the bar stands closer to the door than they
+            stick out.
+        """
+        lowest, highest = super().handle_box
+        outward = self.outward
+        bar = float((lowest + highest) @ outward / 2)
+        leaf = max(
+            self.door.root.collision.as_bounding_box_collection_in_frame(
+                self.world.root
+            ).bounding_boxes,
+            key=lambda piece: piece.width * piece.depth * piece.height,
+        )
+        face = max(
+            np.array([leaf.min_x, leaf.min_y, 0.0]) @ outward,
+            np.array([leaf.max_x, leaf.max_y, 0.0]) @ outward,
+        )
+        shift = max(
+            0.0,
+            float(self.arm.end_effector.fingers_reach_beyond_the_grasp)
+            - (bar - face)
+            + self.fingertip_clearance,
+        )
+        return lowest + outward * shift, highest + outward * shift
 
     @property
     def fixture(self) -> Body:
