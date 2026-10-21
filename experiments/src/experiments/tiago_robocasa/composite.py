@@ -15,6 +15,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
+from functools import cached_property
 
 import numpy as np
 from typing_extensions import Callable
@@ -24,9 +25,15 @@ from coraplex.plans.plan import Plan
 from experiments.scene_recording import ViewerCamera
 from experiments.tiago_robocasa.appliances import AppliancePart, SlideToasterOvenRack
 from experiments.tiago_robocasa.doors import TiagoOpensADoor
-from experiments.tiago_robocasa.pick_place import TiagoPickPlaceTask
+from experiments.tiago_robocasa.pick_place import (
+    CounterContact,
+    MoveAlongTheCounter,
+    PickPlaceCounterToSink,
+    TiagoPickPlaceTask,
+)
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
 from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
+from semantic_digital_twin.semantic_annotations.semantic_annotations import CounterTop
 from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger(__name__)
@@ -45,6 +52,16 @@ class CompositeObject(StrEnum):
     PLATE = "plate_main"
     """
     The plate a croissant is served on.
+    """
+
+    CUPCAKE = "cupcake_main"
+    """
+    The cupcake fresh off the baking tray.
+    """
+
+    BOWL = "bowl_main"
+    """
+    The bowl the cupcake batter was mixed in.
     """
 
 
@@ -169,6 +186,39 @@ class OpenToasterOvenDoor(TiagoOpensADoor):
         return self.task.referenced_fixtures[AppliancePart.TOASTER_OVEN]
 
 
+@dataclass
+class MoveOffTheTray(MoveAlongTheCounter):
+    """
+    Tiago takes the object off the tray it lies on and sets it down on the counter
+    beside it.
+    """
+
+    tray_height: float = 0.1
+    """
+    How far above the counter the underside of an object lying on a tray may be, in
+    metres.
+    """
+
+    @cached_property
+    def counter(self) -> CounterContact:
+        """
+        :return: The counter under the object and the tray it lies on, when first asked.
+        """
+        box = self.extent(self.food.root)
+        here = box.center.to_np()[:3]
+        return next(
+            CounterContact(body=body, top=piece)
+            for counter in self.world.get_semantic_annotations_by_type(CounterTop)
+            for body in self.colliding_bodies_below(counter.root)
+            for piece in body.collision.as_bounding_box_collection_in_frame(
+                self.world.root
+            ).bounding_boxes
+            if piece.min_x <= here[0] <= piece.max_x
+            and piece.min_y <= here[1] <= piece.max_y
+            and 0.0 <= box.min_z - piece.max_z <= self.tray_height
+        )
+
+
 # %% the tasks
 
 
@@ -190,7 +240,21 @@ class ServeWarmCroissant(TiagoCompositeTask):
         ]
 
 
-TASKS = {task.__name__: task for task in (ServeWarmCroissant,)}
+@dataclass
+class CupcakeCleanup(TiagoCompositeTask):
+    """
+    Tiago moves the cupcake off its baking tray onto the counter, then drops the bowl
+    the batter was mixed in into the sink.
+    """
+
+    def step_sequence(self) -> list[TiagoRoboCasaTask]:
+        return [
+            MoveOffTheTray(object_name=CompositeObject.CUPCAKE),
+            PickPlaceCounterToSink(object_name=CompositeObject.BOWL),
+        ]
+
+
+TASKS = {task.__name__: task for task in (ServeWarmCroissant, CupcakeCleanup)}
 """
 The composite tasks Tiago can be asked for, by the name RoboCasa gives them.
 """
