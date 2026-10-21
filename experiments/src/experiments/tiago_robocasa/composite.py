@@ -98,6 +98,13 @@ class TiagoCompositeTask(TiagoRoboCasaTask, ABC):
         """
         return self.steps[0].recording_camera
 
+    def build_plan(self, context: Context) -> Plan:
+        """
+        :param context: The context to plan in.
+        :return: The plan of the first step, the others following as :attr:`stages`.
+        """
+        return self.steps[0].build_plan(context)
+
     @property
     def stages(self) -> list[Callable[[Context], Plan]]:
         """
