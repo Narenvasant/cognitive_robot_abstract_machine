@@ -52,6 +52,22 @@ def mean(values: List[float]) -> float:
     return float(np.mean(values)) if values else float("nan")
 
 
+def comparison(rows: List[Dict[str, Any]], tolerance: float = 1e-9) -> str:
+    """
+    :param rows: Question rows both arms answered.
+    :return: How often the learned set's answer was closer to the truth than the
+        declared set's, as close, and further.
+    """
+    differences = [
+        mean(errors(row, "learned")) - mean(errors(row, "declared")) for row in rows
+    ]
+    return (
+        f"{sum(d < -tolerance for d in differences)} / "
+        f"{sum(abs(d) <= tolerance for d in differences)} / "
+        f"{sum(d > tolerance for d in differences)}"
+    )
+
+
 def share(flags: List[bool]) -> str:
     """
     :return: How many of the flags hold, as a count and a percentage.
@@ -75,7 +91,7 @@ def accuracy_table(questions: List[Dict[str, Any]], key) -> List[str]:
     for question in questions:
         groups[key(question)].append(question)
     lines = [
-        "| group | MAE declared | MAE learned | MAE no adjustment | learned beats declared | declared answered | learned answered |",
+        "| group | MAE declared | MAE learned | MAE no adjustment | learned vs declared: better / same / worse | declared answered | learned answered |",
         "|---|---|---|---|---|---|---|",
     ]
     for group, rows in sorted(groups.items(), key=lambda item: str(item[0])):
@@ -86,7 +102,7 @@ def accuracy_table(questions: List[Dict[str, Any]], key) -> List[str]:
             f"| {group} | {mean([e for row in rows for e in errors(row, 'declared')]):.3f} "
             f"| {mean([e for row in rows for e in errors(row, 'learned')]):.3f} "
             f"| {mean([e for row in rows for e in errors(row, 'unadjusted')]):.3f} "
-            f"| {share([mean(errors(row, 'learned')) < mean(errors(row, 'declared')) for row in both])} "
+            f"| {comparison(both)} "
             f"| {share([bool(errors(row, 'declared')) for row in rows])} "
             f"| {share([bool(errors(row, 'learned')) for row in rows])} |"
         )
