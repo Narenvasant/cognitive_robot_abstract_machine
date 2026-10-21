@@ -114,6 +114,7 @@ def main() -> None:
     parser.add_argument("--example-counts", nargs="+", type=int, default=[400, 1000])
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--settings", type=int, default=None)
+    parser.add_argument("--setting", type=int, default=None)
     arguments = parser.parse_args()
     results = {}
     for name in arguments.studies:
@@ -122,6 +123,10 @@ def main() -> None:
         )
         if arguments.settings is not None:
             study.truth.settings = study.truth.settings[: arguments.settings]
+        if arguments.setting is not None:
+            study.truth.settings = study.truth.settings[
+                arguments.setting : arguments.setting + 1
+            ]
         results[name] = report_as_json(
             study.run(log=lambda line: print(line, flush=True))
         )
