@@ -120,6 +120,14 @@ def collider_with_an_undirected_child() -> CausalGraph:
     return graph_of([("A", "C"), ("B", "C")], [("C", "D")])
 
 
+def without_member_graphs() -> CausalGraph:
+    """
+    :return: A → B, C → D → A, B — C, which no orientation fits: B → C closes the cycle
+        A → B → C → D → A, and C → B adds the collider A → B ← C.
+    """
+    return graph_of([("A", "B"), ("C", "D"), ("D", "A")], [("B", "C")])
+
+
 def undirected_chain(length: int) -> CausalGraph:
     """
     :param length: How many undirected edges the chain has.

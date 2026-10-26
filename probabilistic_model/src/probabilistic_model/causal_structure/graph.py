@@ -358,12 +358,30 @@ class CausalGraph:
         :raises CyclicGraph: If the graph has no undirected edges and a directed cycle.
         :raises InconsistentGraph: If no orientation qualifies.
         """
+        if not self.has_member_graphs:
+            raise InconsistentGraph(
+                len([edge for edge in self.edges if edge.is_undirected])
+            )
         return self._member_graphs
+
+    @property
+    def has_member_graphs(self) -> bool:
+        """
+        :return: Whether some orientation of the undirected edges qualifies as a member
+            graph, as :meth:`member_graphs` describes them. A graph learned from a
+            finite sample may have none.
+        :raises PartialAncestralGraphNotSupported: If an edge has an undetermined mark.
+        :raises EquivalenceClassTooLarge: If the graph has more than
+            :attr:`maximum_undirected_edges` undirected edges.
+        :raises CyclicGraph: If the graph has no undirected edges and a directed cycle.
+        """
+        return bool(self._member_graphs)
 
     @cached_property
     def _member_graphs(self) -> list[networkx.DiGraph]:
         """
-        :return: The member graphs, as :meth:`member_graphs` describes them, listed once.
+        :return: The member graphs, as :meth:`member_graphs` describes them, listed
+            once; none if no orientation qualifies.
         """
         for edge in self.edges:
             if edge.has_undetermined_mark:
@@ -395,8 +413,6 @@ class CausalGraph:
                 self.colliders_of(member, self.adjacent) == colliders
             ):
                 members.append(member)
-        if not members:
-            raise InconsistentGraph(len(undirected))
         return members
 
     def possible_ancestors(self, name: str) -> set[str]:
