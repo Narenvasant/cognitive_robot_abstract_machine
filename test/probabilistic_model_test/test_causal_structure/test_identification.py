@@ -13,6 +13,8 @@ from probabilistic_model.causal_structure.identification import (
     IdentifiedEffect,
     InvalidAdjustmentReason,
     PartiallyIdentifiedEffect,
+    UnidentifiedEffect,
+    UnidentifiedReason,
 )
 
 from .graphs import (
@@ -25,6 +27,7 @@ from .graphs import (
     two_step_back_door,
     undirected_cause_and_effect,
     undirected_parent,
+    without_member_graphs,
 )
 
 # %% the adjustment criterion in one graph
@@ -146,6 +149,14 @@ def test_effect_may_be_parent_of_cause():
         candidate_adjustments=[frozenset()],
         includes_member_without_causal_path=True,
     )
+
+
+def test_graph_without_member_graphs_leaves_the_effect_unidentified():
+    identification = AdjustmentSelector(without_member_graphs()).identify(
+        "A", "B", {"C", "D"}
+    )
+
+    assert identification == UnidentifiedEffect(UnidentifiedReason.NO_MEMBER_GRAPH)
 
 
 # %% checking a declared adjustment set

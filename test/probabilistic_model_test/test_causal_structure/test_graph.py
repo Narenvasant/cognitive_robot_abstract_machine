@@ -8,6 +8,7 @@ from probabilistic_model.causal_structure.discretization import (
 )
 from probabilistic_model.causal_structure.exceptions import (
     EquivalenceClassTooLarge,
+    InconsistentGraph,
     PartialAncestralGraphNotSupported,
 )
 from probabilistic_model.causal_structure.graph import (
@@ -22,6 +23,7 @@ from .graphs import (
     confounded,
     graph_of,
     undirected_chain,
+    without_member_graphs,
 )
 
 # %% the graphs an equivalence class stands for
@@ -38,6 +40,11 @@ def test_too_many_undirected_edges_raises():
 
     with pytest.raises(EquivalenceClassTooLarge):
         graph.member_graphs()
+
+
+def test_graph_without_member_graphs_raises():
+    with pytest.raises(InconsistentGraph):
+        without_member_graphs().member_graphs()
 
 
 def test_circle_marks_raise():

@@ -184,6 +184,12 @@ class UnidentifiedReason(StrEnum):
     variable the model cannot adjust for.
     """
 
+    NO_MEMBER_GRAPH = "no_member_graph"
+    """
+    No directed acyclic graph fits the graph: its undirected edges cannot be oriented
+    without a cycle or a collider it does not have.
+    """
+
 
 @dataclass
 class UnidentifiedEffect(Identification):
@@ -244,6 +250,8 @@ class AdjustmentSelector:
         :return: The best valid adjustment set; else, if the member graphs disagree on
             the cause's parents, one candidate per parent set; else a refusal.
         """
+        if not self.graph.has_member_graphs:
+            return UnidentifiedEffect(UnidentifiedReason.NO_MEMBER_GRAPH)
         checks = self.checks_for(cause, effect)
         forbidden = set().union(*(check.forbidden_nodes for check in checks))
         valid = [

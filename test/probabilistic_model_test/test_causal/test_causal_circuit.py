@@ -347,8 +347,8 @@ def _build_unnormalized_circuit() -> tuple:
 def _build_shared_cause_subcircuit_circuit() -> tuple:
     """
     A DAG, not a tree: the SumUnit over the cause x is mounted as a shared child of two
-    different ProductUnits, matching the mounting pattern relational grounding uses when one
-    exchangeable instance is attached under several class-level product nodes.
+    different ProductUnits, matching the mounting pattern relational grounding uses when
+    one exchangeable instance is attached under several class-level product nodes.
 
         SumUnit(root)
           ProductUnit_a(SumUnit_x [shared], leaf y∈[0,1])
@@ -509,7 +509,7 @@ class MarginalDeterminismTreeNodeAllQuerySetsTestCase(unittest.TestCase):
         self.assertIn(x, root.all_query_sets()[0])
 
 
-class MarginalDeterminismTreeNodeFromCausalGraphTestCase(unittest.TestCase):
+class MarginalDeterminismTreeNodeFromVariableOrderTestCase(unittest.TestCase):
 
     def setUp(self):
         self.x = Continuous("x")
@@ -518,32 +518,24 @@ class MarginalDeterminismTreeNodeFromCausalGraphTestCase(unittest.TestCase):
         self.effect = Continuous("effect")
 
     def test_root_query_set_is_first_in_priority_order(self):
-        root = MarginalDeterminismTreeNode.from_causal_graph(
-            [self.x, self.y, self.z],
-            [self.effect],
-            causal_priority_order=[self.z, self.x, self.y],
+        root = MarginalDeterminismTreeNode.from_variable_order(
+            [self.x, self.y, self.z], causal_priority_order=[self.z, self.x, self.y]
         )
         self.assertEqual(root.query_set, {self.z})
 
     def test_default_order_uses_causal_variables_order(self):
-        root = MarginalDeterminismTreeNode.from_causal_graph(
-            [self.x, self.y], [self.effect]
-        )
+        root = MarginalDeterminismTreeNode.from_variable_order([self.x, self.y])
         self.assertEqual(root.query_set, {self.x})
 
     def test_every_causal_variable_appears_in_some_query_set(self):
-        root = MarginalDeterminismTreeNode.from_causal_graph(
-            [self.x, self.y, self.z], [self.effect]
-        )
+        root = MarginalDeterminismTreeNode.from_variable_order([self.x, self.y, self.z])
         all_variables = set().union(*root.all_query_sets())
         for variable in [self.x, self.y, self.z]:
             self.assertIn(variable, all_variables)
 
     def test_five_variable_tree_assigns_all_variables(self):
         causal_variables = [Continuous(f"x{i}") for i in range(1, 6)]
-        root = MarginalDeterminismTreeNode.from_causal_graph(
-            causal_variables, [self.effect]
-        )
+        root = MarginalDeterminismTreeNode.from_variable_order(causal_variables)
         self.assertFalse(root.is_leaf)
         self.assertEqual(root.query_set, {causal_variables[0]})
         all_variables = set().union(*root.all_query_sets())
@@ -551,7 +543,7 @@ class MarginalDeterminismTreeNodeFromCausalGraphTestCase(unittest.TestCase):
             self.assertIn(variable, all_variables)
 
     def test_effect_variables_not_assigned_to_any_query_set(self):
-        root = MarginalDeterminismTreeNode.from_causal_graph([self.x, self.y], [self.z])
+        root = MarginalDeterminismTreeNode.from_variable_order([self.x, self.y])
         all_variables = set().union(*root.all_query_sets())
         self.assertNotIn(self.z, all_variables)
 
@@ -631,7 +623,7 @@ class CausalCircuitConstructionTestCase(unittest.TestCase):
 
     def setUp(self):
         self.circuit, self.x, self.y = _build_independent_circuit()
-        self.tree = MarginalDeterminismTreeNode.from_causal_graph([self.x], [self.y])
+        self.tree = MarginalDeterminismTreeNode.from_variable_order([self.x])
 
     def _make_causal_circuit(self) -> CausalCircuit:
         return CausalCircuit.from_probabilistic_circuit(
@@ -669,7 +661,7 @@ class VerifySupportDeterminismVariableExistenceTestCase(unittest.TestCase):
         )
 
     def test_correct_circuit_passes_with_no_violations(self):
-        tree = MarginalDeterminismTreeNode.from_causal_graph([self.x], [self.y])
+        tree = MarginalDeterminismTreeNode.from_variable_order([self.x])
         result = self._make_causal_circuit(tree).verify_support_determinism()
         self.assertTrue(result.passed)
         self.assertEqual(len(result.violations), 0)
@@ -683,13 +675,13 @@ class VerifySupportDeterminismVariableExistenceTestCase(unittest.TestCase):
         self.assertTrue(any("ghost" in str(v) for v in ctx.exception.violations))
 
     def test_result_lists_all_circuit_variables(self):
-        tree = MarginalDeterminismTreeNode.from_causal_graph([self.x], [self.y])
+        tree = MarginalDeterminismTreeNode.from_variable_order([self.x])
         result = self._make_causal_circuit(tree).verify_support_determinism()
         self.assertIn(self.x, result.circuit_variables)
         self.assertIn(self.y, result.circuit_variables)
 
     def test_result_lists_at_least_one_checked_query_set(self):
-        tree = MarginalDeterminismTreeNode.from_causal_graph([self.x], [self.y])
+        tree = MarginalDeterminismTreeNode.from_variable_order([self.x])
         result = self._make_causal_circuit(tree).verify_support_determinism()
         self.assertGreater(len(result.checked_query_sets), 0)
 
@@ -698,7 +690,7 @@ class VerifySupportDeterminismNormalizationTestCase(unittest.TestCase):
 
     def test_unnormalized_sum_unit_fails_with_log_weight_violation(self):
         circuit, x, y = _build_unnormalized_circuit()
-        tree = MarginalDeterminismTreeNode.from_causal_graph([x], [y])
+        tree = MarginalDeterminismTreeNode.from_variable_order([x])
         cc = CausalCircuit.from_probabilistic_circuit(circuit, tree, [x], [y])
         with self.assertRaises(SupportDeterminismVerificationResult) as ctx:
             cc.verify_support_determinism()
@@ -710,14 +702,14 @@ class VerifySupportDeterminismDisjointnessTestCase(unittest.TestCase):
 
     def test_correlated_circuit_with_clean_split_passes(self):
         circuit, x, w, y = _build_correlated_circuit()
-        tree = MarginalDeterminismTreeNode.from_causal_graph([x, w], [y])
+        tree = MarginalDeterminismTreeNode.from_variable_order([x, w])
         cc = CausalCircuit.from_probabilistic_circuit(circuit, tree, [x, w], [y])
         result = cc.verify_support_determinism()
         self.assertTrue(result.passed, msg=f"Violations: {result.violations}")
 
     def test_independent_productunit_circuit_passes(self):
         circuit, x, y = _build_independent_circuit()
-        tree = MarginalDeterminismTreeNode.from_causal_graph([x], [y])
+        tree = MarginalDeterminismTreeNode.from_variable_order([x])
         cc = CausalCircuit.from_probabilistic_circuit(circuit, tree, [x], [y])
         result = cc.verify_support_determinism()
         self.assertTrue(result.passed, msg=f"Violations: {result.violations}")
@@ -729,7 +721,7 @@ class VerifySupportDeterminismDisjointnessTestCase(unittest.TestCase):
         leave no disjoint regions to intervene on.
         """
         circuit, x, y = _build_nested_overlap_circuit()
-        tree = MarginalDeterminismTreeNode.from_causal_graph([x], [y])
+        tree = MarginalDeterminismTreeNode.from_variable_order([x])
         cc = CausalCircuit.from_probabilistic_circuit(circuit, tree, [x], [y])
         with self.assertRaises(SupportDeterminismVerificationResult) as ctx:
             cc.verify_support_determinism()
@@ -751,21 +743,21 @@ class VerifySupportDeterminismSharedSubcircuitTestCase(unittest.TestCase):
     """
     A shared child (a node with more than one parent) must be visited once by
     _check_support_disjointness's traversal and its disjointness result attributed
-    correctly to every parent -- the pattern the relational circuit's exact-partition and Monte-Carlo
-    grounding both rely on when one grounded instance is mounted under several class-
-    level product nodes.
+    correctly to every parent -- the pattern the relational circuit's exact-partition
+    and Monte-Carlo grounding both rely on when one grounded instance is mounted under
+    several class- level product nodes.
     """
 
     def test_shared_cause_subcircuit_passes(self):
         circuit, x, y = _build_shared_cause_subcircuit_circuit()
-        tree = MarginalDeterminismTreeNode.from_causal_graph([x], [y])
+        tree = MarginalDeterminismTreeNode.from_variable_order([x])
         cc = CausalCircuit.from_probabilistic_circuit(circuit, tree, [x], [y])
         result = cc.verify_support_determinism()
         self.assertTrue(result.passed, msg=f"Violations: {result.violations}")
 
     def test_backdoor_adjustment_runs_on_a_shared_cause_subcircuit(self):
         circuit, x, y = _build_shared_cause_subcircuit_circuit()
-        tree = MarginalDeterminismTreeNode.from_causal_graph([x], [y])
+        tree = MarginalDeterminismTreeNode.from_variable_order([x])
         cc = CausalCircuit.from_probabilistic_circuit(circuit, tree, [x], [y])
         interventional_circuit = cc.backdoor_adjustment(x, y, [])
         self.assertIsInstance(interventional_circuit, ProbabilisticCircuit)
@@ -778,7 +770,7 @@ class BackdoorAdjustmentStructuralTestCase(unittest.TestCase):
         self.circuit, self.x, self.y = _build_independent_circuit()
         self.cc = CausalCircuit.from_probabilistic_circuit(
             self.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([self.x], [self.y]),
+            MarginalDeterminismTreeNode.from_variable_order([self.x]),
             [self.x],
             [self.y],
         )
@@ -822,7 +814,7 @@ class BackdoorAdjustmentIndependentCorrectnessTestCase(unittest.TestCase):
         self.circuit, self.x, self.y = _build_independent_circuit()
         self.cc = CausalCircuit.from_probabilistic_circuit(
             self.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([self.x], [self.y]),
+            MarginalDeterminismTreeNode.from_variable_order([self.x]),
             [self.x],
             [self.y],
         )
@@ -871,7 +863,7 @@ class BackdoorAdjustmentCorrelatedCorrectnessTestCase(unittest.TestCase):
         cls.circuit, cls.x, cls.w, cls.y = _build_correlated_circuit()
         cls.cc = CausalCircuit.from_probabilistic_circuit(
             cls.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([cls.x, cls.w], [cls.y]),
+            MarginalDeterminismTreeNode.from_variable_order([cls.x, cls.w]),
             [cls.x, cls.w],
             [cls.y],
         )
@@ -916,7 +908,7 @@ class BackdoorAdjustmentWithAdjustmentTestCase(unittest.TestCase):
         cls.circuit, cls.x, cls.y, cls.z = _build_confounded_circuit()
         cls.cc = CausalCircuit.from_probabilistic_circuit(
             cls.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([cls.x], [cls.y]),
+            MarginalDeterminismTreeNode.from_variable_order([cls.x]),
             [cls.x],
             [cls.y],
         )
@@ -937,7 +929,7 @@ class BackdoorAdjustmentWithAdjustmentTestCase(unittest.TestCase):
         circuit, x, y, z = _build_three_variable_circuit()
         cc = CausalCircuit.from_probabilistic_circuit(
             circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([x, y], [z]),
+            MarginalDeterminismTreeNode.from_variable_order([x, y]),
             [x, y],
             [z],
         )
@@ -1072,8 +1064,8 @@ class DiscreteConfounderAdjustmentTestCase(unittest.TestCase):
         )
         cls.cc = CausalCircuit.from_probabilistic_circuit(
             cls.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph(
-                [cls.treatment, cls.season], [cls.outcome]
+            MarginalDeterminismTreeNode.from_variable_order(
+                [cls.treatment, cls.season]
             ),
             [cls.treatment, cls.season],
             [cls.outcome],
@@ -1237,8 +1229,8 @@ class CauseSpecificAdjustmentTestCase(unittest.TestCase):
         )
         cls.cc = CausalCircuit.from_probabilistic_circuit(
             cls.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph(
-                [cls.treatment, cls.season], [cls.outcome]
+            MarginalDeterminismTreeNode.from_variable_order(
+                [cls.treatment, cls.season]
             ),
             [cls.treatment, cls.season],
             [cls.outcome],
@@ -1309,7 +1301,7 @@ class ExtractLeafRegionsTestCase(unittest.TestCase):
         self.circuit, self.x, self.y = _build_independent_circuit()
         self.cc = CausalCircuit.from_probabilistic_circuit(
             self.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([self.x], [self.y]),
+            MarginalDeterminismTreeNode.from_variable_order([self.x]),
             [self.x],
             [self.y],
         )
@@ -1359,7 +1351,7 @@ class ExtractDisjointRegionsTestCase(unittest.TestCase):
         self.circuit, self.x, self.w, self.y = _build_correlated_circuit()
         self.causal_circuit = CausalCircuit.from_probabilistic_circuit(
             self.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([self.x, self.w], [self.y]),
+            MarginalDeterminismTreeNode.from_variable_order([self.x, self.w]),
             [self.x, self.w],
             [self.y],
         )
@@ -1409,7 +1401,7 @@ class ExtractDisjointRegionsTestCase(unittest.TestCase):
         # region (no branches to keep separate), both methods must agree.
         circuit, x, y = _build_independent_circuit()
         causal_circuit = CausalCircuit.from_probabilistic_circuit(
-            circuit, MarginalDeterminismTreeNode.from_causal_graph([x], [y]), [x], [y]
+            circuit, MarginalDeterminismTreeNode.from_variable_order([x]), [x], [y]
         )
         disjoint_regions = causal_circuit._extract_disjoint_regions_for_variable(y)
         coarsened_regions = causal_circuit._extract_leaf_regions_for_variable(y)
@@ -1427,7 +1419,7 @@ class BestDisjointRegionTestCase(unittest.TestCase):
         self.circuit, self.x, self.w, self.y = _build_correlated_circuit()
         self.causal_circuit = CausalCircuit.from_probabilistic_circuit(
             self.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([self.x, self.w], [self.y]),
+            MarginalDeterminismTreeNode.from_variable_order([self.x, self.w]),
             [self.x, self.w],
             [self.y],
         )
@@ -1469,7 +1461,7 @@ class DiagnoseFailureStructuralTestCase(unittest.TestCase):
         circuit, self.x, self.y = _build_independent_circuit()
         self.cc = CausalCircuit.from_probabilistic_circuit(
             circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([self.x], [self.y]),
+            MarginalDeterminismTreeNode.from_variable_order([self.x]),
             [self.x],
             [self.y],
         )
@@ -1548,7 +1540,7 @@ class DiagnoseFailureCorrectnessTestCase(unittest.TestCase):
         cls.circuit, cls.x, cls.w, cls.y = _build_correlated_circuit()
         cls.cc = CausalCircuit.from_probabilistic_circuit(
             cls.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([cls.x, cls.w], [cls.y]),
+            MarginalDeterminismTreeNode.from_variable_order([cls.x, cls.w]),
             [cls.x, cls.w],
             [cls.y],
         )
@@ -1626,9 +1618,8 @@ class EndToEndIntegrationTestCase(unittest.TestCase):
 
         cls.cc_independent = CausalCircuit.from_probabilistic_circuit(
             cls.circuit_independent,
-            MarginalDeterminismTreeNode.from_causal_graph(
+            MarginalDeterminismTreeNode.from_variable_order(
                 [cls.x_independent, cls.y_independent],
-                [cls.z_independent],
                 causal_priority_order=[cls.x_independent, cls.y_independent],
             ),
             [cls.x_independent, cls.y_independent],
@@ -1644,8 +1635,8 @@ class EndToEndIntegrationTestCase(unittest.TestCase):
 
         cls.cc_correlated = CausalCircuit.from_probabilistic_circuit(
             cls.circuit_correlated,
-            MarginalDeterminismTreeNode.from_causal_graph(
-                [cls.x_correlated, cls.w_correlated], [cls.y_correlated]
+            MarginalDeterminismTreeNode.from_variable_order(
+                [cls.x_correlated, cls.w_correlated]
             ),
             [cls.x_correlated, cls.w_correlated],
             [cls.y_correlated],
@@ -1759,7 +1750,7 @@ class BackdoorAdjustmentRoundedRegionTestCase(unittest.TestCase):
         cls.circuit, cls.x, cls.y, cls.z = _build_circuit_with_a_rounded_cause_region()
         cls.cc = CausalCircuit.from_probabilistic_circuit(
             cls.circuit,
-            MarginalDeterminismTreeNode.from_causal_graph([cls.x], [cls.y]),
+            MarginalDeterminismTreeNode.from_variable_order([cls.x]),
             [cls.x],
             [cls.y],
         )
