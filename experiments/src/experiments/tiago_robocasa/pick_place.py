@@ -518,9 +518,10 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
 
     def build_plan(self, context: Context) -> Plan:
         """
-        Drive to where the hand reaches the object, bring the arm there, take the
-        object, carry it to the receptacle along a way planned through the kitchen's
-        free space, and put it in.
+        Park the arms, drive to where the hand reaches the object, bring the arm there,
+        take the object, carry it to the receptacle along a way planned through the
+        kitchen's free space, and put it in, leaving the hand above it: whatever comes
+        next parks the arms first.
 
         :param context: The context to plan in.
         :return: The plan.
@@ -529,8 +530,8 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         self.grasp_taken = self.grasp()
         pick_up = self.pick_up_of(self.grasp_taken)
         taking = [
-            *driving,
             ParkArmsAction(self.robot.all_arms),
+            *driving,
             *self.arm_motions_to(self.pre_grasp()),
             pick_up,
         ]
@@ -538,10 +539,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         place_stand = self.let_go_where_the_arm_reaches()
         self.robot.root.parent_connection.origin = pick_stand
         return sequential(
-            taking
-            + self.drive_to(place_stand)
-            + self.letting_the_object_go()
-            + [ParkArmsAction(self.robot.all_arms)],
+            taking + self.drive_to(place_stand) + self.letting_the_object_go(),
             context=context,
         ).plan
 
