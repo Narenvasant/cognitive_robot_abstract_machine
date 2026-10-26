@@ -100,6 +100,26 @@ class CompositeObject(StrEnum):
     The bowl the vegetables are put in.
     """
 
+    FIRST_LOOSE_VEGETABLE = "vegetable1_main"
+    """
+    The first of the two vegetables to be put on a cutting board of its own.
+    """
+
+    SECOND_LOOSE_VEGETABLE = "vegetable2_main"
+    """
+    The second of the two vegetables to be put on a cutting board of its own.
+    """
+
+    FIRST_CUTTING_BOARD = "cutting_board1_main"
+    """
+    The cutting board the first vegetable is put on.
+    """
+
+    SECOND_CUTTING_BOARD = "cutting_board2_main"
+    """
+    The cutting board the second vegetable is put on.
+    """
+
 
 # %% a task made of steps
 
@@ -388,6 +408,20 @@ class DropABowlInTheSink(PickPlaceCounterToSink):
         )
 
 
+@dataclass
+class PutOnACuttingBoard(TiagoPickPlaceTask):
+    """
+    Tiago takes the object off the counter and lets it go just above a cutting board
+    lying on the same counter.
+    """
+
+    drop_from: float = 0.05
+    """
+    How far above the board the object's underside is let go, in metres: a board lies
+    on the counter, and the arm reaches no lower over it with the object in hand.
+    """
+
+
 # %% the tasks
 
 
@@ -445,9 +479,33 @@ class DefrostByCategory(TiagoCompositeTask):
         ]
 
 
+@dataclass
+class OrganizeVegetables(TiagoCompositeTask):
+    """
+    Tiago puts each of the two vegetables on the counter on a cutting board of its own.
+    """
+
+    def step_sequence(self) -> list[TiagoRoboCasaTask]:
+        return [
+            PutOnACuttingBoard(
+                object_name=CompositeObject.FIRST_LOOSE_VEGETABLE,
+                receptacle_name=CompositeObject.FIRST_CUTTING_BOARD,
+            ),
+            PutOnACuttingBoard(
+                object_name=CompositeObject.SECOND_LOOSE_VEGETABLE,
+                receptacle_name=CompositeObject.SECOND_CUTTING_BOARD,
+            ),
+        ]
+
+
 TASKS = {
     task.__name__: task
-    for task in (ServeWarmCroissant, CupcakeCleanup, DefrostByCategory)
+    for task in (
+        ServeWarmCroissant,
+        CupcakeCleanup,
+        DefrostByCategory,
+        OrganizeVegetables,
+    )
 }
 """
 The composite tasks Tiago can be asked for, by the name RoboCasa gives them.
