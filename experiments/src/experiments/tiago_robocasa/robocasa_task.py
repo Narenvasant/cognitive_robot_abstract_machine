@@ -765,6 +765,33 @@ class TiagoRoboCasaTask(ABC):
             target=search.target, tried=search.tried, clear=search.clear
         )
 
+    def drive_to_where_the_hand_arrives(
+        self,
+        arrives: Callable[[], bool],
+        target: np.ndarray | None = None,
+        reach: float | None = None,
+    ) -> list[NavigateAction]:
+        """
+        Find the stand :meth:`stand_where_the_hand_arrives` finds, and plan Tiago's
+        drive there from where it stands now.
+
+        A physically simulated base gets anywhere only by driving: one stood somewhere
+        new while the simulation runs stays where the physics has it.
+
+        :return: The drive, which is nothing if Tiago already stands there; Tiago is left
+            at the stand for planning on.
+        """
+        drive_connection = self.robot.root.parent_connection
+        here = drive_connection.origin
+        stand = self.stand_where_the_hand_arrives(arrives, target, reach)
+        if np.allclose(stand.to_np(), here.to_np()):
+            return []
+        at_the_stand = drive_connection.origin
+        drive_connection.origin = here
+        drive = self.drive_to(stand)
+        drive_connection.origin = at_the_stand
+        return drive
+
     def raise_the_torso(self) -> None:
         """
         Stand the torso at its full height before the simulation is built.
@@ -939,13 +966,18 @@ class TiagoRoboCasaTask(ABC):
         arm is still on its way when the controller is satisfied, and the hand ends up
         short of what it is reaching for.
 
+        The torso's joint is handed on with the arm's: the solve moves the torso too,
+        and an arm sent to its joints alone leaves the hand off the goal by however far
+        the torso moved.
+
         :param tool_frame_goal: Where the tool frame is to be.
         :return: The motion bringing the arm there.
         """
         context = Context(world=self.world, robot=self.robot, evaluate_conditions=False)
         joints = [
             connection
-            for connection in self.arm.active_connections
+            for part in (self.robot.mobile_base.torso, self.arm)
+            for connection in part.active_connections
             if isinstance(connection, ActiveConnection1DOF)
         ]
         with self.world.reset_state_context():

@@ -20,6 +20,7 @@ from scipy.spatial.transform import Rotation
 from coraplex.datastructures.dataclasses import Context
 from coraplex.plans.factories import sequential
 from coraplex.plans.plan import Plan
+from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.actions.base import ActionDescription
 from coraplex.robot_plans.actions.core.pick_up import GraspingAction
 from coraplex.robot_plans.actions.core.robot_body import ParkArmsAction
@@ -536,8 +537,8 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
 
     def build_plan(self, context: Context) -> Plan:
         """
-        Stand where the hand closes on the handle, bring the hand in front of it, take
-        hold of it, draw the fixture to where the task wants it and let go.
+        Drive to where the hand closes on the handle, bring the hand in front of it,
+        take hold of it, draw the fixture to where the task wants it and let go.
 
         The stand has to leave the handle itself within reach of the arm, not merely the
         pose the hand waits at in front of it: those lie a hand's breadth apart and the
@@ -548,13 +549,19 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
         :param context: The context to plan in.
         :return: The plan.
         """
-        self.stand_at_the_handle()
-        return self.working_the_handle(context)
+        return sequential(
+            self.stand_at_the_handle()
+            + self.drawing_the_fixture()
+            + self.letting_go_of_the_handle(),
+            context=context,
+        ).plan
 
-    def stand_at_the_handle(self) -> None:
+    def stand_at_the_handle(self) -> list[NavigateAction]:
         """
-        Note where every other fixture stands and put Tiago where the hand closes on the
-        handle.
+        Note where every other fixture stands and plan Tiago's drive to where the hand
+        closes on the handle.
+
+        :return: The drive.
         """
         robot_joints = set(self.robot.connections)
         self.other_fixtures_at_the_start = {
@@ -564,7 +571,7 @@ class TiagoHandleTask(TiagoRoboCasaTask, ABC):
             and joint is not self.mechanism
             and joint not in robot_joints
         }
-        self.stand_where_the_hand_arrives(
+        return self.drive_to_where_the_hand_arrives(
             self.reaches_the_handle, self.handle_middle, self.handle_reach
         )
 

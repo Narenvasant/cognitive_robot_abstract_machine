@@ -303,8 +303,9 @@ class TiagoPressTask(TiagoApplianceTask, ABC):
         :param context: The context to plan in.
         :return: Standing at the appliance and pressing the lever down.
         """
-        self.stand_at_the_handle()
-        return sequential(self.drawing_the_fixture(), context=context).plan
+        return sequential(
+            self.stand_at_the_handle() + self.drawing_the_fixture(), context=context
+        ).plan
 
     def letting_go_of_the_lever(self, context: Context) -> Plan:
         """
