@@ -60,7 +60,11 @@ from semantic_digital_twin.datastructures.definitions import (
 )
 from semantic_digital_twin.robots.tiago import TiagoMujoco
 from semantic_digital_twin.specifications.robots import RobotSpecification
-from semantic_digital_twin.spatial_types.spatial_types import Point2, Pose
+from semantic_digital_twin.spatial_types.spatial_types import (
+    HomogeneousTransformationMatrix,
+    Point2,
+    Pose,
+)
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.geometry import VolumetricBoundingBox
 from random_events.interval import closed
@@ -605,6 +609,19 @@ class TiagoRoboCasaTask(ABC):
 
     def drive_to(self, stand: Pose) -> list[NavigateAction]:
         """
+        :param stand: Where Tiago is to end up.
+        :return: Driving there from where it stands, along :meth:`legs_between`.
+        :raises NoWayToTheStand: If the free space holds no way there.
+        """
+        legs = self.legs_between(self.floor_plan(), self.stands_at, stand)
+        if legs is None:
+            raise NoWayToTheStand(stand=stand)
+        return [NavigateAction(leg) for leg in legs]
+
+    def legs_between(
+        self, navigation: PlanarGraphOfBoundingBoxes, here: Pose, stand: Pose
+    ) -> list[Pose] | None:
+        """
         Drive the base to a stand along a way planned through the kitchen's free space,
         rather than straight at it: a kitchen has an island and a table between its
         counters, and a straight line walks into them. Tiago backs straight out of where
@@ -612,19 +629,19 @@ class TiagoRoboCasaTask(ABC):
         since a stand in front of a fixture lies closer to it than the way keeps the
         base.
 
+        :param navigation: The kitchen's free space, see :meth:`floor_plan`.
+        :param here: Where Tiago starts from.
         :param stand: Where Tiago is to end up.
-        :return: Driving there, one leg per corner of the planned way.
-        :raises NoWayToTheStand: If the free space holds no way there.
+        :return: The poses the base drives through, one leg per corner of the planned
+            way, or nothing if the free space holds no way there.
         """
-        navigation = self.floor_plan()
-        here = self.stands_at
         way_out = self.way_into_the_free_space(navigation, here)
         way_in = self.way_into_the_free_space(navigation, stand)
         if way_out is None or way_in is None:
-            raise NoWayToTheStand(stand=stand)
+            return self.straight_legs_between(here, stand)
         corners = navigation.path_from_to(way_out, way_in)
         if corners is None:
-            raise NoWayToTheStand(stand=stand)
+            return self.straight_legs_between(here, stand)
         backing_out = Pose.from_xyz_rpy(
             x=float(way_out.to_np()[0]),
             y=float(way_out.to_np()[1]),
@@ -637,7 +654,54 @@ class TiagoRoboCasaTask(ABC):
         legs = self.legs_along(corners + [stand_position], stand)
         if not np.allclose(way_out.to_np()[:2], here.to_np()[:2, 3]):
             legs = [backing_out] + legs
-        return [NavigateAction(leg) for leg in legs]
+        return legs
+
+    straight_drive_step: float = 0.05
+    """
+    How far apart the poses are that a straight drive is checked for clearance at, in
+    metres.
+    """
+
+    def straight_legs_between(self, here: Pose, stand: Pose) -> list[Pose] | None:
+        """
+        Turn on the spot to face the stand, drive straight to it, and turn to face the
+        way the stand does: the way into a stand along the counter Tiago already stands
+        at, which the free space, kept clear of the counter by the base's clearance,
+        does not hold.
+
+        :param here: Where Tiago starts from.
+        :param stand: Where Tiago is to end up.
+        :return: The poses the base drives through, or nothing if Tiago does not stay
+            clear of the kitchen all along the line.
+        """
+        start = here.to_np()[:2, 3]
+        step = stand.to_np()[:2, 3] - start
+        length = float(np.linalg.norm(step))
+        if np.isclose(length, 0.0):
+            return [stand]
+        heading = float(np.arctan2(step[1], step[0]))
+        drive = self.robot.root.parent_connection
+        before = drive.origin
+        clear = True
+        for distance in np.append(
+            np.arange(0.0, length, self.straight_drive_step), length
+        ):
+            x, y = start + distance / length * step
+            drive.origin = HomogeneousTransformationMatrix.from_xyz_rpy(
+                x=float(x), y=float(y), yaw=heading, reference_frame=self.world.root
+            )
+            if not self.keeps_clear_of_the_kitchen():
+                clear = False
+                break
+        drive.origin = before
+        if not clear:
+            return None
+        return [
+            Pose.from_xyz_rpy(
+                x=float(x), y=float(y), yaw=heading, reference_frame=self.world.root
+            )
+            for x, y in (start, start + step)
+        ] + [stand]
 
     def heading_of(self, pose: Pose) -> float:
         """
@@ -772,8 +836,8 @@ class TiagoRoboCasaTask(ABC):
         reach: float | None = None,
     ) -> list[NavigateAction]:
         """
-        Find the stand :meth:`stand_where_the_hand_arrives` finds, and plan Tiago's
-        drive there from where it stands now.
+        Find the stand :meth:`stand_where_the_hand_arrives` finds among those Tiago can
+        drive to from where it stands now, and plan the drive there.
 
         A physically simulated base gets anywhere only by driving: one stood somewhere
         new while the simulation runs stays where the physics has it.
@@ -781,16 +845,19 @@ class TiagoRoboCasaTask(ABC):
         :return: The drive, which is nothing if Tiago already stands there; Tiago is left
             at the stand for planning on.
         """
-        drive_connection = self.robot.root.parent_connection
-        here = drive_connection.origin
-        stand = self.stand_where_the_hand_arrives(arrives, target, reach)
+        navigation = self.floor_plan()
+        here = self.stands_at
+        stand = self.stand_where_the_hand_arrives(
+            lambda: self.legs_between(navigation, here, self.stands_at) is not None
+            and arrives(),
+            target,
+            reach,
+        )
         if np.allclose(stand.to_np(), here.to_np()):
             return []
-        at_the_stand = drive_connection.origin
-        drive_connection.origin = here
-        drive = self.drive_to(stand)
-        drive_connection.origin = at_the_stand
-        return drive
+        return [
+            NavigateAction(leg) for leg in self.legs_between(navigation, here, stand)
+        ]
 
     def raise_the_torso(self) -> None:
         """
