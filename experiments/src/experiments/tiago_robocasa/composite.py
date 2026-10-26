@@ -204,12 +204,22 @@ class TiagoCompositeTask(TiagoRoboCasaTask, ABC):
         :raises StepLeftUndone: If a step before it left the scene other than it asks.
         """
         step = build.__self__
-        for earlier in self.steps[: self.steps.index(step)]:
+        position = next(
+            index for index, candidate in enumerate(self.steps) if candidate is step
+        )
+        for earlier in self.steps[:position]:
             if not earlier.task_is_done:
                 raise StepLeftUndone(
                     step=type(earlier).__name__, outcome=earlier.outcome
                 )
         return step.planned_with_the_arm_alone(build, context)
+
+    def prepare_contacts(self) -> None:
+        """
+        Set up the contacts of what every step works with.
+        """
+        for step in self.steps:
+            step.prepare_contacts()
 
     @property
     def task_is_done(self) -> bool:
