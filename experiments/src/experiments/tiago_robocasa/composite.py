@@ -415,10 +415,11 @@ class PutOnACuttingBoard(TiagoPickPlaceTask):
     lying on the same counter.
     """
 
-    drop_from: float = 0.05
+    drop_from: float = 0.1
     """
     How far above the board the object's underside is let go, in metres: a board lies
-    on the counter, and the arm reaches no lower over it with the object in hand.
+    on the counter, and the arm reaches no lower than a hand's breadth above a counter
+    with the object in hand, as :attr:`MoveAlongTheCounter.drop_from` measures.
     """
 
 
