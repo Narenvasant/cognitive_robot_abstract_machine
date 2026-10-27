@@ -813,13 +813,22 @@ class TiagoRoboCasaTask(ABC):
         arrives: Callable[[], bool],
         target: np.ndarray | None = None,
         reach: float | None = None,
+        preferred: Callable[[], bool] | None = None,
     ) -> Pose:
         """
+        :param preferred: What else a stand had better allow, asked only where the arm
+            arrives; a stand that allows it is taken if there is one.
         :return: The stand :meth:`stand_that_reaches` found, which Tiago is left at.
         :raises NoClearStandingPose: If Tiago touches the kitchen at every stand.
         :raises NoReachableStandingPose: If it stands clear somewhere but the arm
             arrives from none of those stands.
         """
+        if preferred is not None:
+            search = self.stand_that_reaches(
+                lambda: arrives() and preferred(), target, reach
+            )
+            if search.stand is not None:
+                return search.stand
         search = self.stand_that_reaches(arrives, target, reach)
         if search.stand is not None:
             return search.stand
@@ -834,6 +843,7 @@ class TiagoRoboCasaTask(ABC):
         arrives: Callable[[], bool],
         target: np.ndarray | None = None,
         reach: float | None = None,
+        preferred: Callable[[], bool] | None = None,
     ) -> list[NavigateAction]:
         """
         Find the stand :meth:`stand_where_the_hand_arrives` finds among those Tiago can
@@ -852,6 +862,7 @@ class TiagoRoboCasaTask(ABC):
             and arrives(),
             target,
             reach,
+            preferred,
         )
         if np.allclose(stand.to_np(), here.to_np()):
             return []

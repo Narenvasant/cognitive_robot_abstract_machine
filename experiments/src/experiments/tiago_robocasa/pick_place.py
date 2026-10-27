@@ -16,7 +16,7 @@ import math
 from functools import cached_property
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -513,30 +513,61 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             reference_frame=self.world.root,
         ).pose
 
-    def build_plan(self, context: Context) -> Plan:
+    @property
+    def stages(self) -> list[Callable[[Context], Plan]]:
         """
-        Park the arms, drive to where the hand reaches the object, bring the arm there,
-        take the object, carry it to the receptacle along a way planned through the
-        kitchen's free space, and put it in, leaving the hand above it: whatever comes
-        next parks the arms first.
+        :return: Coming to the object, then taking it and putting it in the receptacle:
+            the arm trails its commands in the physics, and comes to rest between the
+            two, so that the hand creeps onto the object from where it waits for it.
+        """
+        return [self.coming_to_the_object, self.build_plan]
+
+    def coming_to_the_object(self, context: Context) -> Plan:
+        """
+        Park the arms, drive to where the hand reaches the object and bring the hand to
+        where it waits before taking it.
+
+        Where the arm also reaches over the receptacle is stood at if there is such a
+        place: an object held by the fingers alone slips out of them on a drive.
 
         :param context: The context to plan in.
         :return: The plan.
         """
-        driving = self.drive_to_where_the_hand_arrives(self.reaches_the_pre_grasp)
+        self.park_the_arms()
+        self.grasp_taken = self.grasp()
+        driving = self.drive_to_where_the_hand_arrives(
+            self.reaches_the_pre_grasp, preferred=self.can_let_go_over_the_receptacle
+        )
+        return sequential(
+            [
+                ParkArmsAction(self.robot.all_arms),
+                *driving,
+                *self.arm_motions_to(self.pre_grasp()),
+            ],
+            context=context,
+        ).plan
+
+    def build_plan(self, context: Context) -> Plan:
+        """
+        Take the object from where :meth:`coming_to_the_object` left the hand, carry it
+        to the receptacle along a way planned through the kitchen's free space, and put
+        it in, leaving the hand above it: whatever comes next parks the arms first.
+
+        Where to stand to let the object go is looked for as every stand is, with the
+        torso raised and the arms parked: with the hand out over the counter, every
+        stand touches the kitchen.
+
+        :param context: The context to plan in.
+        :return: The plan.
+        """
         self.grasp_taken = self.grasp()
         pick_up = self.pick_up_of(self.grasp_taken)
-        taking = [
-            ParkArmsAction(self.robot.all_arms),
-            *driving,
-            *self.arm_motions_to(self.pre_grasp()),
-            pick_up,
-        ]
-        pick_stand = self.robot.root.parent_connection.origin
-        place_stand = self.let_go_where_the_arm_reaches()
-        self.robot.root.parent_connection.origin = pick_stand
+        with self.world.reset_state_context():
+            self.raise_the_torso()
+            self.park_the_arms()
+            place_stand = self.let_go_where_the_arm_reaches()
         return sequential(
-            taking + self.drive_to(place_stand) + self.letting_the_object_go(),
+            [pick_up, *self.drive_to(place_stand), *self.letting_the_object_go()],
             context=context,
         ).plan
 
