@@ -33,7 +33,11 @@ from experiments.tiago_robocasa.pick_place import (
     PickPlaceCounterToSink,
     TiagoPickPlaceTask,
 )
+from experiments.tiago_robocasa.robocasa_environments import (
+    OrganizeSmallFruit as SmallFruitEnvironment,
+)
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
+from krrood.ormatic.utils import classproperty
 from experiments.tiago_robocasa.trials import Trials, parser_of, settings_from
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
 from semantic_digital_twin.semantic_annotations.semantic_annotations import CounterTop
@@ -509,6 +513,17 @@ class OrganizeVegetables(TiagoCompositeTask):
         ]
 
 
+class OrganizeSmallFruit(OrganizeVegetables):
+    """
+    Tiago puts each of two pieces of small fruit on the counter on a cutting board of
+    its own: :class:`OrganizeVegetables` with objects narrow enough for its hand.
+    """
+
+    @classproperty
+    def task_name(cls) -> str:
+        return SmallFruitEnvironment.__name__
+
+
 TASKS = {
     task.__name__: task
     for task in (
@@ -516,6 +531,7 @@ TASKS = {
         CupcakeCleanup,
         DefrostByCategory,
         OrganizeVegetables,
+        OrganizeSmallFruit,
     )
 }
 """
