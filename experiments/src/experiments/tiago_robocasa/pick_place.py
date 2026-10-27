@@ -165,14 +165,11 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     wherever over its floor it is let go, and every place costs the arm a solve.
     """
 
-    approach_from_above: float = 0.3
+    lift_off: float = 0.1
     """
-    How far above where the object is let go the hand comes in, in metres.
-
-    The way from where the object was picked up to the receptacle passes over whatever
-    else stands on the worktop -- a coffee machine, a kettle -- and a hand carried at
-    the height it will let go at sweeps the forearm through it. Coming in from above
-    that and dropping onto the place keeps the arm over everything.
+    How far the hand rises straight up off what it has let go, in metres: enough for
+    the fingers to clear the object, and little enough to stay within what the arm
+    reaches above a release it may already be at full stretch for.
     """
 
     places_to_try: int = 4
@@ -585,7 +582,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             so that the fingers do not sweep it along as they leave.
         """
         world_T_tool = self.release_tool_pose().to_np()
-        world_T_tool[2, 3] += self.approach_from_above
+        world_T_tool[2, 3] += self.lift_off
         return HomogeneousTransformationMatrix(
             world_T_tool, reference_frame=self.world.root
         ).pose
