@@ -1,3 +1,4 @@
+import copy
 import enum
 from abc import abstractmethod, ABC
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from krrood.entity_query_language.operators.causal import (
     AdjustmentCandidates,
     Cause,
     CauseEffectVariables,
+    InvalidDeclaredAdjustment,
     InterventionalRange,
     RegionRange,
     ScoredIntervention,
@@ -353,6 +355,14 @@ class ProbabilisticBackend(GenerativeBackend):
     unchecked.
     """
 
+    invalid_declared_adjustment: InvalidDeclaredAdjustment = field(
+        kw_only=True, default=InvalidDeclaredAdjustment.REFUSED
+    )
+    """
+    What a causal query does when the learned causal structure finds the variables
+    marked ``confounder`` invalid for a cause.
+    """
+
     def evaluate(self, expression: Evaluable) -> Iterable[T]:
         if isinstance(expression, ProbabilisticQuery):
             yield expression._resolve_(self.model_registry)
@@ -513,8 +523,8 @@ class ProbabilisticBackend(GenerativeBackend):
         Let the causal structure learned for the queried class choose, for every cause
         candidate, the variables its intervention adjusts for (see
         :meth:`adjustment_candidates`); or check the variables marked ``confounder``
-        against it. Does nothing without a :attr:`causal_structure_registry` or a
-        ``cause``.
+        against it, and repair them if :attr:`invalid_declared_adjustment` says so. Does
+        nothing without a :attr:`causal_structure_registry` or a ``cause``.
 
         :param parameters: The parameters extracted from *expression*, which record the
             chosen variables.
@@ -522,7 +532,7 @@ class ProbabilisticBackend(GenerativeBackend):
         :raises VariableNotInCausalGraph: If the cause or the effect has no node in the
             learned graph.
         :raises InvalidAdjustmentSet: If the variables marked ``confounder`` fail the
-            adjustment criterion in the learned graph.
+            adjustment criterion in the learned graph, and are not to be repaired.
         :raises EffectNotIdentified: If the learned graph identifies the effect by no
             set of the variables the query names; :meth:`interventional_range` answers
             an effect it identifies up to a few candidate sets.
@@ -535,19 +545,28 @@ class ProbabilisticBackend(GenerativeBackend):
         cause_effect = self._resolve_cause_and_effect_variables(parameters, expression)
         structure = self.causal_structure_registry.get_structure(parameters)
         graph = structure.selector.graph
+        declared = frozenset(
+            self._reference_in(graph, variable).node.name
+            for variable in parameters.search_confounder_variables
+        )
         for cause_variable in cause_effect.cause_variables:
-            if parameters.search_confounder_variables:
+            if (
+                declared
+                and self.invalid_declared_adjustment
+                is InvalidDeclaredAdjustment.REFUSED
+            ):
                 structure.selector.check_declared(
                     self._reference_in(graph, cause_variable).node.name,
                     self._reference_in(graph, cause_effect.effect_variable).node.name,
-                    frozenset(
-                        self._reference_in(graph, variable).node.name
-                        for variable in parameters.search_confounder_variables
-                    ),
+                    declared,
                 )
                 continue
             candidates = self.adjustment_candidates(
-                parameters, structure, cause_variable, cause_effect.effect_variable
+                parameters,
+                structure,
+                cause_variable,
+                cause_effect.effect_variable,
+                declared,
             )
             if not isinstance(candidates.identification, IdentifiedEffect):
                 raise EffectNotIdentified(
@@ -590,6 +609,7 @@ class ProbabilisticBackend(GenerativeBackend):
         structure: LearnedCausalStructure,
         cause_variable: random_events.variable.Variable,
         effect_variable: random_events.variable.Variable,
+        declared: frozenset[str] = frozenset(),
     ) -> AdjustmentCandidates:
         """
         Ask the learned structure what intervening on one cause adjusts for, among the
@@ -602,6 +622,8 @@ class ProbabilisticBackend(GenerativeBackend):
         :param structure: The structure learned for the queried class.
         :param cause_variable: The cause.
         :param effect_variable: The effect.
+        :param declared: The graph names of the variables marked ``confounder``, which
+            are kept as far as the graph allows.
         :return: What the structure says, with the variables of every candidate set.
         :raises VariableNotInCausalGraph: If the cause or the effect has no node in the
             learned graph.
@@ -622,7 +644,11 @@ class ProbabilisticBackend(GenerativeBackend):
             if node.level is NodeLevel.AGGREGATION_STATISTIC
         }
         identification = structure.selector.identify(
-            cause.node.name, effect.node.name, set(eligible), structure.training_rows
+            cause.node.name,
+            effect.node.name,
+            set(eligible),
+            structure.training_rows,
+            declared,
         )
         match identification:
             case IdentifiedEffect():
@@ -759,9 +785,9 @@ class ProbabilisticBackend(GenerativeBackend):
         :return: The effect condition's probability within the region.
         """
         if region is not None:
-            circuit, _ = circuit.truncated(
+            circuit = circuit.truncated(
                 region.fill_missing_variables_pure(circuit.variables)
-            )
+            ).distribution
             if circuit is None:
                 return 0.0
         return float(
@@ -986,14 +1012,11 @@ class ProbabilisticBackend(GenerativeBackend):
         # `.truncated()` fills in missing variables *in place* on the event it is
         # given, so reusing the same event object across several `.truncated()` calls
         # (each on a differently-shaped circuit) would leak one call's variables into
-        # the next -- pass a fresh copy each time. `Event` defines its own
-        # no-argument `__deepcopy__`, incompatible with the `copy` module's
-        # memo-passing convention, so it is called directly rather than through
-        # `copy.deepcopy`.
+        # the next -- pass a fresh copy each time.
         if effect_truncation_event:
-            effect_truncated, _ = interventional.truncated(
-                effect_truncation_event.__deepcopy__()
-            )
+            effect_truncated = interventional.truncated(
+                copy.deepcopy(effect_truncation_event)
+            ).distribution
         else:
             effect_truncated = interventional
         if effect_truncated is None:
@@ -1003,20 +1026,19 @@ class ProbabilisticBackend(GenerativeBackend):
         if best_region is None:
             return None
 
-        region_only, region_prior_probability = interventional.truncated(
+        region = interventional.truncated(
             best_region.fill_missing_variables_pure(interventional.variables)
         )
-        if region_only is None or region_prior_probability <= 0.0:
+        if region.distribution is None or region.probability <= 0.0:
             return None
 
-        if effect_truncation_event:
-            narrowed, effect_given_region_probability = region_only.truncated(
-                effect_truncation_event.__deepcopy__()
-            )
-        else:
-            narrowed, effect_given_region_probability = region_only, 1.0
-        if narrowed is None or effect_given_region_probability <= 0.0:
+        if not effect_truncation_event:
+            return ScoredIntervention(cause_variable, 1.0, region.distribution)
+
+        narrowed = region.distribution.truncated(copy.deepcopy(effect_truncation_event))
+        if narrowed.distribution is None or narrowed.probability <= 0.0:
+
             return None
         return ScoredIntervention(
-            cause_variable, float(effect_given_region_probability), narrowed
+            cause_variable, float(narrowed.probability), narrowed.distribution
         )

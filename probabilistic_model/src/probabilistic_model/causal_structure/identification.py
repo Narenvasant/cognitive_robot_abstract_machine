@@ -240,6 +240,7 @@ class AdjustmentSelector:
         effect: str,
         eligible: set[str],
         training_rows: pd.DataFrame | None = None,
+        declared: frozenset[str] = frozenset(),
     ) -> Identification:
         """
         :param cause: The name of the cause.
@@ -247,17 +248,25 @@ class AdjustmentSelector:
         :param eligible: The names of the variables the model can adjust for.
         :param training_rows: The rows the model was fitted on, whose support ranks the
             valid adjustment sets.
-        :return: The best valid adjustment set; else, if the member graphs disagree on
-            the cause's parents, one candidate per parent set; else a refusal.
+        :param declared: The names of the variables declared to adjust for, which are
+            kept as far as the graph allows.
+        :return: The declared set if it is valid; else the best valid adjustment set
+            among those dropping the fewest declared variables; else, if the member
+            graphs disagree on the cause's parents, one candidate per parent set; else a
+            refusal.
         """
         if not self.graph.has_member_graphs:
             return UnidentifiedEffect(UnidentifiedReason.NO_MEMBER_GRAPH)
         checks = self.checks_for(cause, effect)
+        if declared and all(check.failure_reason(declared) is None for check in checks):
+            return IdentifiedEffect(declared)
         forbidden = set().union(*(check.forbidden_nodes for check in checks))
+        keepable = declared - {cause, effect} - forbidden
         valid = [
             adjustment
             for adjustment in self.candidate_adjustments(
-                sorted(eligible - {cause, effect} - forbidden)
+                sorted(eligible - {cause, effect} - forbidden - declared),
+                sorted(keepable),
             )
             if all(check.failure_reason(adjustment) is None for check in checks)
         ]
@@ -266,6 +275,7 @@ class AdjustmentSelector:
                 min(
                     valid,
                     key=lambda adjustment: (
+                        len(declared - adjustment),
                         self.under_supported_cells(cause, adjustment, training_rows),
                         len(adjustment),
                         sorted(adjustment),
@@ -301,16 +311,26 @@ class AdjustmentSelector:
             for member in self.graph.member_graphs()
         ]
 
-    def candidate_adjustments(self, pool: list[str]) -> list[frozenset[str]]:
+    def candidate_adjustments(
+        self, pool: list[str], keepable: list[str]
+    ) -> list[frozenset[str]]:
         """
-        :param pool: The names that may be adjusted for, sorted.
-        :return: Every set of at most :attr:`maximum_adjustment_size` of them, the
-            smallest first, sets of one size in the order of their sorted names.
+        :param pool: The names that may be added to the set, sorted.
+        :param keepable: The declared names that may be kept in the set, sorted.
+        :return: Every set of some of the keepable names and at most
+            :attr:`maximum_adjustment_size` names of the pool, those of fewer pool names
+            first, sets of one size in the order of their sorted names.
         """
+        kept_sets = [
+            frozenset(kept)
+            for size in range(len(keepable), -1, -1)
+            for kept in itertools.combinations(keepable, size)
+        ]
         return [
-            frozenset(adjustment)
+            kept | frozenset(added)
             for size in range(self.maximum_adjustment_size + 1)
-            for adjustment in itertools.combinations(pool, size)
+            for added in itertools.combinations(pool, size)
+            for kept in kept_sets
         ]
 
     def under_supported_cells(

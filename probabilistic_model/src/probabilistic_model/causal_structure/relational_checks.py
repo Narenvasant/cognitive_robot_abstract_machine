@@ -6,7 +6,7 @@ aggregation statistics.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
@@ -47,6 +47,72 @@ class ExampleToPartDependence:
     """
     The permutation p-value of the dependence.
     """
+
+
+# %% the tables the check reads
+
+
+@dataclass
+class CodedTables:
+    """
+    An instance table and one of its part tables, cut into levels.
+    """
+
+    example_codes: pd.DataFrame
+    """
+    One row of levels per instance, over its attributes and statistics.
+    """
+
+    part_codes: pd.DataFrame
+    """
+    One row of levels per part, over the part's own attributes.
+    """
+
+    positions: np.ndarray
+    """
+    The position of each part's instance among the instances.
+    """
+
+    statistics: list[str]
+    """
+    The names of the statistics both tables carry.
+    """
+
+    @property
+    def varying_example_attributes(self) -> list[str]:
+        """
+        :return: The instance attributes, other than the statistics, that take more than
+            one level.
+        """
+        return [
+            column
+            for column in self.example_codes.columns
+            if column not in self.statistics
+            and self.example_codes[column].nunique() > 1
+        ]
+
+    @property
+    def varying_part_attributes(self) -> list[str]:
+        """
+        :return: The part attributes that take more than one level.
+        """
+        return [
+            column
+            for column in self.part_codes.columns
+            if self.part_codes[column].nunique() > 1
+        ]
+
+    def strata_given(self, conditioning: list[str]) -> np.ndarray:
+        """
+        :param conditioning: Names of instance columns.
+        :return: One integer per instance, the same for instances whose levels agree on
+            the columns.
+        """
+        if not conditioning:
+            return np.zeros(len(self.example_codes), dtype=int)
+        return pd.factorize(pd.MultiIndex.from_frame(self.example_codes[conditioning]))[
+            0
+        ]
 
 
 # %% the check
@@ -110,6 +176,58 @@ class ExampleToPartCheck:
         :return: The dependences between an instance attribute and a part attribute
             given the statistics shared by both tables.
         """
+        tables = self.coded(example_rows, part_rows)
+        random_state = np.random.default_rng(self.random_seed)
+        return [
+            ExampleToPartDependence(example_attribute, part_attribute, part, p_value)
+            for example_attribute in tables.varying_example_attributes
+            for part_attribute in tables.varying_part_attributes
+            if (
+                p_value := self.p_value(
+                    tables, example_attribute, part_attribute, [], random_state
+                )
+            )
+            < self.significance_level
+        ]
+
+    def dependences_given_another_attribute(
+        self, example_rows: pd.DataFrame, part_rows: pd.DataFrame, part: str
+    ) -> list[ExampleToPartDependence]:
+        """
+        :param example_rows: One row per instance.
+        :param part_rows: One row per part, as :meth:`rejected_pairs` takes it.
+        :param part: The part's name.
+        :return: The dependences of :meth:`rejected_pairs` that remain given the
+            statistics and any one other instance attribute that also depends on the
+            part attribute, each with the largest p-value it was tested with.
+        """
+        rejected = self.rejected_pairs(example_rows, part_rows, part)
+        tables = self.coded(example_rows, part_rows)
+        random_state = np.random.default_rng(self.random_seed)
+        remaining = []
+        for dependence in rejected:
+            p_values = [dependence.p_value] + [
+                self.p_value(
+                    tables,
+                    dependence.example_attribute,
+                    dependence.part_attribute,
+                    [other.example_attribute],
+                    random_state,
+                )
+                for other in rejected
+                if other.part_attribute == dependence.part_attribute
+                and other.example_attribute != dependence.example_attribute
+            ]
+            if max(p_values) < self.significance_level:
+                remaining.append(replace(dependence, p_value=max(p_values)))
+        return remaining
+
+    def coded(self, example_rows: pd.DataFrame, part_rows: pd.DataFrame) -> CodedTables:
+        """
+        :param example_rows: One row per instance.
+        :param part_rows: One row per part, as :meth:`rejected_pairs` takes it.
+        :return: Both tables cut into levels.
+        """
         statistics = [
             column for column in part_rows.columns if column in example_rows.columns
         ]
@@ -122,54 +240,48 @@ class ExampleToPartCheck:
             if column not in statistics
             and column != TrainingTableColumn.EXAMPLE_POSITION
         ]
-        example_codes = self.discretization.apply(
-            example_rows, example_attributes + statistics
+        return CodedTables(
+            example_codes=self.discretization.apply(
+                example_rows, example_attributes + statistics
+            ),
+            part_codes=self.discretization.apply(part_rows, part_attributes),
+            positions=part_rows[TrainingTableColumn.EXAMPLE_POSITION].to_numpy(),
+            statistics=statistics,
         )
-        part_codes = self.discretization.apply(part_rows, part_attributes)
-        positions = part_rows[TrainingTableColumn.EXAMPLE_POSITION].to_numpy()
-        strata = (
-            self.strata_of(example_codes[statistics])
-            if statistics
-            else np.zeros(len(example_rows), dtype=int)
-        )
-        random_state = np.random.default_rng(self.random_seed)
-        rejected = []
-        for example_attribute in example_attributes:
-            if example_codes[example_attribute].nunique() < 2:
-                continue
-            values = example_codes[example_attribute].to_numpy()
-            permutations = [
-                self.permuted_within(values, strata, random_state)
-                for _ in range(self.permutation_count)
-            ]
-            for part_attribute in part_attributes:
-                part_values = part_codes[part_attribute].to_numpy()
-                if len(np.unique(part_values)) < 2:
-                    continue
-                observed = self.g_squared(
-                    values[positions], part_values, strata[positions]
-                )
-                exceeding = sum(
-                    self.g_squared(permuted[positions], part_values, strata[positions])
-                    >= observed
-                    for permuted in permutations
-                )
-                p_value = (1 + exceeding) / (1 + self.permutation_count)
-                if p_value < self.significance_level:
-                    rejected.append(
-                        ExampleToPartDependence(
-                            example_attribute, part_attribute, part, p_value
-                        )
-                    )
-        return rejected
 
-    @staticmethod
-    def strata_of(codes: pd.DataFrame) -> np.ndarray:
+    def p_value(
+        self,
+        tables: CodedTables,
+        example_attribute: str,
+        part_attribute: str,
+        conditioning: list[str],
+        random_state: np.random.Generator,
+    ) -> float:
         """
-        :param codes: Integer columns.
-        :return: One integer per row, the same for rows with the same values.
+        :param tables: The coded tables.
+        :param example_attribute: The instance attribute.
+        :param part_attribute: The part attribute.
+        :param conditioning: The instance attributes conditioned on besides the
+            statistics.
+        :param random_state: Source of the permutations.
+        :return: The permutation p-value of the two's dependence given the statistics
+            and the conditioning attributes.
         """
-        return pd.factorize(pd.MultiIndex.from_frame(codes))[0]
+        strata = tables.strata_given(tables.statistics + conditioning)
+        values = tables.example_codes[example_attribute].to_numpy()
+        part_values = tables.part_codes[part_attribute].to_numpy()
+        part_strata = strata[tables.positions]
+        observed = self.g_squared(values[tables.positions], part_values, part_strata)
+        exceeding = sum(
+            self.g_squared(
+                self.permuted_within(values, strata, random_state)[tables.positions],
+                part_values,
+                part_strata,
+            )
+            >= observed
+            for _ in range(self.permutation_count)
+        )
+        return (1 + exceeding) / (1 + self.permutation_count)
 
     @staticmethod
     def permuted_within(

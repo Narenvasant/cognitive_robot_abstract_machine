@@ -11,6 +11,7 @@ resemble) so causal-specific code has its own, easily reviewable surface, mirror
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing_extensions import TYPE_CHECKING, Any, Iterable, List, Optional, Type, Self
 
 import random_events.variable
@@ -216,6 +217,23 @@ class ScoredIntervention:
     primary cause.
 
     Of the circuit type the causal circuit was read from.
+    """
+
+
+class InvalidDeclaredAdjustment(StrEnum):
+    """
+    What a causal query does when the causal structure learned for its class finds the
+    variables marked ``confounder`` invalid for a cause.
+    """
+
+    REFUSED = "refused"
+    """
+    The query raises instead of answering.
+    """
+
+    REPAIRED = "repaired"
+    """
+    The query adjusts for the valid set that keeps the most of them instead.
     """
 
 

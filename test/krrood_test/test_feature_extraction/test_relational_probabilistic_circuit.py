@@ -802,11 +802,9 @@ def test_representative_value_returns_a_point_not_a_region():
     )
 
     assert representative_value == {variable: 2.0}
-    conditioning_result, log_likelihood = branch.distribution.log_conditional(
-        representative_value
-    )
-    assert conditioning_result is not None
-    assert log_likelihood > -np.inf
+    conditioning = branch.distribution.log_conditional(representative_value)
+    assert conditioning.distribution is not None
+    assert conditioning.log_likelihood > -np.inf
 
 
 def test_node_local_branch_log_probabilities_reflect_each_nodes_own_correlation():
