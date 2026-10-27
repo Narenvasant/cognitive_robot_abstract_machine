@@ -265,8 +265,12 @@ What the backend does with the learned structure:
 
 | The query marks | Without a structure registry | With one |
 |---|---|---|
-| `cause`, `confounder`, `causes_effect` | backdoor adjustment with the marked set, unchecked | the marked set is checked; a set that fails the adjustment criterion raises {py:class}`~probabilistic_model.causal_structure.exceptions.InvalidAdjustmentSet` |
+| `cause`, `confounder`, `causes_effect` | backdoor adjustment with the marked set, unchecked | the marked set is checked; a set that fails the adjustment criterion raises {py:class}`~probabilistic_model.causal_structure.exceptions.InvalidAdjustmentSet`, or, with `invalid_declared_adjustment=InvalidDeclaredAdjustment.REPAIRED`, is replaced by the valid set that keeps the most of it |
 | `cause`, `causes_effect` | an empty adjustment set, which is plain conditioning | the set is chosen from the graph, among the variables the query names and the aggregation statistics; {py:class}`~krrood.entity_query_language.exceptions.EffectNotIdentified` if the graph identifies the effect by no such set |
+
+A repaired set keeps every marked variable the graph allows and adds what the graph
+says is missing, so a correct declaration survives a graph that misses an edge, and a
+declared proxy of the confounder gets the confounder added.
 
 When the graph leaves the direction of an edge at the cause open, the effect is only
 partially identified: `backend.interventional_range(query)` then returns, per region of
