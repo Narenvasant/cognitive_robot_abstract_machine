@@ -29,10 +29,10 @@ The two packages answer different questions and work together.
 |---|---|---|
 | answers | *how strong* is the effect of a cause, given the variables to adjust for | *which* variables to adjust for, and whether the effect can be identified at all |
 | central class | `CausalCircuit`, a fitted circuit with its cause and effect variables | `CausalGraph` and `AdjustmentSelector`, learned from the circuit's training rows |
-| input | a fitted circuit, a cause, an effect, an adjustment set | the training rows, and background knowledge such as temporal order |
+| input | a fitted circuit, a cause, an effect, an adjustment set | the training rows, and domain causal knowledge such as temporal order |
 | output | the interventional circuit $P(Y \mid do(X))$ by backdoor adjustment | a valid adjustment set, a few candidate sets, or a refusal |
 | checks | support determinism: is the circuit able to answer the query exactly | the adjustment criterion: does adjusting for the set answer the causal question |
-| what it trusts | the adjustment set it is handed | the independences in the data and the background knowledge |
+| what it trusts | the adjustment set it is handed | the independences in the data and the domain causal knowledge |
 
 A `CausalCircuit` computes the backdoor formula exactly for whatever adjustment set it
 is given, and has no way to tell whether that set is the right one: a missing confounder
@@ -73,7 +73,11 @@ supplies or checks that set. Estimation stays in the circuit; nothing in
     their source.
 - `relational_checks.ExampleToPartCheck` tests the independence a relational circuit
   assumes: an instance's attributes reach its parts' attributes only through the
-  aggregation statistics.
+  aggregation statistics. Given to `RelationalCausalStructureLearner` as its
+  `example_to_part_check`, every pair that stays dependent given the statistics and
+  any one other instance attribute becomes an edge of the learned graph, from the
+  instance attribute to the part attribute unless the tiers place the part attribute
+  first.
 
 ## Using it from a query
 
@@ -93,7 +97,7 @@ ancestor of the effect. See the EQL causality guide for examples.
 
 Learning the structure from observational data has limits:
 
-- **Direction.** Without background knowledge only the edges into colliders are
+- **Direction.** Without domain causal knowledge only the edges into colliders are
   oriented. Temporal order, such as "the environment is chosen before the friction",
   orients most of the rest.
 - **Deterministic copies.** A variable computed from another breaks the independence
@@ -105,7 +109,8 @@ Learning the structure from observational data has limits:
   recorded.
 - **The relational assumption.** A relational circuit lets an instance's attributes
   affect its parts only through the aggregation statistics, and the relational learner
-  follows it. `ExampleToPartCheck` reports where the data disagrees.
+  follows it unless it is given an `ExampleToPartCheck`, which adds the edges where the
+  data disagrees.
 - **Interventions on counts.** Setting an aggregation statistic is ambiguous once it
   has parents among the part attributes, since many configurations of the parts give
   the same count (Spirtes and Scheines, 2004).

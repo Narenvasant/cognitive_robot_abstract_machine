@@ -23,6 +23,7 @@ from probabilistic_model.causal_structure.learning import (
     CausalStructureLearner,
     RelationalCausalStructureLearner,
 )
+from probabilistic_model.causal_structure.relational_checks import ExampleToPartCheck
 from probabilistic_model.probabilistic_circuit.relational.relational_probabilistic_circuit import (
     RelationalProbabilisticCircuit,
 )
@@ -261,3 +262,46 @@ def test_the_learned_structure_reads_the_relations_the_diagram_holds_now(
     structure.relations.replace_relations([])
 
     assert structure.selector.graph.edges() == []
+
+
+# %% edges between an instance and its parts
+
+
+def test_instance_to_part_edges_are_the_dependences_the_check_keeps(
+    relational_probabilistic_circuit, scenario, class_diagram
+):
+    check = ExampleToPartCheck(permutation_count=49)
+    graph = (
+        RelationalCausalStructureLearner(class_diagram, example_to_part_check=check)
+        .learn(relational_probabilistic_circuit, list(scenario))
+        .selector.graph
+    )
+    tables = relational_probabilistic_circuit.training_tables(list(scenario))
+    levels = {node.name: node.level for node in graph.nodes()}
+
+    assert {
+        frozenset((edge.first, edge.second))
+        for edge in graph.edges()
+        if (levels[edge.first] is NodeLevel.PART_ATTRIBUTE)
+        != (levels[edge.second] is NodeLevel.PART_ATTRIBUTE)
+        and NodeLevel.AGGREGATION_STATISTIC
+        not in (levels[edge.first], levels[edge.second])
+    } == {
+        frozenset(
+            (
+                dependence.example_attribute,
+                f"{relational_probabilistic_circuit.class_.__name__}.objects."
+                f"{dependence.part_attribute}",
+            )
+        )
+        for dependence in check.dependences_given_another_attribute(
+            tables.example_rows,
+            tables.part_tables["objects"].rows,
+            tables.part_tables["objects"].example_positions,
+            "objects",
+            RelationalCausalStructureLearner.adjacent_part_attributes(
+                graph.edges(),
+                f"{relational_probabilistic_circuit.class_.__name__}.objects.",
+            ),
+        )
+    }

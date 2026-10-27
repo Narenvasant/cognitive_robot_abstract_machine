@@ -41,6 +41,24 @@ def tables(
     """
     random_state = np.random.default_rng(seed)
     warm = random_state.integers(0, 2, instance_count)
+    room_tables = parts_of(warm, attribute_drives_parts, random_state)
+    room_tables.example_rows = room_tables.example_rows.drop(columns=["Room.sunny"])
+    return room_tables
+
+
+def parts_of(
+    warm: np.ndarray, attribute_drives_parts: bool, random_state: np.random.Generator
+) -> RoomTables:
+    """
+    :param warm: Each instance's ``warm`` attribute.
+    :param attribute_drives_parts: Whether ``warm`` sets the parts' ``wet`` attribute
+        directly, not through the count.
+    :param random_state: Source of randomness.
+    :return: One row per instance, with ``warm``, ``sunny``, which reads ``warm`` wrong
+        a quarter of the time, and the count of its parts; and one row per part, with
+        the count and ``wet``.
+    """
+    instance_count = len(warm)
     part_count = random_state.integers(2, 5, instance_count)
     part_rows, example_positions = [], []
     for position in range(instance_count):
@@ -53,8 +71,11 @@ def tables(
                 }
             )
             example_positions.append(position)
+    sunny = warm ^ (random_state.random(instance_count) < 0.25)
     return RoomTables(
-        pd.DataFrame({"Room.warm": warm, "Room.count()": part_count}),
+        pd.DataFrame(
+            {"Room.warm": warm, "Room.sunny": sunny, "Room.count()": part_count}
+        ),
         pd.DataFrame(part_rows),
         example_positions,
     )
@@ -88,3 +109,62 @@ def test_attribute_independent_of_parts_is_kept():
         )
         == []
     )
+
+
+# %% the dependences that remain given another attribute
+
+
+def test_proxy_of_the_driving_attribute_is_dropped_given_it():
+    random_state = np.random.default_rng(0)
+    room_tables = parts_of(random_state.integers(0, 2, 300), True, random_state)
+    check = ExampleToPartCheck()
+
+    assert {
+        dependence.example_attribute
+        for dependence in check.rejected_pairs(
+            room_tables.example_rows,
+            room_tables.part_rows,
+            room_tables.example_positions,
+            "parts",
+        )
+    } == {"Room.warm", "Room.sunny"}
+    assert [
+        dependence.example_attribute
+        for dependence in check.dependences_given_another_attribute(
+            room_tables.example_rows,
+            room_tables.part_rows,
+            room_tables.example_positions,
+            "parts",
+            {},
+        )
+    ] == ["Room.warm"]
+
+
+def test_part_attribute_reached_through_another_is_dropped_given_it():
+    random_state = np.random.default_rng(0)
+    room_tables = parts_of(random_state.integers(0, 2, 300), True, random_state)
+    part_rows = room_tables.part_rows
+    part_rows["dripping"] = part_rows["wet"] ^ (
+        random_state.random(len(part_rows)) < 0.1
+    )
+    check = ExampleToPartCheck()
+
+    assert ("Room.warm", "dripping") in {
+        (dependence.example_attribute, dependence.part_attribute)
+        for dependence in check.rejected_pairs(
+            room_tables.example_rows,
+            part_rows,
+            room_tables.example_positions,
+            "parts",
+        )
+    }
+    assert [
+        (dependence.example_attribute, dependence.part_attribute)
+        for dependence in check.dependences_given_another_attribute(
+            room_tables.example_rows,
+            part_rows,
+            room_tables.example_positions,
+            "parts",
+            {"wet": {"dripping"}, "dripping": {"wet"}},
+        )
+    ] == [("Room.warm", "wet")]
