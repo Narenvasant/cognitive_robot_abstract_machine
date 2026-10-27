@@ -2,6 +2,7 @@ import pytest
 
 from probabilistic_model.causal_structure.graph import NodeLevel
 from probabilistic_model.causal_structure.learning import RelationalStructureLearner
+from probabilistic_model.causal_structure.relational_checks import ExampleToPartCheck
 from probabilistic_model.probabilistic_circuit.relational.relational_probabilistic_circuit import (
     RelationalProbabilisticCircuit,
     TrainingTableColumn,
@@ -91,3 +92,39 @@ def test_statistics_are_aggregation_nodes(relational_probabilistic_circuit, scen
         for node in graph.nodes
         if node.level is NodeLevel.AGGREGATION_STATISTIC
     } == {variable.name for variable in template.latent_variables}
+
+
+# %% edges between an instance and its parts
+
+
+def test_instance_to_part_edges_are_the_dependences_the_check_keeps(
+    relational_probabilistic_circuit, scenario
+):
+    check = ExampleToPartCheck(permutation_count=49)
+    graph = (
+        RelationalStructureLearner(example_to_part_check=check)
+        .learn(relational_probabilistic_circuit, list(scenario))
+        .selector.graph
+    )
+    tables = relational_probabilistic_circuit.training_tables(list(scenario))
+    levels = {node.name: node.level for node in graph.nodes}
+
+    assert {
+        frozenset((edge.first, edge.second))
+        for edge in graph.edges
+        if (levels[edge.first] is NodeLevel.PART_ATTRIBUTE)
+        != (levels[edge.second] is NodeLevel.PART_ATTRIBUTE)
+        and NodeLevel.AGGREGATION_STATISTIC
+        not in (levels[edge.first], levels[edge.second])
+    } == {
+        frozenset(
+            (
+                dependence.example_attribute,
+                f"{relational_probabilistic_circuit.class_.__name__}.objects."
+                f"{dependence.part_attribute}",
+            )
+        )
+        for dependence in check.dependences_given_another_attribute(
+            tables.example_rows, tables.part_rows["objects"], "objects"
+        )
+    }

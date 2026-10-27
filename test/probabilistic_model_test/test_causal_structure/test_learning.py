@@ -106,3 +106,29 @@ def test_continuous_columns_are_tested_after_discretization():
         ("season", "ice_cream_sales"),
         ("season", "drowning_incidents"),
     }
+
+
+# %% orienting an edge by the tiers
+
+
+@pytest.mark.parametrize(
+    "first, second, edge",
+    [
+        ("B", "A", GraphEdge.directed("A", "B")),
+        ("A", "B", GraphEdge.directed("A", "B")),
+        ("B", "C", GraphEdge.undirected("B", "C")),
+        ("A", "D", GraphEdge.undirected("A", "D")),
+    ],
+    ids=[
+        "later_first_points_back",
+        "earlier_first_points_on",
+        "same_tier_stays_undirected",
+        "variable_without_tier_stays_undirected",
+    ],
+)
+def test_edge_is_directed_as_the_tiers_order_its_ends(
+    first: str, second: str, edge: GraphEdge
+):
+    knowledge = BackgroundKnowledge(tiers=[["A"], ["B", "C"]])
+
+    assert knowledge.edge_between(first, second) == edge
