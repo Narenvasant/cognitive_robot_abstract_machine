@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import networkx
 import numpy as np
 from krrood.entity_query_language.backends import ProbabilisticBackend
+from krrood.entity_query_language.operators.causal import InvalidDeclaredAdjustment
 from krrood.parametrization.causal_structure_registries import (
     DictCausalStructureRegistry,
 )
@@ -38,6 +39,7 @@ from probabilistic_model.causal_structure.learning import (
     LearnedCausalStructure,
     RelationalStructureLearner,
 )
+from probabilistic_model.causal_structure.relational_checks import ExampleToPartCheck
 from random_events.variable import Continuous
 from typing_extensions import (
     Any,
@@ -180,10 +182,52 @@ class RegionAnswer:
     The answer adjusting for the learned set; ``None`` if the learned arm refused.
     """
 
+    repaired: Optional[float]
+    """
+    The answer adjusting for the declared set as the learned graph repairs it; ``None``
+    if the repaired arm refused.
+    """
+
     unadjusted: float
     """
     The answer adjusting for nothing.
     """
+
+
+@dataclass
+class StructureAnswer:
+    """
+    A question answered with the set a learned structure gives.
+    """
+
+    adjustment: Optional[List[str]] = None
+    """
+    The names of the variables adjusted for; ``None`` if the structure gave no set.
+    """
+
+    refusal: Optional[str] = None
+    """
+    Why there is no answer, if there is none.
+    """
+
+    answers: Dict[str, InterventionalEffect] = field(default_factory=dict)
+    """
+    Per cause region, the answer.
+    """
+
+    seconds_to_choose: float = 0.0
+    """
+    How long the structure took to give the set.
+    """
+
+    def probability_in(self, region: str) -> Optional[float]:
+        """
+        :param region: A cause region, written out.
+        :return: The effect's probability under it; ``None`` without an answer there.
+        """
+        if region not in self.answers:
+            return None
+        return self.answers[region].adjusted_probability
 
 
 @dataclass
@@ -230,6 +274,22 @@ class QuestionResult:
     declared_refusal: Optional[str] = None
     """
     Why the declared arm gave no answer, if it did not.
+    """
+
+    repaired_set: Optional[List[str]] = None
+    """
+    The variables of the declared set as the learned graph repairs it, by name;
+    ``None`` if it refused.
+    """
+
+    repaired_refusal: Optional[str] = None
+    """
+    Why the repaired arm gave no answer, if it did not.
+    """
+
+    repaired_valid: Optional[bool] = None
+    """
+    Whether the repaired set meets the adjustment criterion in the true graph.
     """
 
     declared_valid: Optional[bool] = None
@@ -348,7 +408,7 @@ class StructureStudy:
     The model and its settings, which also knows its graph.
     """
 
-    cases: Sequence[CausalQueryCase]
+    cases: list[CausalQueryCase]
     """
     The questions.
     """
@@ -358,7 +418,7 @@ class StructureStudy:
     What the learner is told in advance.
     """
 
-    example_counts: Sequence[int] = (400, 1000)
+    example_counts: tuple[int, ...] = (400, 1000)
     """
     How many examples each fit draws.
     """
@@ -366,6 +426,15 @@ class StructureStudy:
     repeat_count: int = 3
     """
     How many independent samples are drawn per setting and size.
+    """
+
+    learner: RelationalStructureLearner = field(
+        default_factory=lambda: RelationalStructureLearner(
+            example_to_part_check=ExampleToPartCheck()
+        )
+    )
+    """
+    What learns the causal graph from each fit.
     """
 
     min_region_support: int = 10
@@ -419,7 +488,7 @@ class StructureStudy:
         pipeline = RelationalPipeline(domain=self.domain)
         pipeline.fit(examples)
         started = time.perf_counter()
-        structure = RelationalStructureLearner().learn(
+        structure = self.learner.learn(
             pipeline.plain_model, pipeline._training_rows(), self.knowledge
         )
         seconds_to_learn = time.perf_counter() - started
@@ -457,7 +526,8 @@ class StructureStudy:
         repeat: int,
     ) -> QuestionResult:
         """
-        Answer one question with the declared set, the learned set and no set.
+        Answer one question with the declared set, the learned set, the declared set as
+        the learned graph repairs it, and no set.
         """
         graph = structure.selector.graph
         declared_parameters = UnderspecifiedParameters(case.build())
@@ -485,34 +555,26 @@ class StructureStudy:
         if isinstance(declared, str):
             result.declared_refusal = declared
             declared = {}
-        learned_parameters = UnderspecifiedParameters(case.build())
-        learned_parameters.search_confounder_variables.clear()
-        backend = ProbabilisticBackend(
-            model_registry=pipeline.registry,
-            causal_structure_registry=DictCausalStructureRegistry(
-                {self.domain.example_class: structure}
-            ),
+        learned = self.answer_with_structure(
+            pipeline, structure, case, keeps_declared=False
         )
-        started = time.perf_counter()
-        choice = self.call(
-            lambda: backend.choose_adjustment_sets(learned_parameters, case.build())
+        result.seconds_to_choose = learned.seconds_to_choose
+        result.learned_set, result.learned_refusal = learned.adjustment, learned.refusal
+        repaired = self.answer_with_structure(
+            pipeline, structure, case, keeps_declared=True
         )
-        result.seconds_to_choose = time.perf_counter() - started
-        learned: Dict[str, InterventionalEffect] | str
-        if isinstance(choice, str):
-            result.learned_refusal = choice
-            learned = {}
-        else:
-            [learned_cause] = learned_parameters.search_cause_variables
-            adjustment = learned_parameters.adjustment_variables_of(learned_cause)
-            result.learned_set = [variable.name for variable in adjustment]
+        result.repaired_set, result.repaired_refusal = (
+            repaired.adjustment,
+            repaired.refusal,
+        )
+        if result.learned_set is not None:
             result.learned_valid = self.valid_in_truth(
                 graph, true_dag, cause.name, effect.name, result.learned_set
             )
-            learned = self.answers(pipeline, case, learned_parameters, adjustment)
-            if isinstance(learned, str):
-                result.learned_refusal = learned
-                learned = {}
+        if result.repaired_set is not None:
+            result.repaired_valid = self.valid_in_truth(
+                graph, true_dag, cause.name, effect.name, result.repaired_set
+            )
         unadjusted = self.answers(
             pipeline, case, declared_parameters, [], adjusted=False
         )
@@ -533,15 +595,56 @@ class StructureStudy:
                         if region in declared
                         else None
                     ),
-                    learned=(
-                        learned[region].adjusted_probability
-                        if region in learned
-                        else None
-                    ),
+                    learned=learned.probability_in(region),
+                    repaired=repaired.probability_in(region),
                     unadjusted=effect_answer.naive_probability,
                 )
             )
         return result
+
+    def answer_with_structure(
+        self,
+        pipeline: RelationalPipeline,
+        structure: LearnedCausalStructure,
+        case: CausalQueryCase,
+        keeps_declared: bool,
+    ) -> StructureAnswer:
+        """
+        :param keeps_declared: Whether the declared set is kept and repaired by the
+            learned graph, instead of ignored and the set chosen from the graph alone.
+        :return: The question answered with the set the learned structure gives.
+        """
+        parameters = UnderspecifiedParameters(case.build())
+        if not keeps_declared:
+            parameters.search_confounder_variables.clear()
+        backend = ProbabilisticBackend(
+            model_registry=pipeline.registry,
+            causal_structure_registry=DictCausalStructureRegistry(
+                {self.domain.example_class: structure}
+            ),
+            invalid_declared_adjustment=InvalidDeclaredAdjustment.REPAIRED,
+        )
+        started = time.perf_counter()
+        choice = self.call(
+            lambda: backend.choose_adjustment_sets(parameters, case.build())
+        )
+        seconds_to_choose = time.perf_counter() - started
+        if isinstance(choice, str):
+            return StructureAnswer(refusal=choice, seconds_to_choose=seconds_to_choose)
+        [cause] = parameters.search_cause_variables
+        adjustment = parameters.adjustment_variables_of(cause)
+        answers = self.answers(pipeline, case, parameters, adjustment)
+        if isinstance(answers, str):
+            return StructureAnswer(
+                adjustment=[variable.name for variable in adjustment],
+                refusal=answers,
+                seconds_to_choose=seconds_to_choose,
+            )
+        return StructureAnswer(
+            adjustment=[variable.name for variable in adjustment],
+            answers=answers,
+            seconds_to_choose=seconds_to_choose,
+        )
 
     def answers(
         self,

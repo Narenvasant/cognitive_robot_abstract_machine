@@ -119,7 +119,7 @@ def main() -> None:
     results = {}
     for name in arguments.studies:
         study = {"clutter": clutter_study, "scene": scene_study}[name](
-            example_counts=arguments.example_counts, repeat_count=arguments.repeats
+            example_counts=tuple(arguments.example_counts), repeat_count=arguments.repeats
         )
         if arguments.settings is not None:
             study.truth.settings = study.truth.settings[: arguments.settings]

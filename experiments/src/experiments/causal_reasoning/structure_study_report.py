@@ -35,13 +35,14 @@ def load(paths: List[Path]) -> Dict[str, Dict[str, List[Any]]]:
 def errors(question: Dict[str, Any], arm: str) -> List[float]:
     """
     :param question: One question row.
-    :param arm: ``declared``, ``learned`` or ``unadjusted``.
-    :return: The absolute error of every scored region the arm answered.
+    :param arm: ``declared``, ``learned``, ``repaired`` or ``unadjusted``.
+    :return: The absolute error of every scored region the arm answered; none for an
+        arm the run did not have.
     """
     return [
         abs(region[arm] - region["true_probability"])
         for region in question["regions"]
-        if region[arm] is not None
+        if region.get(arm) is not None
     ]
 
 
@@ -52,14 +53,17 @@ def mean(values: List[float]) -> float:
     return float(np.mean(values)) if values else float("nan")
 
 
-def comparison(rows: List[Dict[str, Any]], tolerance: float = 1e-9) -> str:
+def comparison(rows: List[Dict[str, Any]], arm: str, tolerance: float = 1e-9) -> str:
     """
-    :param rows: Question rows both arms answered.
-    :return: How often the learned set's answer was closer to the truth than the
-        declared set's, as close, and further.
+    :param rows: Question rows.
+    :param arm: The arm compared with the declared set.
+    :return: Among the rows both answered, how often the arm's answer was closer to
+        the truth than the declared set's, as close, and further.
     """
     differences = [
-        mean(errors(row, "learned")) - mean(errors(row, "declared")) for row in rows
+        mean(errors(row, arm)) - mean(errors(row, "declared"))
+        for row in rows
+        if errors(row, arm) and errors(row, "declared")
     ]
     return (
         f"{sum(d < -tolerance for d in differences)} / "
@@ -91,20 +95,20 @@ def accuracy_table(questions: List[Dict[str, Any]], key) -> List[str]:
     for question in questions:
         groups[key(question)].append(question)
     lines = [
-        "| group | MAE declared | MAE learned | MAE no adjustment | learned vs declared: better / same / worse | declared answered | learned answered |",
-        "|---|---|---|---|---|---|---|",
+        "| group | MAE declared | MAE learned | MAE repaired | MAE no adjustment | learned vs declared: better / same / worse | repaired vs declared | declared answered | learned answered | repaired answered |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for group, rows in sorted(groups.items(), key=lambda item: str(item[0])):
-        both = [
-            row for row in rows if errors(row, "declared") and errors(row, "learned")
-        ]
         lines.append(
             f"| {group} | {mean([e for row in rows for e in errors(row, 'declared')]):.3f} "
             f"| {mean([e for row in rows for e in errors(row, 'learned')]):.3f} "
+            f"| {mean([e for row in rows for e in errors(row, 'repaired')]):.3f} "
             f"| {mean([e for row in rows for e in errors(row, 'unadjusted')]):.3f} "
-            f"| {comparison(both)} "
+            f"| {comparison(rows, 'learned')} "
+            f"| {comparison(rows, 'repaired')} "
             f"| {share([bool(errors(row, 'declared')) for row in rows])} "
-            f"| {share([bool(errors(row, 'learned')) for row in rows])} |"
+            f"| {share([bool(errors(row, 'learned')) for row in rows])} "
+            f"| {share([bool(errors(row, 'repaired')) for row in rows])} |"
         )
     return lines
 
@@ -119,8 +123,8 @@ def validity_table(questions: List[Dict[str, Any]]) -> List[str]:
     for question in questions:
         groups[question["case_name"]].append(question)
     lines = [
-        "| question | declared set | declared valid | learned sets (count) | learned valid | learned refused |",
-        "|---|---|---|---|---|---|",
+        "| question | declared set | declared valid | learned sets (count) | learned valid | learned refused | repaired valid |",
+        "|---|---|---|---|---|---|---|",
     ]
     for name, rows in sorted(groups.items()):
         learned_sets = defaultdict(int)
@@ -138,7 +142,8 @@ def validity_table(questions: List[Dict[str, Any]]) -> List[str]:
             f"| {share([row['declared_valid'] for row in rows if row['declared_valid'] is not None])} "
             f"| {'; '.join(f'{s} ({c})' for s, c in sorted(learned_sets.items(), key=lambda i: -i[1]))} "
             f"| {share([row['learned_valid'] for row in rows if row['learned_valid'] is not None])} "
-            f"| {', '.join(f'{r} ({c})' for r, c in refusals.items()) or '–'} |"
+            f"| {', '.join(f'{r} ({c})' for r, c in refusals.items()) or '–'} "
+            f"| {share([row['repaired_valid'] for row in rows if row.get('repaired_valid') is not None])} |"
         )
     return lines
 

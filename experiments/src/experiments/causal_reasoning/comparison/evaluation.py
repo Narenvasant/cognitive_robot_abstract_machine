@@ -641,9 +641,9 @@ def _effect_probability_in(
     :param effect_event: The effect's condition.
     :return: The effect condition's probability within the region.
     """
-    truncated, _ = interventional.truncated(
+    truncated = interventional.truncated(
         region.fill_missing_variables_pure(interventional.variables)
-    )
+    ).distribution
     if truncated is None:
         return 0.0
     return float(
