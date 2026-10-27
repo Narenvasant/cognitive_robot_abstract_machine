@@ -32,6 +32,7 @@ from probabilistic_model.causal_structure.graph import (
     NodeLevel,
 )
 from probabilistic_model.causal_structure.identification import AdjustmentSelector
+from probabilistic_model.causal_structure.relational_checks import ExampleToPartCheck
 from probabilistic_model.probabilistic_circuit.relational.relational_probabilistic_circuit import (
     RelationalProbabilisticCircuit,
     TrainingTableColumn,
@@ -267,13 +268,23 @@ class RelationalStructureLearner:
 
     A part attribute is one template node for every part of its collection, named
     ``Class.collection.attribute``. The circuit lets an instance's attributes reach a
-    part's attributes only through the aggregation statistics, so no edge joins an
-    instance attribute and a part attribute.
+    part's attributes only through the aggregation statistics, so without an
+    :attr:`example_to_part_check` no edge joins an instance attribute and a part
+    attribute.
     """
 
     learner: StructureLearner = field(default_factory=PCStructureLearner)
     """
     What learns the graph of each table.
+    """
+
+    example_to_part_check: ExampleToPartCheck | None = None
+    """
+    What finds the instance attributes that depend on a part attribute even given the
+    statistics and any one other instance attribute; each such pair is joined by an edge
+    from the instance attribute to the part attribute, as the circuit draws an instance
+    before its parts, unless the background knowledge's tiers place the part attribute
+    first.
     """
 
     def learn(
@@ -318,6 +329,16 @@ class RelationalStructureLearner:
             part_nodes = self.part_nodes_of(circuit, part)
             nodes += part_nodes
             edges += self.part_edges(part, rows, part_nodes, example_nodes, knowledge)
+            if self.example_to_part_check is not None:
+                edges += [
+                    knowledge.edge_from(
+                        dependence.example_attribute,
+                        f"{circuit.class_.__name__}.{part}.{dependence.part_attribute}",
+                    )
+                    for dependence in self.example_to_part_check.dependences_given_another_attribute(
+                        tables.example_rows, rows, part
+                    )
+                ]
         return LearnedCausalStructure(
             selector=AdjustmentSelector(CausalGraph(nodes=nodes, edges=edges)),
             training_rows=tables.example_rows,
