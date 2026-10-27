@@ -73,8 +73,9 @@ supplies or checks that set. Estimation stays in the circuit; nothing in
   assumes: an instance's attributes reach its parts' attributes only through the
   aggregation statistics. Given to `RelationalStructureLearner` as its
   `example_to_part_check`, every pair that stays dependent given the statistics and
-  any one other instance attribute becomes an edge of the learned graph, directed as
-  the tiers order its ends.
+  any one other instance attribute becomes an edge of the learned graph, from the
+  instance attribute to the part attribute unless the tiers place the part attribute
+  first.
 
 ## Using it from a query
 

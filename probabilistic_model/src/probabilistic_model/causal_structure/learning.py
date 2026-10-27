@@ -281,9 +281,10 @@ class RelationalStructureLearner:
     example_to_part_check: ExampleToPartCheck | None = None
     """
     What finds the instance attributes that depend on a part attribute even given the
-    statistics and any one other instance attribute; each such pair is joined by an
-    edge, directed as the background knowledge's tiers order the two, and undirected
-    where they do not.
+    statistics and any one other instance attribute; each such pair is joined by an edge
+    from the instance attribute to the part attribute, as the circuit draws an instance
+    before its parts, unless the background knowledge's tiers place the part attribute
+    first.
     """
 
     def learn(
@@ -330,7 +331,7 @@ class RelationalStructureLearner:
             edges += self.part_edges(part, rows, part_nodes, example_nodes, knowledge)
             if self.example_to_part_check is not None:
                 edges += [
-                    knowledge.edge_between(
+                    knowledge.edge_from(
                         dependence.example_attribute,
                         f"{circuit.class_.__name__}.{part}.{dependence.part_attribute}",
                     )

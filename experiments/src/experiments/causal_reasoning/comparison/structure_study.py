@@ -92,8 +92,9 @@ def background_knowledge_of(
 ) -> BackgroundKnowledge:
     """
     The knowledge a domain states, in the learned graph's names: the given variables
-    are settled before everything else; the effect, the example's other outcomes and
-    the parts' outcome attributes are recorded after everything else; and a derived
+    are settled before everything else; the example's other outcomes and the parts'
+    outcome attributes are recorded after everything else but the effect, which comes
+    last; and a derived
     field or part attribute only copies its source.
 
     :param domain: The domain.
@@ -111,12 +112,14 @@ def background_knowledge_of(
         for part_field in domain.part_fields
         for function in domain.aggregation_class.aggregation_registry[part_field]
     ]
-    late = {f"{owner}.{name}" for name in (domain.effect_field, *outcome_fields)}
+    effect = f"{owner}.{domain.effect_field}"
+    late = {f"{owner}.{name}" for name in outcome_fields}
     late |= {
         f"{owner}.{part_field}.{attribute}"
         for part_field, attributes in domain.outcome_part_attributes.items()
         for attribute in attributes
     }
+    late.discard(effect)
     every_name = (
         [f"{owner}.{name}" for name in domain.scalar_fields]
         + statistics
@@ -130,8 +133,13 @@ def background_knowledge_of(
     return BackgroundKnowledge(
         tiers=[
             sorted(early),
-            [name for name in every_name if name not in late and name not in early],
+            [
+                name
+                for name in every_name
+                if name not in late and name not in early and name != effect
+            ],
             sorted(late),
+            [effect],
         ],
         deterministic_copies=[
             DeterministicCopy(

@@ -112,23 +112,23 @@ def test_continuous_columns_are_tested_after_discretization():
 
 
 @pytest.mark.parametrize(
-    "first, second, edge",
+    "parent, child, edge",
     [
         ("B", "A", GraphEdge.directed("A", "B")),
         ("A", "B", GraphEdge.directed("A", "B")),
-        ("B", "C", GraphEdge.undirected("B", "C")),
-        ("A", "D", GraphEdge.undirected("A", "D")),
+        ("C", "B", GraphEdge.directed("C", "B")),
+        ("D", "A", GraphEdge.directed("D", "A")),
     ],
     ids=[
-        "later_first_points_back",
-        "earlier_first_points_on",
-        "same_tier_stays_undirected",
-        "variable_without_tier_stays_undirected",
+        "child_in_an_earlier_tier_reverses_the_edge",
+        "parent_in_an_earlier_tier_keeps_it",
+        "same_tier_keeps_it",
+        "variable_without_tier_keeps_it",
     ],
 )
-def test_edge_is_directed_as_the_tiers_order_its_ends(
-    first: str, second: str, edge: GraphEdge
+def test_edge_is_reversed_only_where_the_tiers_say_so(
+    parent: str, child: str, edge: GraphEdge
 ):
     knowledge = BackgroundKnowledge(tiers=[["A"], ["B", "C"]])
 
-    assert knowledge.edge_between(first, second) == edge
+    assert knowledge.edge_from(parent, child) == edge

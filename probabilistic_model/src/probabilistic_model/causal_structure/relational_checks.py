@@ -307,19 +307,17 @@ class ExampleToPartCheck:
         :param strata: Integer strata.
         :return: The G² statistic of the two given the strata, summed over the strata.
         """
-        statistic = 0.0
-        for stratum in np.unique(strata):
-            members = strata == stratum
-            observed = pd.crosstab(first[members], second[members]).to_numpy(float)
-            expected = (
-                observed.sum(axis=1, keepdims=True)
-                * observed.sum(axis=0, keepdims=True)
-                / observed.sum()
-            )
-            nonzero = observed > 0
-            statistic += 2 * float(
-                (
-                    observed[nonzero] * np.log(observed[nonzero] / expected[nonzero])
-                ).sum()
-            )
-        return statistic
+        shape = (strata.max() + 1, first.max() + 1, second.max() + 1)
+        observed = np.bincount(
+            np.ravel_multi_index((strata, first, second), shape),
+            minlength=int(np.prod(shape)),
+        ).reshape(shape)
+        expected = (
+            observed.sum(axis=2, keepdims=True)
+            * observed.sum(axis=1, keepdims=True)
+            / np.maximum(observed.sum(axis=(1, 2), keepdims=True), 1)
+        )
+        nonzero = observed > 0
+        return 2 * float(
+            (observed[nonzero] * np.log(observed[nonzero] / expected[nonzero])).sum()
+        )
