@@ -106,3 +106,29 @@ def test_continuous_columns_are_tested_after_discretization():
         ("season", "ice_cream_sales"),
         ("season", "drowning_incidents"),
     }
+
+
+# %% orienting an edge by the tiers
+
+
+@pytest.mark.parametrize(
+    "parent, child, edge",
+    [
+        ("B", "A", GraphEdge.directed("A", "B")),
+        ("A", "B", GraphEdge.directed("A", "B")),
+        ("C", "B", GraphEdge.directed("C", "B")),
+        ("D", "A", GraphEdge.directed("D", "A")),
+    ],
+    ids=[
+        "child_in_an_earlier_tier_reverses_the_edge",
+        "parent_in_an_earlier_tier_keeps_it",
+        "same_tier_keeps_it",
+        "variable_without_tier_keeps_it",
+    ],
+)
+def test_edge_is_reversed_only_where_the_tiers_say_so(
+    parent: str, child: str, edge: GraphEdge
+):
+    knowledge = BackgroundKnowledge(tiers=[["A"], ["B", "C"]])
+
+    assert knowledge.edge_from(parent, child) == edge

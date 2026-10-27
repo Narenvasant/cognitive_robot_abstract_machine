@@ -10,6 +10,7 @@ import itertools
 from dataclasses import dataclass, field
 
 from probabilistic_model.causal_structure.exceptions import UnknownGraphNode
+from probabilistic_model.causal_structure.graph import GraphEdge
 
 # %% edges known in advance
 
@@ -111,6 +112,20 @@ class BackgroundKnowledge:
         """
         for name in sorted(self.named_variables() - set(known_names)):
             raise UnknownGraphNode(name, known_names)
+
+    def edge_from(self, parent: str, child: str) -> GraphEdge:
+        """
+        :param parent: The name of the variable taken to be the cause.
+        :param child: The name of another variable known to be adjacent to it.
+        :return: The edge ``parent → child``, reversed if the tiers place the child
+            before the parent.
+        """
+        tier_of = {
+            name: index for index, tier in enumerate(self.tiers) for name in tier
+        }
+        if parent in tier_of and child in tier_of and tier_of[child] < tier_of[parent]:
+            return GraphEdge.directed(child, parent)
+        return GraphEdge.directed(parent, child)
 
     def restricted_to(self, names: list[str]) -> BackgroundKnowledge:
         """
