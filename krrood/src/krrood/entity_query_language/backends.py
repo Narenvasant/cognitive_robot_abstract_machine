@@ -24,6 +24,7 @@ from krrood.entity_query_language.operators.causal import (
     AdjustmentCandidates,
     Cause,
     CauseEffectVariables,
+    InvalidDeclaredAdjustment,
     InterventionalRange,
     RegionRange,
     ScoredIntervention,
@@ -355,6 +356,14 @@ class ProbabilisticBackend(GenerativeBackend):
     alone, unchecked.
     """
 
+    invalid_declared_adjustment: InvalidDeclaredAdjustment = field(
+        kw_only=True, default=InvalidDeclaredAdjustment.REFUSED
+    )
+    """
+    What a causal query does when the learned causal structure finds the variables
+    marked ``confounder`` invalid for a cause.
+    """
+
     def evaluate(self, expression: Evaluable) -> Iterable[T]:
         if isinstance(expression, ProbabilisticQuery):
             yield expression._resolve_(self.model_registry)
@@ -571,8 +580,9 @@ class ProbabilisticBackend(GenerativeBackend):
         Let the causal structure learned for the queried class choose, for every cause
         candidate, the variables its intervention adjusts for (see
         :meth:`adjustment_candidates`); or check the variables marked ``confounder``
-        against it. Does nothing for a class without a structure in
-        :attr:`causal_structures`, or a query without a ``cause``.
+        against it, and repair them if :attr:`invalid_declared_adjustment` says so. Does
+        nothing for a class without a structure in :attr:`causal_structures`, or a
+        query without a ``cause``.
 
         :param parameters: The parameters extracted from *expression*, which record the
             chosen variables.
@@ -580,7 +590,7 @@ class ProbabilisticBackend(GenerativeBackend):
         :raises VariableNotInCausalGraph: If the cause or the effect has no node in the
             learned graph.
         :raises InvalidAdjustmentSet: If the variables marked ``confounder`` fail the
-            adjustment criterion in the learned graph.
+            adjustment criterion in the learned graph, and are not to be repaired.
         :raises EffectNotIdentified: If the learned graph identifies the effect by no
             set of the variables the query names; :meth:`interventional_range` answers
             an effect it identifies up to a few candidate sets.
@@ -591,15 +601,20 @@ class ProbabilisticBackend(GenerativeBackend):
         cause_effect = self._resolve_cause_and_effect_variables(parameters, expression)
         selector = structure.selector
         graph = selector.graph
+        declared = frozenset(
+            self._reference_in(graph, variable).node.name
+            for variable in parameters.search_confounder_variables
+        )
         for cause_variable in cause_effect.cause_variables:
-            if parameters.search_confounder_variables:
+            if (
+                declared
+                and self.invalid_declared_adjustment
+                is InvalidDeclaredAdjustment.REFUSED
+            ):
                 selector.check_declared(
                     self._reference_in(graph, cause_variable).node.name,
                     self._reference_in(graph, cause_effect.effect_variable).node.name,
-                    frozenset(
-                        self._reference_in(graph, variable).node.name
-                        for variable in parameters.search_confounder_variables
-                    ),
+                    declared,
                 )
                 continue
             candidates = self.adjustment_candidates(
@@ -608,6 +623,7 @@ class ProbabilisticBackend(GenerativeBackend):
                 selector,
                 cause_variable,
                 cause_effect.effect_variable,
+                declared,
             )
             if not isinstance(candidates.identification, IdentifiedEffect):
                 raise EffectNotIdentified(
@@ -651,6 +667,7 @@ class ProbabilisticBackend(GenerativeBackend):
         selector: AdjustmentSelector,
         cause_variable: random_events.variable.Variable,
         effect_variable: random_events.variable.Variable,
+        declared: frozenset[str] = frozenset(),
     ) -> AdjustmentCandidates:
         """
         Ask the learned structure what intervening on one cause adjusts for, among the
@@ -665,6 +682,8 @@ class ProbabilisticBackend(GenerativeBackend):
             they are now.
         :param cause_variable: The cause.
         :param effect_variable: The effect.
+        :param declared: The graph names of the variables marked ``confounder``, which
+            are kept as far as the graph allows.
         :return: What the structure says, with the variables of every candidate set.
         :raises VariableNotInCausalGraph: If the cause or the effect has no node in the
             learned graph.
@@ -685,7 +704,11 @@ class ProbabilisticBackend(GenerativeBackend):
             if node.level is NodeLevel.AGGREGATION_STATISTIC
         }
         identification = selector.identify(
-            cause.node.name, effect.node.name, set(eligible), structure.training_rows
+            cause.node.name,
+            effect.node.name,
+            set(eligible),
+            structure.training_rows,
+            declared,
         )
         match identification:
             case IdentifiedEffect():

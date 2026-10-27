@@ -47,6 +47,7 @@ from krrood.entity_query_language.exceptions import (
     NoCauseVariablesForRanking,
 )
 from krrood.entity_query_language.factories import a, cause, confounder
+from krrood.entity_query_language.operators.causal import InvalidDeclaredAdjustment
 from krrood.parametrization.model_registries import (
     CausalCircuitRegistry,
     RelationalCircuitRegistry,
@@ -234,6 +235,50 @@ def test_declared_invalid_confounder_is_refused():
         ProbabilisticBackend(causal_structures=mediated).choose_adjustment_sets(
             UnderspecifiedParameters(query), query
         )
+
+
+# %% repairing a declared adjustment set
+
+
+def repaired_adjustment_names(
+    structures: dict[type, LearnedCausalStructure], query
+) -> list[str]:
+    """
+    :param structures: The structure of ``SummerDay``.
+    :param query: A query about the ice cream sales as the cause.
+    :return: The names of the variables the ice cream sales adjust for once the backend
+        has repaired the declared ones against the graph.
+    """
+    parameters = UnderspecifiedParameters(query)
+    ProbabilisticBackend(
+        causal_structures=structures,
+        invalid_declared_adjustment=InvalidDeclaredAdjustment.REPAIRED,
+    ).choose_adjustment_sets(parameters, query)
+    [ice_cream] = parameters.search_cause_variables
+    return sorted(
+        variable.name for variable in parameters.adjustment_variables_of(ice_cream)
+    )
+
+
+def test_repair_drops_a_declared_mediator():
+    mediated = summer_structures([("ice_cream", "season"), ("season", "drowning")])
+
+    assert (
+        repaired_adjustment_names(mediated, ice_cream_query(declares_the_season=True))
+        == []
+    )
+
+
+def test_repair_keeps_a_declared_bystander_and_adds_the_confounder():
+    query = a(SummerDay)(
+        season=..., ice_cream=cause, sunscreen=confounder, heat=..., drowning=...
+    )
+    query.causes_effect(query.drowning == 1)
+
+    assert repaired_adjustment_names(summer_structures(TRUE_SUMMER_EDGES), query) == [
+        "SummerDay.season",
+        "SummerDay.sunscreen",
+    ]
 
 
 def test_partially_identified_effect_raises_effect_not_identified():

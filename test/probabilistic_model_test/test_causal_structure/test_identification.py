@@ -175,3 +175,31 @@ def test_declared_confounder_is_accepted():
     )
 
     assert identification == IdentifiedEffect(frozenset({"Z"}))
+
+
+# %% keeping a declared adjustment set as far as the graph allows
+
+
+@pytest.mark.parametrize(
+    "graph, declared, eligible, kept",
+    [
+        (confounded(), {"Z"}, {"Z"}, {"Z"}),
+        (m_bias(), {"M", "A"}, {"M", "A", "B"}, {"M", "A"}),
+        (proxied_confounder(), {"E"}, {"N", "E"}, {"N", "E"}),
+        (mediated(), {"M"}, {"M"}, set()),
+    ],
+    ids=[
+        "valid_declared_set_is_kept",
+        "valid_declared_set_is_kept_over_a_smaller_one",
+        "proxy_is_kept_and_its_confounder_added",
+        "forbidden_declared_variable_is_dropped",
+    ],
+)
+def test_declared_set_is_kept_as_far_as_the_graph_allows(
+    graph: CausalGraph, declared: set[str], eligible: set[str], kept: set[str]
+):
+    identification = AdjustmentSelector(graph).identify(
+        "X", "Y", eligible, declared=frozenset(declared)
+    )
+
+    assert identification == IdentifiedEffect(frozenset(kept))
