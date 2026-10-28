@@ -114,6 +114,22 @@ class CodedTables:
             0
         ]
 
+    def part_strata_given(
+        self, strata: np.ndarray, conditioning: list[str]
+    ) -> np.ndarray:
+        """
+        :param strata: One stratum per instance.
+        :param conditioning: Names of part columns.
+        :return: One integer per part, the same for parts whose instances share a
+            stratum and whose levels agree on the columns.
+        """
+        return pd.factorize(
+            pd.MultiIndex.from_arrays(
+                [strata[self.positions]]
+                + [self.part_codes[column].to_numpy() for column in conditioning]
+            )
+        )[0]
+
 
 # %% the check
 
@@ -184,42 +200,77 @@ class ExampleToPartCheck:
             for part_attribute in tables.varying_part_attributes
             if (
                 p_value := self.p_value(
-                    tables, example_attribute, part_attribute, [], random_state
+                    tables, example_attribute, part_attribute, [], [], random_state
                 )
             )
             < self.significance_level
         ]
 
     def dependences_given_another_attribute(
-        self, example_rows: pd.DataFrame, part_rows: pd.DataFrame, part: str
+        self,
+        example_rows: pd.DataFrame,
+        part_rows: pd.DataFrame,
+        part: str,
+        adjacent_part_attributes: dict[str, set[str]],
     ) -> list[ExampleToPartDependence]:
         """
         :param example_rows: One row per instance.
         :param part_rows: One row per part, as :meth:`rejected_pairs` takes it.
         :param part: The part's name.
+        :param adjacent_part_attributes: The part attributes the part's own graph joins
+            each part attribute to.
         :return: The dependences of :meth:`rejected_pairs` that remain given the
-            statistics and any one other instance attribute that also depends on the
-            part attribute, each with the largest p-value it was tested with.
+            statistics and any one other attribute the instance attribute could reach
+            the part attribute through: an instance attribute that also depends on the
+            part attribute, or a part attribute adjacent to it that the instance
+            attribute also depends on. Each comes with the largest p-value it was tested
+            with.
         """
         rejected = self.rejected_pairs(example_rows, part_rows, part)
         tables = self.coded(example_rows, part_rows)
         random_state = np.random.default_rng(self.random_seed)
         remaining = []
         for dependence in rejected:
-            p_values = [dependence.p_value] + [
-                self.p_value(
-                    tables,
-                    dependence.example_attribute,
-                    dependence.part_attribute,
-                    [other.example_attribute],
-                    random_state,
-                )
+            other_example_attributes = [
+                other.example_attribute
                 for other in rejected
                 if other.part_attribute == dependence.part_attribute
                 and other.example_attribute != dependence.example_attribute
             ]
-            if max(p_values) < self.significance_level:
-                remaining.append(replace(dependence, p_value=max(p_values)))
+            adjacent_dependent_part_attributes = [
+                other.part_attribute
+                for other in rejected
+                if other.example_attribute == dependence.example_attribute
+                and other.part_attribute
+                in adjacent_part_attributes.get(dependence.part_attribute, set())
+            ]
+            p_value = max(
+                [dependence.p_value]
+                + [
+                    self.p_value(
+                        tables,
+                        dependence.example_attribute,
+                        dependence.part_attribute,
+                        [other],
+                        [],
+                        random_state,
+                    )
+                    for other in other_example_attributes
+                ]
+                + [
+                    self.p_value(
+                        tables,
+                        dependence.example_attribute,
+                        dependence.part_attribute,
+                        [],
+                        [other],
+                        random_state,
+                    )
+                    for other in adjacent_dependent_part_attributes
+                ]
+            )
+            if p_value < self.significance_level:
+                remaining.append(replace(dependence, p_value=p_value))
         return remaining
 
     def coded(self, example_rows: pd.DataFrame, part_rows: pd.DataFrame) -> CodedTables:
@@ -255,6 +306,7 @@ class ExampleToPartCheck:
         example_attribute: str,
         part_attribute: str,
         conditioning: list[str],
+        part_conditioning: list[str],
         random_state: np.random.Generator,
     ) -> float:
         """
@@ -263,6 +315,7 @@ class ExampleToPartCheck:
         :param part_attribute: The part attribute.
         :param conditioning: The instance attributes conditioned on besides the
             statistics.
+        :param part_conditioning: The part attributes conditioned on.
         :param random_state: Source of the permutations.
         :return: The permutation p-value of the two's dependence given the statistics
             and the conditioning attributes.
@@ -270,7 +323,7 @@ class ExampleToPartCheck:
         strata = tables.strata_given(tables.statistics + conditioning)
         values = tables.example_codes[example_attribute].to_numpy()
         part_values = tables.part_codes[part_attribute].to_numpy()
-        part_strata = strata[tables.positions]
+        part_strata = tables.part_strata_given(strata, part_conditioning)
         observed = self.g_squared(values[tables.positions], part_values, part_strata)
         exceeding = sum(
             self.g_squared(

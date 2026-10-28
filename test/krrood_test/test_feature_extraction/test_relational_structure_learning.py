@@ -125,6 +125,12 @@ def test_instance_to_part_edges_are_the_dependences_the_check_keeps(
             )
         )
         for dependence in check.dependences_given_another_attribute(
-            tables.example_rows, tables.part_rows["objects"], "objects"
+            tables.example_rows,
+            tables.part_rows["objects"],
+            "objects",
+            RelationalStructureLearner.adjacent_part_attributes(
+                graph.edges,
+                f"{relational_probabilistic_circuit.class_.__name__}.objects.",
+            ),
         )
     }

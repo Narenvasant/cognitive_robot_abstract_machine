@@ -92,6 +92,28 @@ def test_proxy_of_the_driving_attribute_is_dropped_given_it():
     assert [
         dependence.example_attribute
         for dependence in check.dependences_given_another_attribute(
-            example_rows, part_rows, "parts"
+            example_rows, part_rows, "parts", {}
         )
     ] == ["Room.warm"]
+
+
+def test_part_attribute_reached_through_another_is_dropped_given_it():
+    random_state = np.random.default_rng(0)
+    example_rows, part_rows = parts_of(
+        random_state.integers(0, 2, 300), True, random_state
+    )
+    part_rows["dripping"] = part_rows["wet"] ^ (
+        random_state.random(len(part_rows)) < 0.1
+    )
+    check = ExampleToPartCheck()
+
+    assert ("Room.warm", "dripping") in {
+        (dependence.example_attribute, dependence.part_attribute)
+        for dependence in check.rejected_pairs(example_rows, part_rows, "parts")
+    }
+    assert [
+        (dependence.example_attribute, dependence.part_attribute)
+        for dependence in check.dependences_given_another_attribute(
+            example_rows, part_rows, "parts", {"wet": {"dripping"}, "dripping": {"wet"}}
+        )
+    ] == [("Room.warm", "wet")]
