@@ -21,7 +21,7 @@ from semantic_digital_twin.datastructures.definitions import (
     TorsoState,
 )
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
-from semantic_digital_twin.robots.tiago import TiagoMujoco
+from semantic_digital_twin.robots.tiago import TiagoMujoco, TiagoMujocoBody
 from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.world import World
 from semantic_digital_twin.world_description.connections import (
@@ -100,6 +100,25 @@ def test_every_joint_the_robot_moves_has_a_servo_to_move_it(mounted_tiago):
     assert undriven == []
 
 
+def test_every_joint_a_servo_drives_is_one_a_controller_commands(mounted_tiago):
+    """
+    A controller only plans for, and only keeps clear of each other, the parts that
+    joints it commands lie between, so every servoed joint is one it commands.
+    """
+    servoed = {
+        degree_of_freedom.id
+        for actuator in mounted_tiago._world.actuators
+        if isinstance(actuator, PositionServo)
+        for degree_of_freedom in actuator.dofs
+    }
+    commanded = {
+        degree_of_freedom.id
+        for degree_of_freedom in mounted_tiago.degrees_of_freedom_with_hardware_interface
+    }
+
+    assert commanded == servoed
+
+
 def test_a_servo_keeps_the_joint_dynamics_its_description_states(mounted_tiago):
     """
     An MJCF states each joint's own damping and friction, so declaring a servo on that
@@ -126,6 +145,35 @@ def test_a_servoed_robot_does_not_hold_up_its_own_weight(mounted_tiago):
     ]
 
     assert uncompensated == []
+
+
+# %% keeping clear of itself
+
+
+def test_the_hands_are_kept_clear_of_the_head(mounted_tiago):
+    """
+    Parking swings a hand past the head, so the collision checks keep every piece of
+    either hand apart from it.
+    """
+    world = mounted_tiago._world
+    world.collision_manager.update_collision_matrix()
+    checked = {
+        frozenset((check.body_a, check.body_b))
+        for check in world.collision_manager.collision_matrix.collision_checks
+    }
+    head = world.get_body_by_name(TiagoMujocoBody.HEAD)
+    hands = [
+        body
+        for arm in mounted_tiago.all_arms
+        for body in arm.end_effector.bodies
+        if body.has_collision()
+    ]
+
+    unchecked = [
+        hand.name.name for hand in hands if frozenset((hand, head)) not in checked
+    ]
+
+    assert unchecked == []
 
 
 # %% the hand

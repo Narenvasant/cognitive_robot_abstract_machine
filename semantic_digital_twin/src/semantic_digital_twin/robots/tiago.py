@@ -721,6 +721,10 @@ class ServoedByItsMujocoModel(AbstractRobotPart, ABC):
             ),
         }
 
+    def setup_hardware_interfaces(self):
+        for connection in self.active_connections:
+            connection.has_hardware_interface = True
+
     def _setup_servos(self) -> None:
         for connection in self.active_connections:
             if not isinstance(connection, ActiveConnection1DOF):
@@ -830,9 +834,6 @@ class TiagoMujocoLeftGripper(
     ServoedByItsMujocoModel,
 ):
 
-    def setup_hardware_interfaces(self):
-        pass
-
     def setup_joint_states(self) -> List[JointState]:
         """
         The hand opens and closes to the ends of its fingers' travel.
@@ -885,9 +886,6 @@ class TiagoMujocoRightGripper(
     ServoedByItsMujocoModel,
 ):
 
-    def setup_hardware_interfaces(self):
-        pass
-
     def setup_joint_states(self) -> List[JointState]:
         """
         The hand opens and closes to the ends of its fingers' travel.
@@ -936,9 +934,6 @@ class TiagoMujocoRightGripper(
 @dataclass(eq=False)
 class TiagoMujocoLeftArm(Arm[TiagoMujocoLeftGripper], ServoedByItsMujocoModel):
 
-    def setup_hardware_interfaces(self):
-        pass
-
     def setup_joint_states(self) -> List[JointState]:
         arm_park = JointState.from_mapping(
             name=PrefixedName("left_arm_park", prefix=self.name.name),
@@ -968,9 +963,6 @@ class TiagoMujocoLeftArm(Arm[TiagoMujocoLeftGripper], ServoedByItsMujocoModel):
 
 @dataclass(eq=False)
 class TiagoMujocoRightArm(Arm[TiagoMujocoRightGripper], ServoedByItsMujocoModel):
-
-    def setup_hardware_interfaces(self):
-        pass
 
     def setup_joint_states(self) -> List[JointState]:
         arm_park = JointState.from_mapping(
@@ -1035,9 +1027,6 @@ class TiagoMujocoCamera(Camera):
 @dataclass(eq=False)
 class TiagoMujocoNeck(Neck[TiagoMujocoCamera], ServoedByItsMujocoModel):
 
-    def setup_hardware_interfaces(self):
-        pass
-
     def setup_joint_states(self) -> List[JointState]:
         return []
 
@@ -1062,9 +1051,6 @@ class TiagoMujocoTorso(
     HasNeck[TiagoMujocoNeck],
     ServoedByItsMujocoModel,
 ):
-
-    def setup_hardware_interfaces(self):
-        pass
 
     def setup_joint_states(self) -> List[JointState]:
         torso_joint = self.active_connections
@@ -1173,14 +1159,24 @@ class TiagoMujoco(AbstractRobot, HasMobileBase[TiagoMujocoMobileBase]):
         return TiagoMujocoBody.BASE
 
     def _setup_collision_rules(self):
-        """
-        Avoid collisions with everything but the robot itself, whose description states
-        which of its own bodies may touch.
-        """
+        srdf_path = os.path.join(
+            Path(files("semantic_digital_twin")).parent.parent,
+            "resources",
+            "collision_configs",
+            "tiago_dual.srdf",
+        )
+        self._world.collision_manager.add_ignore_collision_rule(
+            SelfCollisionMatrixRule.from_collision_srdf(srdf_path, self._world)
+        )
         self._world.collision_manager.extend_default_rules(
             [
                 AvoidExternalCollisions(
                     buffer_zone_distance=0.05, violated_distance=0.0, robot=self
+                ),
+                AvoidSelfCollisions(
+                    buffer_zone_distance=0.03,
+                    violated_distance=0.0,
+                    robot=self,
                 ),
             ]
         )
