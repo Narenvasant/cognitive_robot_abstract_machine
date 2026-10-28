@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import cached_property
 
@@ -44,6 +44,8 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import Coun
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
 )
+from semantic_digital_twin.world_description.geometry import Cylinder
+from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger(__name__)
@@ -513,11 +515,56 @@ class OrganizeVegetables(TiagoCompositeTask):
         ]
 
 
+@dataclass
 class OrganizeSmallFruit(OrganizeVegetables):
     """
     Tiago puts each of two pieces of small fruit on the counter on a cutting board of
     its own: :class:`OrganizeVegetables` with objects narrow enough for its hand.
     """
+
+    arrival_tolerance: float = 0.012
+    """
+    How close the hand has to come to a goal before it counts as reached, in metres:
+    tighter than :attr:`TiagoPickPlaceTask.arrival_tolerance`, because a hand that
+    stops that far short of a piece of fruit closes on its edge.
+    """
+
+    def step_sequence(self) -> list[TiagoRoboCasaTask]:
+        return [
+            replace(step, arrival_tolerance=self.arrival_tolerance)
+            for step in super().step_sequence()
+        ]
+
+    def prepare_contacts(self) -> None:
+        """
+        Have every piece of fruit collide as the upright cylinder around it, then set up
+        the contacts each step asks for.
+
+        RoboCasa builds a piece of fruit out of overlapping convex pieces, and a finger
+        pad squeezed between two of them is held there once the hand opens, carrying
+        the fruit off with it.
+        """
+        with self.world.modify_world():
+            for step in self.steps:
+                fruit = step.food.root
+                outline = (
+                    fruit.collision.as_bounding_box_collection_in_frame(fruit)
+                    .bounding_box()
+                    .as_shape()
+                )
+                cylinder = Cylinder(
+                    origin=outline.origin,
+                    width=max(outline.scale.x, outline.scale.y),
+                    height=outline.scale.z,
+                )
+                cylinder.simulator_additional_properties = [
+                    replace(simulator_property)
+                    for simulator_property in fruit.collision.shapes[
+                        0
+                    ].simulator_additional_properties
+                ]
+                fruit.collision = ShapeCollection([cylinder], reference_frame=fruit)
+        super().prepare_contacts()
 
     @classproperty
     def task_name(cls) -> str:
