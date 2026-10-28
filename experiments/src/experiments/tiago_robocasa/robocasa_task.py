@@ -1059,7 +1059,7 @@ class TiagoRoboCasaTask(ABC):
             if isinstance(connection, ActiveConnection1DOF)
         ]
         with self.world.reset_state_context():
-            self.straighten_the_arm()
+            self.fold_the_arm()
             with ExecutionEnvironment(
                 ExecutionType.KINEMATICALLY_SIMULATED,
                 collision_avoidance=self.collision_avoidance,
@@ -1079,19 +1079,15 @@ class TiagoRoboCasaTask(ABC):
             )
         ]
 
-    def straighten_the_arm(self) -> None:
+    def fold_the_arm(self) -> None:
         """
-        Put the working arm straight out before a goal is solved for.
+        Put the working arm in its park pose before a goal is solved for.
 
-        The solver walks the arm from wherever it stands, and out of the folded park
-        pose it gets nowhere: of the stands that leave an object on the counter within
-        reach, it finds none, while from the arm straight out it finds them. What the
-        fold costs is the solve, not the motion -- the physical run starts from the park
-        pose and gets there.
+        Every reach sets off from the park pose, and the solver keeps the arm in the
+        posture it starts from. Solved from the arm straight out, it lifts the shoulder
+        instead, and the arm sent there from the park pose swings up past the head.
         """
-        for connection in self.arm.active_connections:
-            if isinstance(connection, ActiveConnection1DOF):
-                connection.position = 0.0
+        self.arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(self.world)
 
     def prepare_contacts(self) -> None:
         """
