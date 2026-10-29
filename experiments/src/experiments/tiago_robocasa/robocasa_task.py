@@ -223,26 +223,24 @@ class TiagoRoboCasaTask(ABC):
     """
 
     reaching_poses: tuple[tuple[float, ...], ...] = (
-        (0.27, -1.07, -3.0, 1.96, 0.0, 0.0, 0.0),
-        (0.27, -1.07, 0.0, 1.96, 0.0, 0.0, 0.0),
         (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        (0.27, -1.07, 0.0, 1.96, 0.0, 0.0, 0.0),
     )
     """
-    The working arm's joints a reach is solved from, tried in turn, in radians: the
-    park pose with the upper arm rolled the other way, the park pose with its rolling
-    joints turned to the middle of their range, and the arm straight out.
+    The working arm's joints a reach is solved from, tried in turn, in radians: the arm
+    straight out, and the park pose with its rolling joints turned to the middle of
+    their range.
     """
 
-    room_to_the_joint_limits: float = 0.05
+    lowered_shoulder_lift: float = 0.5
     """
-    How far from its limits each arm joint has to stay where a reach leaves it, in
-    radians: an arm pressed against a limit cannot turn the hand for the last stretch
-    onto what it reaches for.
+    Where the shoulder's lifting joint holds the upper arm pointing down, in radians:
+    the elbow opens there without the forearm passing the head.
     """
 
     reach_samples: int = 30
     """
-    At how many points along the way out of the park pose the hand's height is checked.
+    At how many points along each motion of a reach the hand's height is checked.
     """
 
     step_size: float = 2.5e-4
@@ -1050,8 +1048,8 @@ class TiagoRoboCasaTask(ABC):
     def can_reach(self, tool_frame_goal: Pose) -> bool:
         """
         :param tool_frame_goal: Where the tool frame is to be.
-        :return: Whether the arm gets there from its park pose, as
-            :meth:`reach_to` finds.
+        :return: Whether the arm gets there from where it is, as :meth:`reach_to`
+            finds.
         """
         return self.reach_to(tool_frame_goal) is not None
 
@@ -1066,27 +1064,28 @@ class TiagoRoboCasaTask(ABC):
         short of what it is reaching for.
 
         :param tool_frame_goal: Where the tool frame is to be.
-        :return: The motion bringing the arm there.
+        :return: The motions bringing the arm there, in order.
         :raises NoReachClearOfTheHead: If no reach :meth:`reach_to` accepts gets there.
         """
         reach = self.reach_to(tool_frame_goal)
         if reach is None:
             raise NoReachClearOfTheHead(target=tool_frame_goal)
-        return [reach]
+        return reach
 
-    def reach_to(self, tool_frame_goal: Pose) -> MoveJointsMotion | None:
+    def reach_to(self, tool_frame_goal: Pose) -> list[MoveJointsMotion] | None:
         """
         Solve for the joints that bring the tool frame to a goal from each of
-        :attr:`reaching_poses` in turn, and keep the first solution the arm can be sent
-        to straight from its park pose.
+        :attr:`reaching_poses` in turn, and keep the first way there that keeps the hand
+        below the head: straight to the solution, or with the upper arm lowered while
+        the elbow opens.
 
         The torso's joint is handed on with the arm's: the solve moves the torso too,
         and an arm sent to its joints alone leaves the hand off the goal by however far
         the torso moved.
 
         :param tool_frame_goal: Where the tool frame is to be.
-        :return: The motion to the first solution that :meth:`is_sent_clear` accepts,
-            or None if none does.
+        :return: The motions of the first way there :meth:`keeps_the_hand_below_the_head`
+            accepts, or None if none does.
         """
         joints = [
             connection
@@ -1094,16 +1093,24 @@ class TiagoRoboCasaTask(ABC):
             for connection in part.active_connections
             if isinstance(connection, ActiveConnection1DOF)
         ]
+        names = [joint.name.name for joint in joints]
+        shoulder_lift = names.index(self.arm_joints[1].name.name)
+        start = [float(joint.position) for joint in joints]
         for reaching_pose in self.reaching_poses:
             try:
-                positions = self.solved_joints(tool_frame_goal, reaching_pose, joints)
+                goal = self.solved_joints(tool_frame_goal, reaching_pose, joints)
             except PlanFailure:
                 continue
-            reach = MoveJointsMotion(
-                names=[joint.name.name for joint in joints], positions=positions
-            )
-            if self.is_sent_clear(reach):
-                return reach
+            lowered_start, lowered_goal = list(start), list(goal)
+            lowered_start[shoulder_lift] = self.lowered_shoulder_lift
+            lowered_goal[shoulder_lift] = self.lowered_shoulder_lift
+            for way in ([goal], [lowered_start, lowered_goal, goal]):
+                reach = [
+                    MoveJointsMotion(names=names, positions=positions)
+                    for positions in way
+                ]
+                if self.keeps_the_hand_below_the_head(reach):
+                    return reach
         return None
 
     def solved_joints(
@@ -1138,40 +1145,31 @@ class TiagoRoboCasaTask(ABC):
                 ).plan.perform()
             return [float(joint.position) for joint in joints]
 
-    def is_sent_clear(self, reach: MoveJointsMotion) -> bool:
+    def keeps_the_hand_below_the_head(self, reach: list[MoveJointsMotion]) -> bool:
         """
-        :param reach: A reach in joint space.
-        :return: Whether every arm joint it moves stays :attr:`room_to_the_joint_limits`
-            away from its limits, and the hand stays below the top of the head while
-            each joint moves straight from the park pose to its goal.
+        :param reach: Motions in joint space, in order.
+        :return: Whether the hand stays below the top of the head while each motion
+            moves its joints straight to their goals, from where they are now.
         """
-        arm_joints = {joint.name.name for joint in self.arm_joints}
-        for name, position in zip(reach.names, reach.positions):
-            limits = self.world.get_connection_by_name(name).dof.limits
-            room = min(
-                position - limits.lower.position, limits.upper.position - position
-            )
-            if name in arm_joints and room < self.room_to_the_joint_limits:
-                return False
-        joints = [self.world.get_connection_by_name(name) for name in reach.names]
         tool_frame = self.arm.end_effector.tool_frame
+        ceiling = self.extent(self.world.get_body_by_name(TiagoMujocoBody.HEAD)).max_z
         with self.world.reset_state_context():
-            self.arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(self.world)
-            start = np.array([float(joint.position) for joint in joints])
-            ceiling = self.extent(
-                self.world.get_body_by_name(TiagoMujocoBody.HEAD)
-            ).max_z
-            for share in np.linspace(0.0, 1.0, self.reach_samples):
-                for joint, position in zip(
-                    joints, (1 - share) * start + share * np.array(reach.positions)
-                ):
-                    joint.position = position
-                self.world.notify_state_change()
-                height = self.world.compute_forward_kinematics_np(
-                    self.world.root, tool_frame
-                )[2, 3]
-                if height > ceiling:
-                    return False
+            for motion in reach:
+                joints = [
+                    self.world.get_connection_by_name(name) for name in motion.names
+                ]
+                start = np.array([float(joint.position) for joint in joints])
+                for share in np.linspace(0.0, 1.0, self.reach_samples):
+                    for joint, position in zip(
+                        joints, (1 - share) * start + share * np.array(motion.positions)
+                    ):
+                        joint.position = position
+                    self.world.notify_state_change()
+                    height = self.world.compute_forward_kinematics_np(
+                        self.world.root, tool_frame
+                    )[2, 3]
+                    if height > ceiling:
+                        return False
         return True
 
     @property
