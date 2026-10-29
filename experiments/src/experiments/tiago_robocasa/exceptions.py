@@ -165,3 +165,26 @@ class StepLeftUndone(DataclassException):
 
     def suggest_correction(self) -> str:
         return "Make the step come off on its own first."
+
+
+@dataclass
+class NoReachClearOfTheHead(DataclassException):
+    """
+    Raised when every solution that brings the hand to a goal either presses an arm
+    joint against its limit or swings the hand past the head on its way out of the park
+    pose.
+    """
+
+    target: Pose
+    """
+    Where the hand was to be.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"No reach to {np.round(self.target.to_np()[:3, 3], 3)} leaves the arm room "
+            f"at its joint limits and the hand below the head."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Stand elsewhere, or solve the reach from another of the reaching poses."

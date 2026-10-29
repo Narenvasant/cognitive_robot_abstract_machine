@@ -42,6 +42,7 @@ with robocasa_version_assertions_relaxed():
     from robocasa.models.scenes.scene_registry import LayoutType, StyleType
 from experiments.tiago_robocasa.exceptions import (
     NoClearStandingPose,
+    NoReachClearOfTheHead,
     NoReachableStandingPose,
     NoWayToTheStand,
 )
@@ -58,7 +59,7 @@ from semantic_digital_twin.datastructures.definitions import (
     StaticJointState,
     TorsoState,
 )
-from semantic_digital_twin.robots.tiago import TiagoMujoco
+from semantic_digital_twin.robots.tiago import TiagoMujoco, TiagoMujocoBody
 from semantic_digital_twin.specifications.robots import RobotSpecification
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
@@ -219,6 +220,29 @@ class TiagoRoboCasaTask(ABC):
     collision_avoidance: bool = True
     """
     Whether Giskard keeps Tiago clear of the kitchen and of itself.
+    """
+
+    reaching_poses: tuple[tuple[float, ...], ...] = (
+        (0.27, -1.07, -3.0, 1.96, 0.0, 0.0, 0.0),
+        (0.27, -1.07, 0.0, 1.96, 0.0, 0.0, 0.0),
+        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+    )
+    """
+    The working arm's joints a reach is solved from, tried in turn, in radians: the
+    park pose with the upper arm rolled the other way, the park pose with its rolling
+    joints turned to the middle of their range, and the arm straight out.
+    """
+
+    room_to_the_joint_limits: float = 0.05
+    """
+    How far from its limits each arm joint has to stay where a reach leaves it, in
+    radians: an arm pressed against a limit cannot turn the hand for the last stretch
+    onto what it reaches for.
+    """
+
+    reach_samples: int = 30
+    """
+    At how many points along the way out of the park pose the hand's height is checked.
     """
 
     step_size: float = 2.5e-4
@@ -1026,13 +1050,10 @@ class TiagoRoboCasaTask(ABC):
     def can_reach(self, tool_frame_goal: Pose) -> bool:
         """
         :param tool_frame_goal: Where the tool frame is to be.
-        :return: Whether the arm gets there in a kinematically simulated world.
+        :return: Whether the arm gets there from its park pose, as
+            :meth:`reach_to` finds.
         """
-        try:
-            self.arm_motions_to(tool_frame_goal)
-        except PlanFailure:
-            return False
-        return True
+        return self.reach_to(tool_frame_goal) is not None
 
     def arm_motions_to(self, tool_frame_goal: Pose) -> list[MoveJointsMotion]:
         """
@@ -1044,22 +1065,65 @@ class TiagoRoboCasaTask(ABC):
         arm is still on its way when the controller is satisfied, and the hand ends up
         short of what it is reaching for.
 
+        :param tool_frame_goal: Where the tool frame is to be.
+        :return: The motion bringing the arm there.
+        :raises NoReachClearOfTheHead: If no reach :meth:`reach_to` accepts gets there.
+        """
+        reach = self.reach_to(tool_frame_goal)
+        if reach is None:
+            raise NoReachClearOfTheHead(target=tool_frame_goal)
+        return [reach]
+
+    def reach_to(self, tool_frame_goal: Pose) -> MoveJointsMotion | None:
+        """
+        Solve for the joints that bring the tool frame to a goal from each of
+        :attr:`reaching_poses` in turn, and keep the first solution the arm can be sent
+        to straight from its park pose.
+
         The torso's joint is handed on with the arm's: the solve moves the torso too,
         and an arm sent to its joints alone leaves the hand off the goal by however far
         the torso moved.
 
         :param tool_frame_goal: Where the tool frame is to be.
-        :return: The motion bringing the arm there.
+        :return: The motion to the first solution that :meth:`is_sent_clear` accepts,
+            or None if none does.
         """
-        context = Context(world=self.world, robot=self.robot, evaluate_conditions=False)
         joints = [
             connection
             for part in (self.robot.mobile_base.torso, self.arm)
             for connection in part.active_connections
             if isinstance(connection, ActiveConnection1DOF)
         ]
+        for reaching_pose in self.reaching_poses:
+            try:
+                positions = self.solved_joints(tool_frame_goal, reaching_pose, joints)
+            except PlanFailure:
+                continue
+            reach = MoveJointsMotion(
+                names=[joint.name.name for joint in joints], positions=positions
+            )
+            if self.is_sent_clear(reach):
+                return reach
+        return None
+
+    def solved_joints(
+        self,
+        tool_frame_goal: Pose,
+        reaching_pose: tuple[float, ...],
+        joints: list[ActiveConnection1DOF],
+    ) -> list[float]:
+        """
+        :param tool_frame_goal: Where the tool frame is to be.
+        :param reaching_pose: The arm's joints the solve starts from.
+        :param joints: The joints whose solved positions are asked for.
+        :return: Where the joints end up when the tool frame is brought to the goal in a
+            kinematically simulated world.
+        :raises PlanFailure: If the solve does not get the tool frame there.
+        """
+        context = Context(world=self.world, robot=self.robot, evaluate_conditions=False)
         with self.world.reset_state_context():
-            self.fold_the_arm()
+            for connection, position in zip(self.arm_joints, reaching_pose):
+                connection.position = position
             with ExecutionEnvironment(
                 ExecutionType.KINEMATICALLY_SIMULATED,
                 collision_avoidance=self.collision_avoidance,
@@ -1072,22 +1136,54 @@ class TiagoRoboCasaTask(ABC):
                     ],
                     context=context,
                 ).plan.perform()
-            positions = [float(joint.position) for joint in joints]
-        return [
-            MoveJointsMotion(
-                names=[joint.name.name for joint in joints], positions=positions
+            return [float(joint.position) for joint in joints]
+
+    def is_sent_clear(self, reach: MoveJointsMotion) -> bool:
+        """
+        :param reach: A reach in joint space.
+        :return: Whether every arm joint it moves stays :attr:`room_to_the_joint_limits`
+            away from its limits, and the hand stays below the top of the head while
+            each joint moves straight from the park pose to its goal.
+        """
+        arm_joints = {joint.name.name for joint in self.arm_joints}
+        for name, position in zip(reach.names, reach.positions):
+            limits = self.world.get_connection_by_name(name).dof.limits
+            room = min(
+                position - limits.lower.position, limits.upper.position - position
             )
+            if name in arm_joints and room < self.room_to_the_joint_limits:
+                return False
+        joints = [self.world.get_connection_by_name(name) for name in reach.names]
+        tool_frame = self.arm.end_effector.tool_frame
+        with self.world.reset_state_context():
+            self.arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(self.world)
+            start = np.array([float(joint.position) for joint in joints])
+            ceiling = self.extent(
+                self.world.get_body_by_name(TiagoMujocoBody.HEAD)
+            ).max_z
+            for share in np.linspace(0.0, 1.0, self.reach_samples):
+                for joint, position in zip(
+                    joints, (1 - share) * start + share * np.array(reach.positions)
+                ):
+                    joint.position = position
+                self.world.notify_state_change()
+                height = self.world.compute_forward_kinematics_np(
+                    self.world.root, tool_frame
+                )[2, 3]
+                if height > ceiling:
+                    return False
+        return True
+
+    @property
+    def arm_joints(self) -> list[ActiveConnection1DOF]:
+        """
+        :return: The working arm's joints, from the shoulder to the wrist.
+        """
+        return [
+            connection
+            for connection in self.arm.active_connections
+            if isinstance(connection, ActiveConnection1DOF)
         ]
-
-    def fold_the_arm(self) -> None:
-        """
-        Put the working arm in its park pose before a goal is solved for.
-
-        Every reach sets off from the park pose, and the solver keeps the arm in the
-        posture it starts from. Solved from the arm straight out, it lifts the shoulder
-        instead, and the arm sent there from the park pose swings up past the head.
-        """
-        self.arm.get_joint_state_by_type(StaticJointState.PARK).apply_to(self.world)
 
     def prepare_contacts(self) -> None:
         """
