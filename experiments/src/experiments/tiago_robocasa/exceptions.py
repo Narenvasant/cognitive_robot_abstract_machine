@@ -168,11 +168,10 @@ class StepLeftUndone(DataclassException):
 
 
 @dataclass
-class NoReachClearOfTheHead(DataclassException):
+class NoClearReach(DataclassException):
     """
-    Raised when every solution that brings the hand to a goal either presses an arm
-    joint against its limit or swings the hand past the head on its way out of the park
-    pose.
+    Raised when every way the arm has to a goal swings the hand past the head or Tiago
+    into the kitchen.
     """
 
     target: Pose
@@ -182,8 +181,8 @@ class NoReachClearOfTheHead(DataclassException):
 
     def error_message(self) -> str:
         return (
-            f"No reach to {np.round(self.target.to_np()[:3, 3], 3)} leaves the arm room "
-            f"at its joint limits and the hand below the head."
+            f"No reach to {np.round(self.target.to_np()[:3, 3], 3)} keeps the hand "
+            f"below the head and Tiago clear of the kitchen."
         )
 
     def suggest_correction(self) -> str:

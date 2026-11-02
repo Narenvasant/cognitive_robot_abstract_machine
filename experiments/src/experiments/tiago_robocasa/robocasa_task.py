@@ -32,6 +32,7 @@ from coraplex.plans.plan import Plan
 from coraplex.robot_plans.actions.core.navigation import NavigateAction
 from coraplex.robot_plans.motions.gripper import MoveToolCenterPointMotion
 from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
+from semantic_digital_twin.callbacks.callback import StateChangeCallback
 from semantic_digital_twin.world_description.connections import ActiveConnection1DOF
 from experiments.hsr_robocasa.robocasa_task import RoboCasaLayout
 from semantic_digital_twin.adapters.robocasa_dataset.mujoco_compat import (
@@ -42,7 +43,7 @@ with robocasa_version_assertions_relaxed():
     from robocasa.models.scenes.scene_registry import LayoutType, StyleType
 from experiments.tiago_robocasa.exceptions import (
     NoClearStandingPose,
-    NoReachClearOfTheHead,
+    NoClearReach,
     NoReachableStandingPose,
     NoWayToTheStand,
 )
@@ -144,6 +145,29 @@ class StandSearch:
     """
 
 
+# %% following a solve
+
+
+@dataclass(eq=False)
+class JointPath(StateChangeCallback):
+    """
+    The positions a set of joints passes through while their world changes.
+    """
+
+    joints: list[ActiveConnection1DOF] = field(kw_only=True)
+    """
+    The joints followed.
+    """
+
+    positions: list[list[float]] = field(init=False, default_factory=list)
+    """
+    Their positions at every change, in order.
+    """
+
+    def on_state_change(self, **kwargs) -> None:
+        self.positions.append([float(joint.position) for joint in self.joints])
+
+
 # %% one of RoboCasa's tasks, performed by Tiago
 
 
@@ -232,15 +256,22 @@ class TiagoRoboCasaTask(ABC):
     their range.
     """
 
-    lowered_shoulder_lift: float = 0.5
+    lowered_shoulder_lifts: tuple[float, ...] = (0.5, 0.25, 0.0)
     """
-    Where the shoulder's lifting joint holds the upper arm pointing down, in radians:
-    the elbow opens there without the forearm passing the head.
+    Where the shoulder's lifting joint may hold the upper arm while the elbow opens, in
+    radians, the lowest first: low enough that the forearm does not pass the head, high
+    enough that it does not swing into the furniture below the counter.
     """
 
-    reach_samples: int = 30
+    path_waypoints: int = 8
     """
-    At how many points along each motion of a reach the hand's height is checked.
+    Through how many positions a reach follows the path of a solve.
+    """
+
+    reach_samples: int = 15
+    """
+    At how many points along each motion of a reach the hand's height and Tiago's
+    contact with the kitchen are checked.
     """
 
     step_size: float = 2.5e-4
@@ -1065,27 +1096,26 @@ class TiagoRoboCasaTask(ABC):
 
         :param tool_frame_goal: Where the tool frame is to be.
         :return: The motions bringing the arm there, in order.
-        :raises NoReachClearOfTheHead: If no reach :meth:`reach_to` accepts gets there.
+        :raises NoClearReach: If no reach :meth:`reach_to` accepts gets there.
         """
         reach = self.reach_to(tool_frame_goal)
         if reach is None:
-            raise NoReachClearOfTheHead(target=tool_frame_goal)
+            raise NoClearReach(target=tool_frame_goal)
         return reach
 
     def reach_to(self, tool_frame_goal: Pose) -> list[MoveJointsMotion] | None:
         """
-        Solve for the joints that bring the tool frame to a goal from each of
-        :attr:`reaching_poses` in turn, and keep the first way there that keeps the hand
-        below the head: straight to the solution, or with the upper arm lowered while
-        the elbow opens.
+        Follow the solve that brings the tool frame to a goal from where the arm is, or
+        else solve from each of :attr:`reaching_poses` in turn: go to the reaching pose
+        along one of the :meth:`ways_between` and follow the solve from there, or take
+        the :meth:`ways_between` straight to the solution. The first way that :meth:`keeps_clear` is kept.
 
         The torso's joint is handed on with the arm's: the solve moves the torso too,
         and an arm sent to its joints alone leaves the hand off the goal by however far
         the torso moved.
 
         :param tool_frame_goal: Where the tool frame is to be.
-        :return: The motions of the first way there :meth:`keeps_the_hand_below_the_head`
-            accepts, or None if none does.
+        :return: The motions of the first such way, or None if there is none.
         """
         joints = [
             connection
@@ -1094,62 +1124,104 @@ class TiagoRoboCasaTask(ABC):
             if isinstance(connection, ActiveConnection1DOF)
         ]
         names = [joint.name.name for joint in joints]
-        shoulder_lift = names.index(self.arm_joints[1].name.name)
         start = [float(joint.position) for joint in joints]
-        for reaching_pose in self.reaching_poses:
+        for reaching_pose in (None, *self.reaching_poses):
             try:
-                goal = self.solved_joints(tool_frame_goal, reaching_pose, joints)
+                path = self.solved_path(tool_frame_goal, joints, reaching_pose)
             except PlanFailure:
                 continue
-            lowered_start, lowered_goal = list(start), list(goal)
-            lowered_start[shoulder_lift] = self.lowered_shoulder_lift
-            lowered_goal[shoulder_lift] = self.lowered_shoulder_lift
-            for way in ([goal], [lowered_start, lowered_goal, goal]):
+            if reaching_pose is None:
+                ways = [path]
+            else:
+                at_reaching_pose = list(start)
+                for joint, position in zip(self.arm_joints, reaching_pose):
+                    at_reaching_pose[names.index(joint.name.name)] = position
+                ways = [
+                    [*way_to_the_reaching_pose, *path]
+                    for way_to_the_reaching_pose in self.ways_between(
+                        start, at_reaching_pose, names
+                    )
+                ] + self.ways_between(start, path[-1], names)
+            for way in ways:
                 reach = [
                     MoveJointsMotion(names=names, positions=positions)
                     for positions in way
                 ]
-                if self.keeps_the_hand_below_the_head(reach):
+                if self.keeps_clear(reach):
                     return reach
         return None
 
-    def solved_joints(
+    def ways_between(
+        self, start: list[float], goal: list[float], names: list[str]
+    ) -> list[list[list[float]]]:
+        """
+        :param start: Where the joints are.
+        :param goal: Where the joints are to be.
+        :param names: The names of the joints, in the order of the positions.
+        :return: The ways from the start to the goal to try, each as the joint positions
+            it passes through: straight there; then, for each of
+            :attr:`lowered_shoulder_lifts`, with the upper arm lowered while the elbow
+            opens, the shoulder turning to the goal either with the elbow or after it.
+        """
+        shoulder_pan = names.index(self.arm_joints[0].name.name)
+        shoulder_lift = names.index(self.arm_joints[1].name.name)
+        ways = [[goal]]
+        for lift in self.lowered_shoulder_lifts:
+            lowered_start, lowered_goal = list(start), list(goal)
+            lowered_start[shoulder_lift] = lift
+            lowered_goal[shoulder_lift] = lift
+            turned_late = list(lowered_goal)
+            turned_late[shoulder_pan] = start[shoulder_pan]
+            ways.append([lowered_start, lowered_goal, goal])
+            ways.append([lowered_start, turned_late, lowered_goal, goal])
+        return ways
+
+    def solved_path(
         self,
         tool_frame_goal: Pose,
-        reaching_pose: tuple[float, ...],
         joints: list[ActiveConnection1DOF],
-    ) -> list[float]:
+        reaching_pose: tuple[float, ...] | None = None,
+    ) -> list[list[float]]:
         """
         :param tool_frame_goal: Where the tool frame is to be.
-        :param reaching_pose: The arm's joints the solve starts from.
-        :param joints: The joints whose solved positions are asked for.
-        :return: Where the joints end up when the tool frame is brought to the goal in a
-            kinematically simulated world.
+        :param joints: The joints whose positions are asked for.
+        :param reaching_pose: The arm's joints the solve starts from; where the arm is
+            now if not given.
+        :return: :attr:`path_waypoints` positions of the joints, evenly spread over the
+            way a kinematically simulated solve brings the tool frame to the goal, the
+            last where they end up.
         :raises PlanFailure: If the solve does not get the tool frame there.
         """
         context = Context(world=self.world, robot=self.robot, evaluate_conditions=False)
         with self.world.reset_state_context():
-            for connection, position in zip(self.arm_joints, reaching_pose):
+            for connection, position in zip(self.arm_joints, reaching_pose or ()):
                 connection.position = position
-            with ExecutionEnvironment(
-                ExecutionType.KINEMATICALLY_SIMULATED,
-                collision_avoidance=self.collision_avoidance,
-            ):
-                sequential(
-                    [
-                        MoveToolCenterPointMotion(
-                            tool_frame_goal, self.arm, allow_gripper_collision=True
-                        )
-                    ],
-                    context=context,
-                ).plan.perform()
-            return [float(joint.position) for joint in joints]
+            path = JointPath(_world=self.world, joints=joints)
+            try:
+                with ExecutionEnvironment(
+                    ExecutionType.KINEMATICALLY_SIMULATED,
+                    collision_avoidance=self.collision_avoidance,
+                ):
+                    sequential(
+                        [
+                            MoveToolCenterPointMotion(
+                                tool_frame_goal, self.arm, allow_gripper_collision=True
+                            )
+                        ],
+                        context=context,
+                    ).plan.perform()
+            finally:
+                path.stop()
+            positions = path.positions + [[float(joint.position) for joint in joints]]
+            picked = np.linspace(0, len(positions) - 1, self.path_waypoints + 1)
+            return [positions[int(round(index))] for index in picked[1:]]
 
-    def keeps_the_hand_below_the_head(self, reach: list[MoveJointsMotion]) -> bool:
+    def keeps_clear(self, reach: list[MoveJointsMotion]) -> bool:
         """
         :param reach: Motions in joint space, in order.
-        :return: Whether the hand stays below the top of the head while each motion
-            moves its joints straight to their goals, from where they are now.
+        :return: Whether the hand stays below the top of the head and Tiago out of
+            the kitchen's furniture while each motion moves its joints straight to their
+            goals, from where they are now.
         """
         tool_frame = self.arm.end_effector.tool_frame
         ceiling = self.extent(self.world.get_body_by_name(TiagoMujocoBody.HEAD)).max_z
@@ -1168,9 +1240,21 @@ class TiagoRoboCasaTask(ABC):
                     height = self.world.compute_forward_kinematics_np(
                         self.world.root, tool_frame
                     )[2, 3]
-                    if height > ceiling:
+                    if height > ceiling or self.touches_the_kitchen():
                         return False
         return True
+
+    def touches_the_kitchen(self) -> bool:
+        """
+        :return: Whether Tiago's body reaches into anything in the kitchen it is not
+            allowed to touch.
+        """
+        robot_bodies = set(self.robot.bodies_with_collision)
+        return any(
+            contact.distance < 0.0
+            for contact in self.world.collision_manager.compute_collisions().contacts
+            if (contact.body_a in robot_bodies) != (contact.body_b in robot_bodies)
+        )
 
     @property
     def arm_joints(self) -> list[ActiveConnection1DOF]:
