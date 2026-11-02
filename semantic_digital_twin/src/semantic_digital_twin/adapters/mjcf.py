@@ -527,6 +527,9 @@ class MJCFParser(WorldModelParser):
                     mujoco_geom.material
                 )
                 meshscale = Scale(*mujoco_mesh.scale)
+                origin_transform = origin_transform @ self.mesh_file_frame_in_geom(
+                    mujoco_mesh
+                )
                 if mujoco_material is None:
                     return Mesh(
                         filename=filename,
@@ -566,6 +569,30 @@ class MJCFParser(WorldModelParser):
                         )
 
         raise NotImplementedError(f"Geometry type {mujoco_geom.type} not implemented.")
+
+    @staticmethod
+    def mesh_file_frame_in_geom(
+        mujoco_mesh: mujoco.MjsMesh,
+    ) -> HomogeneousTransformationMatrix:
+        """
+        :param mujoco_mesh: The mesh asset a geom shows.
+        :return: The frame the mesh file is written in, relative to the geom: MuJoCo
+            moves the file's vertices by the asset's ``refpos`` and turns them by the
+            inverse of its ``refquat`` before it places them in the geom.
+        """
+        reference_position = mujoco_mesh.refpos * mujoco_mesh.scale
+        reference_orientation = mujoco_mesh.refquat / numpy.linalg.norm(
+            mujoco_mesh.refquat
+        )
+        return HomogeneousTransformationMatrix.from_xyz_quaternion(
+            pos_x=reference_position[0],
+            pos_y=reference_position[1],
+            pos_z=reference_position[2],
+            quat_w=reference_orientation[0],
+            quat_x=reference_orientation[1],
+            quat_y=reference_orientation[2],
+            quat_z=reference_orientation[3],
+        ).inverse()
 
     def parse_joint(
         self,

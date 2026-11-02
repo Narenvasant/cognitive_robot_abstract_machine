@@ -1,0 +1,10 @@
+<mujoco>
+  <asset>
+    <mesh name="laid_down_plate" file="standing_plate.obj" scale="2 2 2" refpos="0 0 0.1" refquat="0.7071068 0.7071068 0 0"/>
+  </asset>
+  <worldbody>
+    <body name="plate" pos="1 0 0">
+      <geom type="mesh" mesh="laid_down_plate" pos="0 0.5 0" quat="0.7071068 0 0 0.7071068"/>
+    </body>
+  </worldbody>
+</mujoco>

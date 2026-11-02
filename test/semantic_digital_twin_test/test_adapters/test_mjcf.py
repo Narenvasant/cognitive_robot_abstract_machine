@@ -1,6 +1,7 @@
 import os.path
 import shutil
 
+import mujoco
 import numpy
 import pytest
 
@@ -239,8 +240,8 @@ def test_visual_geometry_is_left_out_where_the_body_already_collides():
 
 UNNAMED_BODIES_SCENE = os.path.join(DATASET_DIR, "unnamed_bodies_scene.xml")
 """
-Scene shaped like a RoboCasa object: an unnamed body wrapping the body named
-``object``, which holds the geometry in an unnamed body of its own.
+Scene shaped like a RoboCasa object: an unnamed body wrapping the body named ``object``,
+which holds the geometry in an unnamed body of its own.
 """
 
 
@@ -413,3 +414,39 @@ def test_a_scene_named_by_a_package_uri_is_read_from_that_package(
     assert [body.name for body in from_package.kinematic_structure_entities] == [
         body.name for body in from_file.kinematic_structure_entities
     ]
+
+
+# %% a mesh laid out in the frame of its file
+
+REORIENTED_MESH_SCENE = os.path.join(DATASET_DIR, "reoriented_mesh_scene.xml")
+"""
+Scene whose mesh file holds a standing plate, which the mesh asset's ``refpos`` and
+``refquat`` lay down.
+"""
+
+
+def test_a_mesh_lies_where_its_reference_frame_puts_it():
+    """
+    RoboCasa models whose file is written in another frame, a cutting board stored
+    upright among them, are laid out by the mesh asset's reference frame; MuJoCo's own
+    compiled vertices are the definition of where the mesh lies.
+    """
+    model = mujoco.MjModel.from_xml_path(REORIENTED_MESH_SCENE)
+    data = mujoco.MjData(model)
+    mujoco.mj_kinematics(model, data)
+    [geom] = numpy.flatnonzero(model.geom_type == mujoco.mjtGeom.mjGEOM_MESH)
+    mesh_vertices = model.mesh_vert[
+        model.mesh_vertadr[0] : model.mesh_vertadr[0] + model.mesh_vertnum[0]
+    ]
+    simulated = (
+        mesh_vertices @ data.geom_xmat[geom].reshape(3, 3).T + data.geom_xpos[geom]
+    )
+
+    world = MJCFParser.from_file(REORIENTED_MESH_SCENE).parse()
+    [plate] = [body for body in world.bodies if body.name.name == "plate"]
+    [mesh] = plate.visual.shapes
+    parsed = mesh.mesh_in_frame(world.root).bounds
+
+    assert parsed == pytest.approx(
+        numpy.array([simulated.min(axis=0), simulated.max(axis=0)]), abs=1e-6
+    )
