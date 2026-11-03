@@ -263,6 +263,12 @@ class TiagoRoboCasaTask(ABC):
     enough that it does not swing into the furniture below the counter.
     """
 
+    lowest_hand_height: float = 0.3
+    """
+    How high above the floor the hand stays on its way to a goal, in metres: the
+    floor is no obstacle to the collision checks, which let the wheels touch it.
+    """
+
     path_waypoints: int = 8
     """
     Through how many positions a reach follows the path of a solve.
@@ -1219,9 +1225,9 @@ class TiagoRoboCasaTask(ABC):
     def keeps_clear(self, reach: list[MoveJointsMotion]) -> bool:
         """
         :param reach: Motions in joint space, in order.
-        :return: Whether the hand stays below the top of the head and Tiago out of
-            the kitchen's furniture while each motion moves its joints straight to their
-            goals, from where they are now.
+        :return: Whether the hand stays between :attr:`lowest_hand_height` and the top
+            of the head, and nothing :meth:`collides`, while each motion moves its joints
+            straight to their goals, from where they are now.
         """
         tool_frame = self.arm.end_effector.tool_frame
         ceiling = self.extent(self.world.get_body_by_name(TiagoMujocoBody.HEAD)).max_z
@@ -1240,20 +1246,23 @@ class TiagoRoboCasaTask(ABC):
                     height = self.world.compute_forward_kinematics_np(
                         self.world.root, tool_frame
                     )[2, 3]
-                    if height > ceiling or self.touches_the_kitchen():
+                    if (
+                        not self.lowest_hand_height <= height <= ceiling
+                        or self.collides()
+                    ):
                         return False
         return True
 
-    def touches_the_kitchen(self) -> bool:
+    def collides(self) -> bool:
         """
-        :return: Whether Tiago's body reaches into anything in the kitchen it is not
-            allowed to touch.
+        :return: Whether a part of Tiago reaches into another part of it or into anything
+            in the kitchen it is not allowed to touch.
         """
         robot_bodies = set(self.robot.bodies_with_collision)
         return any(
             contact.distance < 0.0
             for contact in self.world.collision_manager.compute_collisions().contacts
-            if (contact.body_a in robot_bodies) != (contact.body_b in robot_bodies)
+            if contact.body_a in robot_bodies or contact.body_b in robot_bodies
         )
 
     @property

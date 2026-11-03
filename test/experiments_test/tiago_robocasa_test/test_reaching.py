@@ -108,3 +108,37 @@ def test_the_arm_never_passes_through_the_kitchen_on_its_way_to_the_object():
     )
 
     assert deepest > 0.0
+
+
+def test_the_arm_keeps_off_the_floor_and_off_tiago_on_its_way_to_the_object():
+    """
+    On its way to a reaching pose the arm may swing down beside the base, where the
+    floor and Tiago's own body stop it, though neither is part of the kitchen.
+    """
+    task = CupcakeCleanup()
+    task.layout = LayoutType.LAYOUT013
+    task.seed = 52
+    task.build_world()
+    [step, _] = task.steps
+    reach = reach_to_the_pre_grasp(step)
+    robot = set(step.robot.bodies_with_collision)
+    tool_frame = step.arm.end_effector.tool_frame
+
+    lowest, deepest = np.inf, np.inf
+    for _ in states_along(step, reach):
+        lowest = min(
+            lowest,
+            task.world.compute_forward_kinematics_np(task.world.root, tool_frame)[2, 3],
+        )
+        deepest = min(
+            deepest,
+            *(
+                contact.distance
+                for contact in task.world.collision_manager.compute_collisions().contacts
+                if contact.body_a in robot or contact.body_b in robot
+            ),
+            np.inf,
+        )
+
+    assert lowest >= step.lowest_hand_height
+    assert deepest > 0.0
