@@ -142,3 +142,36 @@ def test_the_arm_keeps_off_the_floor_and_off_tiago_on_its_way_to_the_object():
 
     assert lowest >= step.lowest_hand_height
     assert deepest > 0.0
+
+
+def test_the_arm_keeps_the_margin_the_collision_avoidance_holds_it_to():
+    """
+    The collision avoidance holds the arm a margin away from the kitchen while a plan
+    runs, so a reach that passes inside that margin stalls there, though it touches
+    nothing.
+    """
+    task = CupcakeCleanup()
+    task.layout = LayoutType.LAYOUT013
+    task.seed = 52
+    task.build_world()
+    [step, _] = task.steps
+    reach = reach_to_the_pre_grasp(step)
+    robot = set(step.robot.bodies_with_collision)
+    collision_manager = task.world.collision_manager
+
+    closest = np.inf
+    for _ in states_along(step, reach):
+        closest = min(
+            closest,
+            *(
+                contact.distance
+                - collision_manager.get_buffer_zone_distance(
+                    contact.body_a, contact.body_b
+                )
+                for contact in collision_manager.compute_collisions().contacts
+                if (contact.body_a in robot) != (contact.body_b in robot)
+            ),
+            np.inf,
+        )
+
+    assert closest > 0.0
