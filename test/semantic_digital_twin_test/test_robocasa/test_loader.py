@@ -186,11 +186,35 @@ def test_load_task_with_a_seed_places_the_same_objects_every_time(robocasa_loade
     ]
 
 
+def test_load_task_with_a_seed_puts_the_objects_on_the_same_counter_every_time(
+    robocasa_loader,
+):
+    """
+    A task that places its objects to the left or right of a fixture chooses the same
+    side on every seeded build, though RoboCasa offers the sides in an order that
+    changes from build to build.
+    """
+    from robocasa.models.scenes.scene_registry import LayoutType, StyleType
+
+    first, second = (
+        robocasa_loader.load_task(
+            "CupcakeCleanup",
+            layout_id=LayoutType.LAYOUT013,
+            style_id=StyleType.STYLE001,
+            seed=52,
+        )
+        for _ in range(2)
+    )
+
+    assert [body.global_pose.to_np() for body in first.manipulated_objects] == [
+        pytest.approx(body.global_pose.to_np()) for body in second.manipulated_objects
+    ]
+
+
 def test_load_task_applies_the_fixture_updates_it_is_given(robocasa_loader):
     """
-    Updates to the fixtures of a layout change the kitchen RoboCasa composes: with
-    every counter lowered, the plate the task sets on a counter stands at the lowered
-    height.
+    Updates to the fixtures of a layout change the kitchen RoboCasa composes: with every
+    counter lowered, the plate the task sets on a counter stands at the lowered height.
     """
     import yaml
     from robocasa.models.scenes.scene_registry import (
@@ -292,8 +316,8 @@ def test_load_task_opens_a_drawer_towards_positive_positions(robocasa_loader):
 
 def test_load_task_names_the_fixtures_the_task_refers_to(robocasa_loader):
     """
-    The fixtures a task refers to, such as the drawer to open, are given by the name
-    the task refers to them by, as their bodies in the loaded world.
+    The fixtures a task refers to, such as the drawer to open, are given by the name the
+    task refers to them by, as their bodies in the loaded world.
     """
     from robocasa.models.scenes.scene_registry import LayoutType, StyleType
 
@@ -370,7 +394,6 @@ PINNED_CATEGORY = "yogurt"
 """
 The object category a test pins a task's object to.
 """
-
 
 LOWERED_COUNTER_HEIGHT = 0.75
 """

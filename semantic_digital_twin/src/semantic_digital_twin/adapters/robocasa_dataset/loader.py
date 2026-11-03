@@ -21,6 +21,9 @@ from semantic_digital_twin.adapters.robocasa_dataset.exceptions import (
     RoboCasaObjectInstanceIndexError,
     RoboCasaTaskNotFoundError,
 )
+from semantic_digital_twin.adapters.robocasa_dataset.mujoco_compat import (
+    counter_regions_in_a_fixed_order,
+)
 from semantic_digital_twin.adapters.robocasa_dataset.semantics import (
     RoboCasaKitchenApplianceCategory,
     RoboCasaKitchenApplianceResolver,
@@ -399,21 +402,22 @@ class RoboCasaDatasetLoader:
         if task_name not in self._available_task_names():
             raise RoboCasaTaskNotFoundError(task_name, self._available_task_names())
 
-        environment = robosuite.make(
-            env_name=task_name,
-            robots=self.scene_composition_robot,
-            layout_ids=int(layout_id),
-            style_ids=int(style_id),
-            update_fxtr_cfg_dict=fixture_updates,
-            has_renderer=False,
-            has_offscreen_renderer=False,
-            use_camera_obs=False,
-            control_freq=20,
-            ignore_done=True,
-            seed=seed,
-            **(task_parameters or {}),
-        )
-        environment.reset()
+        with counter_regions_in_a_fixed_order():
+            environment = robosuite.make(
+                env_name=task_name,
+                robots=self.scene_composition_robot,
+                layout_ids=int(layout_id),
+                style_ids=int(style_id),
+                update_fxtr_cfg_dict=fixture_updates,
+                has_renderer=False,
+                has_offscreen_renderer=False,
+                use_camera_obs=False,
+                control_freq=20,
+                ignore_done=True,
+                seed=seed,
+                **(task_parameters or {}),
+            )
+            environment.reset()
         return environment
 
     def load_task_from_environment(self, environment: Any) -> RoboCasaTask:
