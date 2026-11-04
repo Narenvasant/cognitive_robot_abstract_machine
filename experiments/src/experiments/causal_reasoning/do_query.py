@@ -12,7 +12,7 @@ about the asking itself is particular to one dataset.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from krrood.parametrization.model_registries import RelationalCircuitRegistry
@@ -61,6 +61,11 @@ class CauseRegion:
     """
     How likely the effect is under an intervention setting the cause to the region,
     adjusted for the question's confounders.
+    """
+
+    cause_values: Any = field(default=None, compare=False)
+    """
+    The set of the cause's values the region covers, which ``value in`` tests.
     """
 
     @property
@@ -238,6 +243,7 @@ class DoQuery(ABC):
                 adjusted_probability=self._effect_probability(
                     adjusted_circuit, region.event, effect_variable
                 ),
+                cause_values=region.event.simple_sets[0][cause_variable],
             )
             for region in causal_circuit.disjoint_support_regions_of(cause_variable)
         ]

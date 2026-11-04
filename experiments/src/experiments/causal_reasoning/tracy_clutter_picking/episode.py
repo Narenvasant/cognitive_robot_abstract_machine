@@ -20,6 +20,7 @@ from coraplex.plans.failures import PlanFailure
 from coraplex.robot_plans.actions.core.pick_up import PickUpAction
 from cramph.composites import Sequence
 from cramph.context import StatechartContext
+from cramph.executor import ExecutorExtension
 from cramph.statechart import Statechart
 from krrood_spatial_math.spatial_types import Pose, RotationMatrix
 from PIL import Image
@@ -173,10 +174,30 @@ class PickEpisode:
         :raises EpisodePlanningFailedError: If a motion of the pick could not be
             planned; the attempt is then dropped rather than recorded.
         """
+        self.prepare(layout)
+        return self.perform()
+
+    def prepare(self, layout: ClutterSceneLayout) -> MilkClutterWorld:
+        """
+        Build the layout's clutter, with the carton to pick annotated as milk.
+
+        :param layout: The layout to attempt.
+        :return: The scene, which :meth:`perform` then picks in.
+        """
         self.scene = MilkClutterWorld(layout)
         self.target_milk = Milk(root=self.scene.target)
         with self.scene.world.modify_world():
             self.scene.world.add_semantic_annotations([self.target_milk])
+        return self.scene
+
+    def perform(self) -> ClutterPickOutcome:
+        """
+        Pick the target of the scene :meth:`prepare` built, and measure the result.
+
+        :return: What the attempt did to the scene.
+        :raises EpisodePlanningFailedError: If a motion of the pick could not be
+            planned.
+        """
         names = [milk.name.name for milk in self.scene.milks]
         simulation = MujocoSim(
             world=self.scene.world,
@@ -229,6 +250,7 @@ class PickEpisode:
         executor = PhysicallySimulatedPlanExecutor(
             StatechartContext.with_extensions(world, [RobotAccess(self.scene.robot)]),
             simulation=simulation,
+            extensions=self.executor_extensions(),
         )
         statechart = Statechart(context=executor.context)
         statechart.add_node(
@@ -249,6 +271,12 @@ class PickEpisode:
             raise EpisodePlanningFailedError(str(error)) from error
         finally:
             executor.close()
+
+    def executor_extensions(self) -> list[ExecutorExtension]:
+        """
+        :return: The extensions the pick's executor runs with besides its own; none.
+        """
+        return []
 
     def _outcome(
         self, before: BodyPositions, after: BodyPositions
