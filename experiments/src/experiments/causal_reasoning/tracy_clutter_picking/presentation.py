@@ -46,6 +46,7 @@ from cramera_protocol.live_messages import (
     SceneDestination,
 )
 from experiments.causal_reasoning.do_query import CauseRegion, DoQueryAnswer
+from experiments.causal_reasoning.tracy_clutter_picking.backdrop import KitchenBackdrop
 from experiments.causal_reasoning.tracy_clutter_picking.dataset import (
     ClutterPickDataset,
     recorded_attempts,
@@ -881,6 +882,11 @@ class Presentation:
     How long, in seconds, the viewer shows a finished run before the next one starts.
     """
 
+    backdrop: Optional[KitchenBackdrop] = None
+    """
+    The kitchen stood around Tracy in every run, if any.
+    """
+
     runs: List[Dict[str, Any]] = field(default_factory=list, init=False)
     """
     The index of the runs done so far.
@@ -929,6 +935,8 @@ class Presentation:
         started = datetime.now().isoformat(timespec="seconds")
         episode = PresentedEpisode(headless=True)
         scene = episode.prepare(layout)
+        if self.backdrop is not None:
+            self.backdrop.add_to(scene.world)
         episode.visualization = LiveVisualization(
             scene.world, port=self.live_port
         ).start()
@@ -944,7 +952,7 @@ class Presentation:
             failure = str(error)
             logger.warning("%s: the motion failed: %s", run, failure)
         recorded_scene = None if outcome is None else outcome.to_scene(layout)
-        bundle = self.save_recording(episode.visualization, run)
+        bundle = self.save_recording(episode.visualization, run, started)
         episode.visualization.stop()
         diagnosis_document = diagnosis.diagnose(recorded_scene, layout, failure)
         self.directory.write(
@@ -983,13 +991,16 @@ class Presentation:
         )
 
     @staticmethod
-    def save_recording(visualization: LiveVisualization, run: str) -> Optional[str]:
+    def save_recording(
+        visualization: LiveVisualization, run: str, started: str
+    ) -> Optional[str]:
         """
         :param visualization: The run's live visualization.
         :param run: The run's identifier.
+        :param started: When the run started, in ISO format.
         :return: The name of the cramera recording the run was saved as, if any.
         """
-        name = f"tracy_clutter_{run}"
+        name = f"tracy_clutter_{run}_{started.replace('-', '').replace(':', '')}"
         publisher = visualization.publisher
         status = publisher.recording_status()
         if status.state is not RecordingState.RECORDING or status.frame_count == 0:
@@ -1069,8 +1080,17 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--directory", type=Path, default=None)
+    parser.add_argument(
+        "--kitchen",
+        type=Path,
+        default=None,
+        help="the object library's objects/articulated folder, to stand a kitchen "
+        "around Tracy",
+    )
     arguments = parser.parse_args()
     presentation = Presentation(seed=arguments.seed, live_port=arguments.port)
+    if arguments.kitchen is not None:
+        presentation.backdrop = KitchenBackdrop(arguments.kitchen)
     if arguments.directory is not None:
         presentation.directory = ExperimentDirectory(arguments.directory)
     presentation.run(arguments.runs)
