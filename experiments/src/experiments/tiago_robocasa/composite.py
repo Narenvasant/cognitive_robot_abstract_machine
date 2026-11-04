@@ -438,6 +438,13 @@ class PutOnACuttingBoard(TiagoPickPlaceTask):
     with the object in hand, as :attr:`MoveAlongTheCounter.drop_from` measures.
     """
 
+    base_follows_the_arm: bool = True
+    """
+    The base comes along while the hand carries the object over the board: a board
+    within reach on paper is a stretch the arm, holding the object, stalls short of in
+    the physics.
+    """
+
 
 # %% the tasks
 
