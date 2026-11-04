@@ -337,14 +337,14 @@ def test_both_circuit_types_weigh_the_cause_regions_the_same(query):
         interventional,
         [
             region.event
-            for region in units._extract_disjoint_regions_for_variable(cause)
+            for region in units.disjoint_support_regions_of(cause)
         ],
     ) == pytest.approx(
         probabilities_of(
             units.backdoor_adjustment(cause, query.effect, query.adjustment),
             [
                 region.event
-                for region in units._extract_disjoint_regions_for_variable(cause)
+                for region in units.disjoint_support_regions_of(cause)
             ],
         )
     )

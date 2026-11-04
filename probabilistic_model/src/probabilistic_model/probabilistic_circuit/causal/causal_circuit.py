@@ -609,7 +609,7 @@ class CausalCircuit(Generic[RepresentationType], SubClassSafeGeneric):
         adjustment_partitions = self._adjustment_partitions(adjustment_variables)
         products: list[RepresentationType] = []
         log_weights: list[float] = []
-        for cause_region in self._extract_disjoint_regions_for_variable(cause_variable):
+        for cause_region in self.disjoint_support_regions_of(cause_variable):
             effect_branch = self._effect_branch_for_cause_region(
                 cause_region, effect_variable, adjustment_partitions
             )
@@ -753,9 +753,9 @@ class CausalCircuit(Generic[RepresentationType], SubClassSafeGeneric):
             as a cause, and how many values it enumerates for it as an adjustment
             variable.
         """
-        return len(self._extract_disjoint_regions_for_variable(variable))
+        return len(self.disjoint_support_regions_of(variable))
 
-    def _extract_disjoint_regions_for_variable(
+    def disjoint_support_regions_of(
         self,
         variable: Variable,
         base_circuit: RepresentationType = None,
@@ -829,7 +829,7 @@ class CausalCircuit(Generic[RepresentationType], SubClassSafeGeneric):
         """
         best_probability = -1.0
         best_region: Event | None = None
-        for region in self._extract_disjoint_regions_for_variable(variable):
+        for region in self.disjoint_support_regions_of(variable):
             region_probability = float(
                 interventional_circuit.probability(
                     region.event.fill_missing_variables_pure(
@@ -850,7 +850,7 @@ class CausalCircuit(Generic[RepresentationType], SubClassSafeGeneric):
         Return a :class:`SupportRegion` for the joint support of variables.
 
         Decomposes each variable's value the same way
-        :meth:`_extract_disjoint_regions_for_variable` does (see
+        :meth:`disjoint_support_regions_of` does (see
         `_split_into_atomic_values`) before combining them, and takes the Cartesian
         product across *variables* to enumerate every joint combination -- needed
         because a discrete adjustment variable's own marginal support already unions

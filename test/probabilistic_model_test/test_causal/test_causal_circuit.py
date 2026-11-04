@@ -401,7 +401,7 @@ def test_a_rounded_cause_region_is_intervened_on_with_a_branch_per_region():
     adjusted = causal_circuit.backdoor_adjustment(x, y, [z])
     assert isinstance(adjusted.root, SumUnit)
     assert len(adjusted.root.subcircuits) == len(
-        causal_circuit._extract_disjoint_regions_for_variable(x)
+        causal_circuit.disjoint_support_regions_of(x)
     )
 
 
@@ -529,7 +529,7 @@ def test_disjoint_regions_keep_the_branches_the_leaf_regions_merge(
     correlated_causal_circuit,
 ):
     causal_circuit, x, _, _ = correlated_causal_circuit
-    disjoint_regions = causal_circuit._extract_disjoint_regions_for_variable(x)
+    disjoint_regions = causal_circuit.disjoint_support_regions_of(x)
     assert len(causal_circuit._extract_leaf_regions_for_variable(x)) == 1
     # the two branches of x are equally weighted and disjoint
     assert sorted(region.probability for region in disjoint_regions) == pytest.approx(
@@ -541,7 +541,7 @@ def test_disjoint_and_leaf_regions_agree_on_one_contiguous_region(
     independent_causal_circuit,
 ):
     causal_circuit, _, y = independent_causal_circuit
-    assert len(causal_circuit._extract_disjoint_regions_for_variable(y)) == len(
+    assert len(causal_circuit.disjoint_support_regions_of(y)) == len(
         causal_circuit._extract_leaf_regions_for_variable(y)
     )
 

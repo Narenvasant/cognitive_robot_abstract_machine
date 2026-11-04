@@ -98,7 +98,7 @@ def regions(
         [cause],
         [effect],
     )
-    return tuple(causal_circuit._extract_disjoint_regions_for_variable(cause))
+    return tuple(causal_circuit.disjoint_support_regions_of(cause))
 
 
 # %% one region per range, however the support writes it
@@ -208,7 +208,7 @@ def test_the_regions_come_in_the_order_of_their_values(
     circuit = two_equally_weighted_regions.probabilistic_circuit
     reversed_support = SupportListedInReverse(circuit.support)
     monkeypatch.setattr(type(circuit), "support", property(lambda _: reversed_support))
-    regions = two_equally_weighted_regions._extract_disjoint_regions_for_variable(cause)
+    regions = two_equally_weighted_regions.disjoint_support_regions_of(cause)
     values = values_of(regions, cause)
     assert values == sorted(values)
 
@@ -218,7 +218,7 @@ def test_the_best_of_two_equally_good_regions_is_the_first_one(
 ) -> None:
     interventional = two_equally_weighted_regions.backdoor_adjustment(cause, effect)
     best = two_equally_weighted_regions._best_disjoint_region(cause, interventional)
-    [first, _] = two_equally_weighted_regions._extract_disjoint_regions_for_variable(
+    [first, _] = two_equally_weighted_regions.disjoint_support_regions_of(
         cause
     )
     assert best == first.event
