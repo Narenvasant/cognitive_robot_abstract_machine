@@ -314,10 +314,28 @@ class SymbolGraph(metaclass=SingletonMeta):
         )
         self._instance_graph.remove_node(wrapped_instance.index)
 
-    def remove_dead_instances(self):
-        for node in self._instance_graph.nodes():
-            if node.instance is None:
-                self.remove_node(node)
+    def remove_dead_instances(self) -> None:
+        """
+        Forget every wrapped instance whose instance was garbage collected.
+        """
+        dead_nodes = [
+            node for node in self._instance_graph.nodes() if node.instance is None
+        ]
+        if not dead_nodes:
+            return
+        for node in dead_nodes:
+            self._instance_graph.remove_node(node.index)
+        self._instance_index = {
+            identity: wrapped_instance
+            for identity, wrapped_instance in self._instance_index.items()
+            if wrapped_instance.instance is not None
+        }
+        for wrapped_instances in self._class_to_wrapped_instances.values():
+            wrapped_instances[:] = [
+                wrapped_instance
+                for wrapped_instance in wrapped_instances
+                if wrapped_instance.instance is not None
+            ]
 
     def get_instances_of_type(self, type_: Type) -> Iterable:
         """

@@ -44,3 +44,21 @@ def test_memory_leak():
     assert result == []
 
     assert len(SymbolGraph().wrapped_instances) == 0
+
+
+def test_dead_instance_is_forgotten_by_the_instance_index():
+    """
+    Test that removing the dead instances also forgets them in the index from an
+    instance's identity to its wrapper, so a new object reusing that identity is not
+    taken for the dead one.
+    """
+
+    def identity_of_dead_position() -> int:
+        position = KRROODPosition(1, 2, 3)
+        return id(position)
+
+    identity = identity_of_dead_position()
+
+    SymbolGraph().remove_dead_instances()
+
+    assert identity not in SymbolGraph()._instance_index
