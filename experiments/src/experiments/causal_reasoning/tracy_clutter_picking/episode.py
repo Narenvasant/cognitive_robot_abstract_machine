@@ -1,8 +1,7 @@
 """
 One attempt to pick the target carton out of a layout's clutter, with MuJoCo standing in
-for Tracy and the target held by contact friction alone:
-:class:`~experiments.causal_reasoning.tracy_clutter_picking.pick_up_action.PickUpActionMujoco`
-run as an ordinary coraplex plan against a physically simulated robot.
+for Tracy and the target held by contact friction alone: a coraplex pick-up performed by
+a :class:`~coraplex.plans.executors.PhysicallySimulatedPlanExecutor`.
 """
 
 from __future__ import annotations
@@ -13,11 +12,16 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
+import mujoco
 import numpy as np
-from coraplex.datastructures.dataclasses import Context
-from coraplex.execution_environment import PhysicallySimulatedRobot
+from coraplex.plans.context_extensions import RobotAccess
+from coraplex.plans.executors import PhysicallySimulatedPlanExecutor
 from coraplex.plans.failures import PlanFailure
-from coraplex.plans.factories import sequential
+from coraplex.robot_plans.actions.core.pick_up import PickUpAction
+from cramph.composites import Sequence
+from cramph.context import StatechartContext
+from cramph.statechart import Statechart
+from krrood_spatial_math.spatial_types import Pose, RotationMatrix
 from PIL import Image
 from typing_extensions import Dict, List, Optional
 
@@ -29,10 +33,9 @@ from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     EpisodePlanningFailedError,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.scene import MilkClutterWorld
-from experiments.causal_reasoning.tracy_clutter_picking.pick_up_action import (
-    PickUpActionMujoco,
-)
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
+from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
+from semantic_digital_twin.semantic_annotations.semantic_annotations import Milk
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +124,44 @@ class PickEpisode:
     Height, in pixels, of a screenshot of the run.
     """
 
+    lift_distance: float = 0.3
+    """
+    How far, in metres, the hand rises with the carton after closing on it: as high as
+    the hover the attempts were recorded with, well clear of the clutter.
+    """
+
+    friction_cone: mujoco.mjtCone = mujoco.mjtCone.mjCONE_ELLIPTIC
+    """
+    The friction cone the contacts use: the elliptic cone is the exact one, where the
+    default pyramid only approximates it and lets a squeezed carton creep between the
+    pads.
+    """
+
+    impedance_ratio: float = 10.0
+    """
+    How much harder sliding is than pressing in: at MuJoCo's default of 1 a held carton
+    slides out under its own weight despite a firm squeeze.
+    """
+
+    no_slip_iterations: int = 10
+    """
+    Passes spent removing the slip soft contacts leave, so a held carton stays where the
+    pads hold it.
+    """
+
     scene: Optional[MilkClutterWorld] = field(init=False, default=None)
     """
     The scene of the attempt currently running.
+    """
+
+    target_milk: Optional[Milk] = field(init=False, default=None)
+    """
+    The annotation of the carton to pick in the attempt currently running.
+    """
+
+    simulation: Optional[MujocoSim] = field(init=False, default=None)
+    """
+    The simulation of the attempt currently running.
     """
 
     def run(self, layout: ClutterSceneLayout) -> ClutterPickOutcome:
@@ -136,8 +174,18 @@ class PickEpisode:
             planned; the attempt is then dropped rather than recorded.
         """
         self.scene = MilkClutterWorld(layout)
+        self.target_milk = Milk(root=self.scene.target)
+        with self.scene.world.modify_world():
+            self.scene.world.add_semantic_annotations([self.target_milk])
         names = [milk.name.name for milk in self.scene.milks]
-        simulation = MujocoSim(world=self.scene.world, headless=self.headless)
+        simulation = MujocoSim(
+            world=self.scene.world,
+            headless=self.headless,
+            cone=self.friction_cone,
+            impratio=self.impedance_ratio,
+            noslip_iterations=self.no_slip_iterations,
+        )
+        self.simulation = simulation
         simulation.start_stepped_simulation()
         try:
             simulation.step_simulation(self.settle_time)
@@ -161,31 +209,46 @@ class PickEpisode:
 
     def _pick(self, simulation: MujocoSim) -> None:
         """
-        Pick the target with the left arm, closing the fingers along the layout's grasp
-        yaw.
+        Pick the target with the left arm, coming down on it from above with the
+        fingers closing along the layout's grasp yaw.
 
         :param simulation: The running simulation.
         :raises EpisodePlanningFailedError: If any of the attempt's motions failed, so
             the grasp itself was never tested.
         """
-        context = Context(self.scene.world, self.scene.robot, evaluate_conditions=False)
-        plan = sequential(
-            [
-                PickUpActionMujoco(
-                    object_designator=self.scene.target,
-                    arm=self.scene.pick_arm,
-                    grasp_yaw=self.scene.layout.target.yaw
-                    + self.scene.layout.grasp_yaw,
-                    grasp_half_width=self.scene.milk_size.x / 2,
-                )
-            ],
-            context,
-        ).plan
+        world = self.scene.world
+        grasp = GraspCandidate(
+            self.target_milk,
+            Pose(
+                orientation=RotationMatrix.from_rpy(
+                    pitch=np.pi / 2, yaw=self.scene.layout.grasp_yaw
+                ).quaternion,
+                reference_frame=self.scene.target,
+            ),
+        )
+        executor = PhysicallySimulatedPlanExecutor(
+            StatechartContext.with_extensions(world, [RobotAccess(self.scene.robot)]),
+            simulation=simulation,
+        )
+        statechart = Statechart(context=executor.context)
+        statechart.add_node(
+            Sequence(
+                nodes=[
+                    PickUpAction(
+                        grasp=grasp,
+                        arm=self.scene.pick_arm,
+                        retreat_distance=self.lift_distance,
+                    )
+                ]
+            )
+        )
+        executor.compile(statechart)
         try:
-            with PhysicallySimulatedRobot(simulation=simulation):
-                plan.perform()
+            executor.execute()
         except PlanFailure as error:
             raise EpisodePlanningFailedError(str(error)) from error
+        finally:
+            executor.close()
 
     def _outcome(
         self, before: BodyPositions, after: BodyPositions
