@@ -332,10 +332,10 @@ def causal_graph_document() -> Dict[str, Any]:
     nodes = [
         ("environment", "Environment", CausalNodeKind.CONFOUNDER),
         ("friction", "Grasp friction", CausalNodeKind.CAUSE),
-        ("crowding", "Crowding (adjacent neighbours)", CausalNodeKind.CAUSE),
+        ("crowding", "Crowding", CausalNodeKind.CAUSE),
         ("grasp_yaw", "Grasp yaw", CausalNodeKind.CAUSE),
         ("lifted", "Target lifted", CausalNodeKind.EFFECT),
-        ("side", "Neighbour's side of the closing axis", CausalNodeKind.PART),
+        ("side", "Side of closing axis", CausalNodeKind.PART),
         ("disturbed", "Neighbour disturbed", CausalNodeKind.PART),
     ]
     edges = [
@@ -837,10 +837,16 @@ class PresentedEpisode(PickEpisode):
     def _pick(self, simulation: MujocoSim) -> None:
         if self.video is not None:
             self.video.start(simulation)
+        super()._pick(simulation)
+
+    def perform(self) -> ClutterPickOutcome:
+        """
+        Does what :meth:`PickEpisode.perform` does, and finishes the video once the
+        outcome is measured.
+        """
         try:
-            super()._pick(simulation)
+            return super().perform()
         finally:
-            simulation.step_simulation(self.settle_time)
             if self.video is not None:
                 self.video.stop()
 
@@ -1013,7 +1019,7 @@ class Presentation:
         return {
             "run": run,
             "started": started,
-            "task": "Pick the blue milk carton out of the clutter with the left arm",
+            "task": "Pick the marked milk carton out of the clutter with the left arm",
             "robot": "Tracy",
             "simulation": "MuJoCo, contact friction only, no attachment",
             "parameters": {
