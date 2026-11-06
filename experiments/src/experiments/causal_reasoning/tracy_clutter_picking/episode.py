@@ -34,11 +34,39 @@ from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     EpisodePlanningFailedError,
 )
 from experiments.causal_reasoning.tracy_clutter_picking.scene import MilkClutterWorld
+from physics_simulators.base_simulator import SimulatorState
 from semantic_digital_twin.adapters.multi_sim import MujocoSim
+from semantic_digital_twin.exceptions import SimulationNotStartedError
 from semantic_digital_twin.grasping.grasp_candidates import GraspCandidate
 from semantic_digital_twin.semantic_annotations.semantic_annotations import Milk
 
 logger = logging.getLogger(__name__)
+
+
+# %% stepping the physics in lockstep with the controller
+
+
+class LockstepMujocoSim(MujocoSim):
+    """
+    A MuJoCo simulation stepped by its controller that copies the physics back into the
+    world once per :meth:`step_simulation`, after its last physics step, instead of
+    after every physics step: the controller reads the world only between calls, so the
+    copies in between are never read.
+    """
+
+    def step_simulation(self, duration: timedelta) -> None:
+        if self.simulator.state != SimulatorState.RUNNING:
+            raise SimulationNotStartedError(self.world.root.name.name)
+        step_count = round(duration.total_seconds() / self.simulator.step_size)
+        for _ in range(step_count - 1):
+            self.simulator.pre_step_callback()
+            self.simulator.write_data_to_simulator()
+            self.simulator.step_callback()
+        self.simulator.step()
+        self.simulator.render()
+
+
+# %% one attempt
 
 
 @dataclass
@@ -199,7 +227,7 @@ class PickEpisode:
             planned.
         """
         names = [milk.name.name for milk in self.scene.milks]
-        simulation = MujocoSim(
+        simulation = LockstepMujocoSim(
             world=self.scene.world,
             headless=self.headless,
             cone=self.friction_cone,

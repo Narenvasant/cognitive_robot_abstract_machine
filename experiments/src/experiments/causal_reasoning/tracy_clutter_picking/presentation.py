@@ -9,8 +9,9 @@ experiment directory, ``~/.cramera/experiments/tracy_clutter_picking`` by defaul
 - ``experiment.json``: the recorded attempts and every causal question's answer;
 - ``causal_graph.json``: the causal model the questions assume;
 - ``probability_tree.json``: a joint probability tree over the recorded attempts;
-- ``runs/index.json`` and, per run, ``runs/<run>/neem.json``, ``diagnosis.json`` and
-  ``video.mp4``.
+- ``runs/index.json`` and, per run, ``runs/<run>/answers.json`` (what the causal
+  answers say about the run, written when it starts and completed when it ends),
+  ``neem.json``, ``diagnosis.json`` and ``video.mp4``.
 
 Run with (the ``iai_tracy_description`` ROS package must be built and sourced, and the
 cramera bridge on the path)::
@@ -33,9 +34,10 @@ from enum import StrEnum
 from pathlib import Path
 
 import imageio
+import mujoco
 import numpy as np
 import pandas as pd
-from typing_extensions import Any, Dict, List, Optional
+from typing_extensions import Any, Callable, Dict, List, Optional
 
 import experiments.orm.ormatic_interface  # noqa: F401  # maps the domain for fitting
 from cramph.executor import ExecutorExtension, TickingExecutorExtension
@@ -69,6 +71,19 @@ from experiments.causal_reasoning.tracy_clutter_picking.episode import PickEpiso
 from experiments.causal_reasoning.tracy_clutter_picking.exceptions import (
     EpisodePlanningFailedError,
 )
+from experiments.causal_reasoning.tracy_clutter_picking.explanations import (
+    AnswerRegions,
+    DiagnosisStory,
+    GeneralReading,
+    QuestionKind,
+    RunCauses,
+    RunReading,
+    crowding_of,
+    crowding_text,
+    friction_text,
+    percent,
+    points,
+)
 from experiments.causal_reasoning.tracy_clutter_picking.layout_sampler import (
     ClutterLayoutSampler,
 )
@@ -97,6 +112,7 @@ class ExperimentFile(StrEnum):
     RUN_INDEX = "index.json"
     NEEM = "neem.json"
     DIAGNOSIS = "diagnosis.json"
+    ANSWERS = "answers.json"
     VIDEO = "video.mp4"
 
 
@@ -143,17 +159,6 @@ class ExperimentDirectory:
 
 
 # %% the causal analysis of the recorded attempts
-
-
-class QuestionKind(StrEnum):
-    """
-    Which of the experiment's questions an answer belongs to.
-    """
-
-    FRICTION = "friction"
-    CROWDING_ADJUSTED = "crowding_adjusted"
-    CROWDING_UNADJUSTED = "crowding_unadjusted"
-    CLOSING_AXIS_SIDE = "closing_axis_side"
 
 
 @dataclass
@@ -464,17 +469,6 @@ class ProbabilityTreeExport:
         }
 
 
-def crowding_of(scene: ClutterPickScene) -> int:
-    """
-    :param scene: A recorded attempt.
-    :return: How many of its neighbours stand adjacent to the target.
-    """
-    return sum(
-        neighbour.distance_band is DistanceBand.ADJACENT
-        for neighbour in scene.neighbours
-    )
-
-
 # %% why a pick failed
 
 
@@ -491,7 +485,7 @@ class FactorAssessment:
 
     observed: str
     """
-    Its value in the run.
+    Its value in the run, in words.
     """
 
     probability_at_observed: Optional[float]
@@ -500,9 +494,9 @@ class FactorAssessment:
     value, adjusted for the environment; None where the recorded attempts never had it.
     """
 
-    best_region: str
+    best_value: str
     """
-    The cause's value under which the target comes up most often.
+    The cause's value under which the target comes up most often, in words.
     """
 
     probability_at_best: float
@@ -535,23 +529,25 @@ class FailureDiagnosis:
 
     @staticmethod
     def assess(
-        factor: str, value: Any, observed: str, question: Dict[str, Any]
+        factor: str,
+        value: Any,
+        question: Dict[str, Any],
+        text: Callable[[Any], str],
     ) -> FactorAssessment:
         """
         :param factor: The cause's name.
         :param value: Its value in the run.
-        :param observed: That value in words.
         :param question: The causal answer about the cause.
+        :param text: Puts a value of the cause in words.
         :return: How the cause stood in the run.
         """
-        regions = question["regions"]
-        best = max(regions, key=lambda region: region["adjusted"])
-        matching = [region for region in regions if value in region["holds"]]
+        regions = AnswerRegions(question)
+        here, best = regions.at(value), regions.best
         return FactorAssessment(
             factor=factor,
-            observed=observed,
-            probability_at_observed=matching[0]["adjusted"] if matching else None,
-            best_region=best["description"],
+            observed=text(value),
+            probability_at_observed=None if here is None else here["adjusted"],
+            best_value=text(AnswerRegions.value_of(best)),
             probability_at_best=best["adjusted"],
         )
 
@@ -560,31 +556,32 @@ class FailureDiagnosis:
         scene: Optional[ClutterPickScene],
         layout: ClutterSceneLayout,
         failure: Optional[str],
+        answers: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
         :param scene: The run as an attempt, or None if its motion failed.
         :param layout: The run's layout.
         :param failure: What stopped the run's motion, if anything did.
+        :param answers: The run's answers, with its outcome.
         :return: The diagnosis document: whether the pick succeeded, the causes ranked
             by how much their best value would have raised the chance of the lift, the
-            primary cause and the recommended correction.
+            primary cause, the recommended correction and the reasoning in steps.
         """
         factors = [
             self.assess(
                 "Grasp friction",
                 layout.friction_coefficient,
-                f"{layout.friction_coefficient:.4f}",
                 self.analysis.question(QuestionKind.FRICTION),
+                friction_text,
             )
         ]
         if scene is not None:
-            crowding = crowding_of(scene)
             factors.append(
                 self.assess(
                     "Crowding",
-                    crowding,
-                    f"{crowding} adjacent neighbour(s)",
+                    crowding_of(scene),
                     self.analysis.question(QuestionKind.CROWDING_ADJUSTED),
+                    crowding_text,
                 )
             )
         factors.sort(key=lambda factor: -factor.gap)
@@ -599,28 +596,31 @@ class FailureDiagnosis:
             "disturbedNeighbours": self.disturbed_neighbours(scene),
         }
         if lifted:
-            document["verdict"] = "The target came up; nothing to diagnose."
-            return document
-        if failure is not None:
+            document["verdict"] = "The pick worked: the carton came up."
+        elif failure is not None:
+            document["verdict"] = "The motion stopped before the grasp was tried."
+        else:
+            primary = factors[0]
+            document["primaryCause"] = primary.factor
             document["verdict"] = (
-                f"The motion stopped before the grasp was tested: {failure}"
+                f"The pick failed, mainly because of the {primary.factor.lower()}."
             )
-        primary = factors[0]
-        document["primaryCause"] = primary.factor
-        document["explanation"] = (
-            f"{primary.factor} was {primary.observed}: setting it there makes the lift "
-            f"{self.percent(primary.probability_at_observed)} likely, against "
-            f"{self.percent(primary.probability_at_best)} at {primary.best_region} "
-            f"(backdoor-adjusted for the environment)."
-        )
-        document["correction"] = (
-            f"Set {primary.factor.lower()} to {primary.best_region}, which raises the "
-            f"chance of the lift by {self.percent(primary.gap)}."
-        )
-        document.setdefault(
-            "verdict",
-            f"The pick failed; the primary cause is {primary.factor.lower()}.",
-        )
+            document["explanation"] = (
+                f"With the {primary.factor.lower()} at {primary.observed}, a pick lifts "
+                f"the carton {percent(primary.probability_at_observed)} of the time; at "
+                f"{primary.best_value} it would lift it "
+                f"{percent(primary.probability_at_best)} of the time."
+            )
+            change = {
+                "Grasp friction": f"Grip with a friction of {primary.best_value}",
+                "Crowding": "Clear the cartons right next to the target before the "
+                "pick",
+            }[primary.factor]
+            document["correction"] = (
+                f"{change}: the causal answers say that alone raises the chance of the "
+                f"lift by {points(primary.gap)}."
+            )
+        document["steps"] = DiagnosisStory().steps(document, answers)
         return document
 
     def disturbed_neighbours(
@@ -633,32 +633,24 @@ class FailureDiagnosis:
         """
         if scene is None:
             return []
-        regions = self.analysis.question(QuestionKind.CLOSING_AXIS_SIDE)["regions"]
+        regions = AnswerRegions(self.analysis.question(QuestionKind.CLOSING_AXIS_SIDE))
         result = []
         for index, neighbour in enumerate(scene.neighbours):
             if not neighbour.disturbed:
                 continue
             side = neighbour.closing_axis_side.value
-            matching = [region for region in regions if side in region["holds"]]
+            region = regions.at(side)
             result.append(
                 {
                     "neighbour": index,
                     "side": side,
                     "displacement": neighbour.displacement,
                     "probabilityDisturbedOnThisSide": (
-                        matching[0]["adjusted"] if matching else None
+                        None if region is None else region["adjusted"]
                     ),
                 }
             )
         return result
-
-    @staticmethod
-    def percent(probability: Optional[float]) -> str:
-        """
-        :param probability: A probability.
-        :return: It in percent, or ``unknown``.
-        """
-        return "unknown" if probability is None else f"{100 * probability:.0f}%"
 
 
 # %% recording a run
@@ -784,25 +776,30 @@ class EpisodeVideo:
 
     def record(self, simulation: MujocoSim) -> None:
         """
+        Render one frame per :attr:`frames_per_second` of simulated time with a single
+        renderer kept for the whole run.
+
         :param simulation: The running simulation to render.
         """
+        simulator = simulation.simulator
         writer = imageio.get_writer(
             self.path, fps=self.frames_per_second, codec="libx264", quality=8
         )
+        renderer = mujoco.Renderer(simulator._mj_model, self.height, self.width)
         next_frame_time = 0.0
         try:
             while not self.stopped.is_set():
-                now = simulation.simulator.current_simulation_time
+                now = simulator.current_simulation_time
                 if now < next_frame_time:
                     time.sleep(0.002)
                     continue
                 next_frame_time = now + 1.0 / self.frames_per_second
-                frame = simulation.simulator.capture_rgb(
-                    camera_name=self.camera_name, height=self.height, width=self.width
-                ).result
-                writer.append_data(frame)
+                with simulator._model_lock:
+                    renderer.update_scene(simulator._mj_data, self.camera_name)
+                writer.append_data(renderer.render())
                 self.frame_count += 1
         finally:
+            renderer.close()
             writer.close()
 
 
@@ -892,19 +889,22 @@ class Presentation:
     The index of the runs done so far.
     """
 
-    def prepare_analysis(self) -> CausalAnalysis:
+    def prepare_analysis(self, dataset: ClutterPickDataset) -> CausalAnalysis:
         """
         Fit the causal answers and the probability tree on the recorded attempts and
-        write them.
+        write them, each answer with its takeaway in words.
 
+        :param dataset: The recorded attempts.
         :return: The analysis.
         """
-        dataset = recorded_attempts().load()
         written = self.directory.path / ExperimentFile.EXPERIMENT
         if written.is_file():
             analysis = CausalAnalysis(json.loads(written.read_text()))
         else:
             analysis = CausalAnalysis.of(dataset)
+        questions = analysis.document["questions"]
+        for question in questions:
+            question["takeaway"] = GeneralReading().takeaway(question, questions)
         self.directory.write(ExperimentFile.EXPERIMENT, analysis.document)
         self.directory.write(ExperimentFile.CAUSAL_GRAPH, causal_graph_document())
         self.directory.write(
@@ -916,20 +916,29 @@ class Presentation:
         """
         :param run_count: How many picks to run.
         """
-        analysis = self.prepare_analysis()
+        dataset = recorded_attempts().load()
+        analysis = self.prepare_analysis(dataset)
         diagnosis = FailureDiagnosis(analysis)
+        reading = RunReading(
+            {kind: analysis.question(kind) for kind in QuestionKind}, dataset.scenes
+        )
         sampler = ClutterLayoutSampler(np.random.default_rng(self.seed))
         for number in range(1, run_count + 1):
-            self.run_once(f"run_{number:03d}", sampler.sample(), diagnosis)
+            self.run_once(f"run_{number:03d}", sampler.sample(), diagnosis, reading)
             time.sleep(self.pause_between_runs)
 
     def run_once(
-        self, run: str, layout: ClutterSceneLayout, diagnosis: FailureDiagnosis
+        self,
+        run: str,
+        layout: ClutterSceneLayout,
+        diagnosis: FailureDiagnosis,
+        reading: RunReading,
     ) -> None:
         """
         :param run: The run's identifier.
         :param layout: The layout picked in.
         :param diagnosis: What explains a failed pick.
+        :param reading: What the causal answers say about a run.
         """
         directory = self.directory.run_directory(run)
         started = datetime.now().isoformat(timespec="seconds")
@@ -943,7 +952,20 @@ class Presentation:
         episode.video = EpisodeVideo(
             directory / ExperimentFile.VIDEO, scene.camera_name
         )
-        self.runs.append({"run": run, "started": started, "state": "running"})
+        causes = RunCauses.of(layout)
+        answers = reading.document(run, causes)
+        answers_path = Path(ExperimentFile.RUNS) / run / ExperimentFile.ANSWERS
+        self.directory.write(answers_path, answers)
+        self.runs.append(
+            {
+                "run": run,
+                "started": started,
+                "state": "running",
+                "environment": layout.environment.value,
+                "friction": layout.friction_coefficient,
+                "crowding": causes.adjacent_neighbours,
+            }
+        )
         self.write_index()
         failure, outcome = None, None
         try:
@@ -952,17 +974,20 @@ class Presentation:
             failure = str(error)
             logger.warning("%s: the motion failed: %s", run, failure)
         recorded_scene = None if outcome is None else outcome.to_scene(layout)
-        bundle = self.save_recording(episode.visualization, run, started)
-        episode.visualization.stop()
-        diagnosis_document = diagnosis.diagnose(recorded_scene, layout, failure)
+        answers = reading.with_outcome(answers, recorded_scene, failure)
+        self.directory.write(answers_path, answers)
+        diagnosis_document = diagnosis.diagnose(
+            recorded_scene, layout, failure, answers
+        )
         self.directory.write(
             Path(ExperimentFile.RUNS) / run / ExperimentFile.DIAGNOSIS,
             diagnosis_document,
         )
+        neem_path = Path(ExperimentFile.RUNS) / run / ExperimentFile.NEEM
         self.directory.write(
-            Path(ExperimentFile.RUNS) / run / ExperimentFile.NEEM,
+            neem_path,
             self.neem_document(
-                run, started, layout, outcome, recorded_scene, episode, bundle, failure
+                run, started, layout, outcome, recorded_scene, episode, None, failure
             ),
         )
         self.runs[-1] = {
@@ -976,9 +1001,19 @@ class Presentation:
             "crowding": None if recorded_scene is None else crowding_of(recorded_scene),
             "verdict": diagnosis_document["verdict"],
             "primaryCause": diagnosis_document.get("primaryCause"),
-            "recording": bundle,
+            "recording": None,
             "video": f"{ExperimentFile.RUNS}/{run}/{ExperimentFile.VIDEO}",
         }
+        self.write_index()
+        bundle = self.save_recording(episode.visualization, run, started)
+        episode.visualization.stop()
+        self.directory.write(
+            neem_path,
+            self.neem_document(
+                run, started, layout, outcome, recorded_scene, episode, bundle, failure
+            ),
+        )
+        self.runs[-1]["recording"] = bundle
         self.write_index()
         logger.info("%s: %s", run, diagnosis_document["verdict"])
 
@@ -1079,6 +1114,12 @@ def main() -> None:
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--pause",
+        type=float,
+        default=3.0,
+        help="seconds the viewer shows a finished run before the next one starts",
+    )
     parser.add_argument("--directory", type=Path, default=None)
     parser.add_argument(
         "--kitchen",
@@ -1088,7 +1129,11 @@ def main() -> None:
         "around Tracy",
     )
     arguments = parser.parse_args()
-    presentation = Presentation(seed=arguments.seed, live_port=arguments.port)
+    presentation = Presentation(
+        seed=arguments.seed,
+        live_port=arguments.port,
+        pause_between_runs=arguments.pause,
+    )
     if arguments.kitchen is not None:
         presentation.backdrop = KitchenBackdrop(arguments.kitchen)
     if arguments.directory is not None:
