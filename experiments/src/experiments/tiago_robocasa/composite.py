@@ -524,15 +524,23 @@ class DefrostByCategory(TiagoCompositeTask):
 
     def step_sequence(self) -> list[TiagoRoboCasaTask]:
         return [
-            PickPlaceCounterToSink(object_name=CompositeObject.FIRST_FRUIT),
-            PickPlaceCounterToSink(object_name=CompositeObject.SECOND_FRUIT),
+            PickPlaceCounterToSink(
+                object_name=CompositeObject.FIRST_FRUIT,
+                collides_as_its_convex_hull=True,
+            ),
+            PickPlaceCounterToSink(
+                object_name=CompositeObject.SECOND_FRUIT,
+                collides_as_its_convex_hull=True,
+            ),
             TiagoPickPlaceTask(
                 object_name=CompositeObject.FIRST_VEGETABLE,
                 receptacle_name=CompositeObject.CONTAINER,
+                collides_as_its_convex_hull=True,
             ),
             TiagoPickPlaceTask(
                 object_name=CompositeObject.SECOND_VEGETABLE,
                 receptacle_name=CompositeObject.CONTAINER,
+                collides_as_its_convex_hull=True,
             ),
         ]
 

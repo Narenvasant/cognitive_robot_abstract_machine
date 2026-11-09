@@ -133,6 +133,12 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     How closely the hand has to face a goal before it counts as reached, in radians.
     """
 
+    release_heading_tolerance: float = 0.15
+    """
+    How closely the hand has to face where it lets the object go, and where it lifts
+    off it, before it counts as there, in radians.
+    """
+
     lift: float = 0.15
     """
     How far the object is lifted clear of what it rested on, in metres.
@@ -602,7 +608,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
                 allow_gripper_collision=True,
                 max_linear_velocity=self.carry_velocity,
                 position_threshold=self.release_tolerance,
-                orientation_threshold=self.heading_tolerance,
+                orientation_threshold=self.release_heading_tolerance,
             ),
             MoveGripperMotion(
                 GripperState.OPEN,
@@ -616,7 +622,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
                 hold_gripper=GripperState.OPEN,
                 max_linear_velocity=self.carry_velocity,
                 position_threshold=self.release_tolerance,
-                orientation_threshold=self.heading_tolerance,
+                orientation_threshold=self.release_heading_tolerance,
             ),
         ]
 
@@ -779,6 +785,20 @@ class PickPlaceCounterToSink(TiagoPickPlaceTask):
     """
     Well above the rim: the arm holds the object over a sink at full stretch and stalls
     short of any goal below that, so it lets go high and the carton falls in.
+    """
+
+    release_heading_tolerance: float = 0.5
+    """
+    As :attr:`TiagoPickPlaceTask.release_heading_tolerance`: over a sink the arm at full
+    stretch stops turning short of the hand's heading, and the object falls in however
+    the hand is turned.
+    """
+
+    lift_off: float = 0.05
+    """
+    Less than off a counter, in metres: the open hand has to rise for what it lets go
+    to fall off its fingers into the sink, and an arm at full stretch over the sink
+    rises little further.
     """
 
     @property
