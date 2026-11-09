@@ -19,6 +19,7 @@ from enum import StrEnum
 from functools import cached_property
 
 import numpy as np
+import trimesh
 from typing_extensions import Callable
 
 from coraplex.datastructures.dataclasses import Context
@@ -44,7 +45,7 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import Coun
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
 )
-from semantic_digital_twin.world_description.geometry import Cylinder
+from semantic_digital_twin.world_description.geometry import Mesh
 from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
 
@@ -445,6 +446,12 @@ class PutOnACuttingBoard(TiagoPickPlaceTask):
     the physics.
     """
 
+    release_tolerance: float = 0.03
+    """
+    How close the hand has to come to where it lets the object go, in metres: an
+    object let go short of the middle of a board by more than this lands beside it.
+    """
+
 
 # %% the tasks
 
@@ -544,7 +551,7 @@ class OrganizeSmallFruit(OrganizeVegetables):
 
     def prepare_contacts(self) -> None:
         """
-        Have every piece of fruit collide as the upright cylinder around it, then set up
+        Have every piece of fruit collide as the convex hull of its pieces, then set up
         the contacts each step asks for.
 
         RoboCasa builds a piece of fruit out of overlapping convex pieces, and a finger
@@ -554,24 +561,29 @@ class OrganizeSmallFruit(OrganizeVegetables):
         with self.world.modify_world():
             for step in self.steps:
                 fruit = step.food.root
-                outline = (
-                    fruit.collision.as_bounding_box_collection_in_frame(fruit)
-                    .bounding_box()
-                    .as_shape()
-                )
-                cylinder = Cylinder(
-                    origin=outline.origin,
-                    width=max(outline.scale.x, outline.scale.y),
-                    height=outline.scale.z,
-                )
-                cylinder.simulator_additional_properties = [
+                hull = self.convex_hull_of(fruit)
+                hull.simulator_additional_properties = [
                     replace(simulator_property)
                     for simulator_property in fruit.collision.shapes[
                         0
                     ].simulator_additional_properties
                 ]
-                fruit.collision = ShapeCollection([cylinder], reference_frame=fruit)
+                fruit.collision = ShapeCollection([hull], reference_frame=fruit)
         super().prepare_contacts()
+
+    @staticmethod
+    def convex_hull_of(body: Body) -> Mesh:
+        """
+        :param body: A body with collision geometry.
+        :return: The convex hull of all of its collision geometry, in the body's frame.
+        """
+        pieces = trimesh.util.concatenate(
+            [shape.mesh_in_frame(body) for shape in body.collision.shapes]
+        )
+        return Mesh.from_trimesh(
+            pieces.convex_hull,
+            origin=HomogeneousTransformationMatrix(reference_frame=body),
+        )
 
     @classproperty
     def task_name(cls) -> str:
