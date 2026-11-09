@@ -418,6 +418,13 @@ class DropABowlInTheSink(PickPlaceCounterToSink):
     How far below the rim's top the fingers close, in metres.
     """
 
+    drop_from: float = 0.05
+    """
+    Just above the sink's rim, in metres: the hand holds the bowl from above, by its
+    rim, and dropping it from higher puts the hand out of the arm's reach from
+    anywhere in front of the sink.
+    """
+
     def grasp(self) -> GraspCandidate:
         """
         :return: The grasp that takes the bowl's rim nearest Tiago, the fingers
