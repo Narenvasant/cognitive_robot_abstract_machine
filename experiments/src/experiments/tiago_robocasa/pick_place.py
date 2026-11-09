@@ -135,8 +135,8 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
 
     release_heading_tolerance: float = 0.15
     """
-    How closely the hand has to face where it lets the object go, and where it lifts
-    off it, before it counts as there, in radians.
+    How closely the hand has to face where it lets the object go before it counts as
+    there, in radians.
     """
 
     lift: float = 0.15
@@ -599,6 +599,8 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
         over a sink the arm is already at full stretch holding it over the rim, and the
         goal below that is one it reaches on paper and stalls short of in the physics.
 
+        Rising off the object counts as done however the hand is turned: it has let go.
+
         :return: The motions.
         """
         return [
@@ -622,7 +624,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
                 hold_gripper=GripperState.OPEN,
                 max_linear_velocity=self.carry_velocity,
                 position_threshold=self.release_tolerance,
-                orientation_threshold=self.release_heading_tolerance,
+                orientation_threshold=math.pi,
             ),
         ]
 
