@@ -158,17 +158,19 @@ class ExchangeableDistributionTemplate(RelationalDistributionTemplate):
         self,
         parts: list[Match],
         ground: Callable[[Match], CircuitType],
-        exposures_of_parts: list[dict[str, Any]],
+        exposures_of_parts: list[dict[str, Any]] | None = None,
     ) -> list[GroundedPartTemplate[CircuitType]]:
         """
         :param parts: The query parts, one per child object of the relation.
         :param ground: Grounds the template for one query part.
         :param exposures_of_parts: Per part, the exposure statistics the query
-            determines, by name.
+            determines, by name, or ``None`` if it determines none.
         :return: The grounded template of every part, conditioned on its determined
             exposures. Parts whose queries have the same shape and the same exposures
             share one grounding.
         """
+        if exposures_of_parts is None:
+            exposures_of_parts = [{} for _ in parts]
         groundings: dict[Hashable, tuple[CircuitType, str]] = {}
         result = []
         for index, (part, exposures) in enumerate(zip(parts, exposures_of_parts)):
