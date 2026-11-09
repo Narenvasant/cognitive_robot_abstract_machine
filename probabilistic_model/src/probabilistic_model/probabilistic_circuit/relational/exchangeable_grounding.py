@@ -420,11 +420,28 @@ class ExchangeablePartGrounder(Generic[NodeType], SubClassSafeGeneric):
         unique_rows = {tuple(row) for row in samples.tolist()}
         return [
             {
-                variable: row[index_of_variable[variable]]
+                variable: self._value_of_sample(
+                    variable, row[index_of_variable[variable]]
+                )
                 for variable in self.undetermined_latents
             }
             for row in (np.array(unique_row) for unique_row in unique_rows)
         ]
+
+    @staticmethod
+    def _value_of_sample(variable: Variable, sample: float) -> Any:
+        """
+        :param variable: A sampled variable.
+        :param sample: What a sample holds for it, the hash of the element for a
+            symbolic variable.
+        :return: The value the sample stands for.
+        """
+        if variable.is_numeric:
+            return sample
+        return {
+            float(element_hash): element
+            for element_hash, element in variable.domain.hash_map.items()
+        }[sample]
 
     def _node_local_latent_log_likelihoods(
         self, node: NodeType, latent_assignments: list[PartialPointType]
@@ -438,7 +455,16 @@ class ExchangeablePartGrounder(Generic[NodeType], SubClassSafeGeneric):
         subcircuit = self.circuit.subcircuit_at(node)
         subcircuit.marginal_in_place(self.undetermined_latents)
         index_of_variable = subcircuit.variable_to_index_map
-        events = np.full((len(latent_assignments), len(index_of_variable)), np.nan)
+        # an object array holds a symbolic value itself, whose hash its leaf looks up
+        events = np.full(
+            (len(latent_assignments), len(index_of_variable)),
+            np.nan,
+            dtype=(
+                float
+                if all(variable.is_numeric for variable in self.undetermined_latents)
+                else object
+            ),
+        )
         for row, assignment in enumerate(latent_assignments):
             for variable, value in assignment.items():
                 events[row, index_of_variable[variable]] = value
@@ -608,6 +634,10 @@ class RelationalGrounding:
             variable: value
             for variable, value in aggregation_statistics.items()
             if self._is_concrete_statistic(variable, value)
+        } | {
+            attribute.variable: attribute.value_of(instance)
+            for attribute in template.interface_attributes
+            if attribute.is_determined_by(instance)
         }
         undetermined_latents = SortedSet(
             variable

@@ -366,3 +366,56 @@ class InstanceNotOfClassError(ProbabilisticModelException):
 
     def suggest_correction(self) -> str:
         return "Pass a class that every instance is an instance of."
+
+
+@dataclass
+class UnknownInterfaceAttributeError(ProbabilisticModelException):
+    """
+    Raised when a part interface names an attribute the class has no feature for.
+    """
+
+    class_: type
+    """
+    The domain class whose relational circuit is fitted.
+    """
+
+    path: str
+    """
+    The path of the attribute.
+    """
+
+    def error_message(self) -> str:
+        return f"{self.class_.__name__} has no attribute feature at {self.path!r}."
+
+    def suggest_correction(self) -> str:
+        return (
+            "Name an attribute of the class that holds a scalar value, such as an enum, "
+            "an integer or a boolean."
+        )
+
+
+@dataclass
+class ContinuousInterfaceAttributeError(ProbabilisticModelException):
+    """
+    Raised when a part interface names a continuous attribute, since grounding mounts
+    one instance per value of an open interface attribute.
+    """
+
+    class_: type
+    """
+    The domain class whose relational circuit is fitted.
+    """
+
+    path: str
+    """
+    The path of the continuous attribute.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The attribute {self.path!r} of {self.class_.__name__} is continuous, so no "
+            f"part template can be conditioned on it."
+        )
+
+    def suggest_correction(self) -> str:
+        return "Discretize the attribute, or leave it out of the part interface."

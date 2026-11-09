@@ -340,6 +340,25 @@ for `EXACT`): two product nodes that mount the same exchangeable relation can co
 differently with the rest of the scene, so each node's weights over the same global set of
 branches are computed from that node's own local marginal, not shared globally.
 
+### Instance attributes a part's template sees
+
+By default a part's template sees its instance only through the aggregation statistics,
+so an instance attribute cannot shift each part directly: a scene's environment that
+decides how close every object stands is lost. `PartInterface` names, per part, the
+instance attributes its template is conditioned on as well:
+
+```python
+RelationalProbabilisticCircuit(
+    part_interface=PartInterface.from_attributes(
+        {variable(Scene).pieces: [variable(Scene).environment]}
+    )
+)
+```
+
+Grounding treats such an attribute like an aggregation statistic: a value the query gives
+conditions every part, and an open one is retained as a point mass on each instance, so
+it can be a cause or a confounder. An interface attribute must be discrete.
+
 ### `RelationalCausalCircuit`
 
 `probabilistic_model.probabilistic_circuit.relational.causal.RelationalCausalCircuit` is the

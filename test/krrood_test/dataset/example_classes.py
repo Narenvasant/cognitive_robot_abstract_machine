@@ -1173,3 +1173,69 @@ class ActionWithMissingAggregationsMixin:
     """
 
     domain_object: Cabinet
+
+
+# %% A scene whose environment places each of its pieces directly
+
+
+class PlacementEnvironment(Enum):
+    """
+    Where a scene of pieces stands.
+    """
+
+    BIN = "bin"
+    TABLE = "table"
+
+
+class PlacementBand(Enum):
+    """
+    How close a piece stands to the target.
+    """
+
+    NEAR = "near"
+    FAR = "far"
+
+
+@dataclass
+class PlacedPiece:
+    """
+    A piece of a :class:`PiecePlacingScene`.
+    """
+
+    band: PlacementBand
+    """
+    How close the piece stands to the target.
+    """
+
+
+@dataclass
+class PiecePlacingScene:
+    """
+    A scene whose environment decides directly how close each of its pieces stands to
+    the target, not only through how many pieces there are.
+    """
+
+    environment: PlacementEnvironment
+    """
+    Where the scene stands.
+    """
+
+    pieces: List[PlacedPiece]
+    """
+    The pieces of the scene.
+    """
+
+
+@dataclass(eq=False)
+class PiecePlacingSceneAggregations(AggregationStatistic[PiecePlacingScene]):
+    """
+    Aggregation statistics of a :class:`PiecePlacingScene` over its pieces.
+    """
+
+    @aggregation_statistic(variable(PiecePlacingScene).pieces)
+    def piece_count(self) -> int:
+        """
+        The number of pieces.
+        """
+        [result] = count(variable(PlacedPiece, self.pieces)).tolist()
+        return result
