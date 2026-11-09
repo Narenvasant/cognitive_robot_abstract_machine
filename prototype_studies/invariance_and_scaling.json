@@ -1,0 +1,44 @@
+{
+ "order_independence": {
+  "reorderings": 20,
+  "reference_answers": [
+   0.3279184861087356,
+   0.40644112030705926,
+   0.48335163663285297,
+   0.3931994565771742
+  ],
+  "max_answer_difference": 2.220446049250313e-16,
+  "reference_scene_probability": 0.02701351751162756,
+  "max_scene_probability_difference": 0.0
+ },
+ "scaling": [
+  {
+   "pieces": 4,
+   "pairs": 3,
+   "grounding_seconds": 0.09891796112060547,
+   "nodes": 120,
+   "variables": 19
+  },
+  {
+   "pieces": 9,
+   "pairs": 8,
+   "grounding_seconds": 0.19182252883911133,
+   "nodes": 295,
+   "variables": 39
+  },
+  {
+   "pieces": 16,
+   "pairs": 15,
+   "grounding_seconds": 0.32317328453063965,
+   "nodes": 580,
+   "variables": 67
+  },
+  {
+   "pieces": 25,
+   "pairs": 24,
+   "grounding_seconds": 0.48764801025390625,
+   "nodes": 555,
+   "variables": 103
+  }
+ ]
+}

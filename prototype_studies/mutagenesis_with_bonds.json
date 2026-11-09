@@ -1,0 +1,8 @@
+{
+ "molecules": 188,
+ "atoms_checked": 4893,
+ "bond_count_mismatches": 0,
+ "hydrogen_and_chlorine_atoms": 1550,
+ "of_them_with_exactly_one_bond": 1550,
+ "atoms_bonded_to_a_chlorine": 23
+}

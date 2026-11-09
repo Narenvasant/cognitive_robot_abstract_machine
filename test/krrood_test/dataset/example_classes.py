@@ -26,6 +26,11 @@ from krrood.ormatic.data_access_objects.alternative_mappings import (
     AlternativeMapping,
     T,
 )
+from krrood.parametrization.feature_extraction.exposures import (
+    ExposureStatistic,
+    exposure_statistic,
+)
+from krrood.parametrization.feature_extraction.part_reference import PartReference
 from krrood.patterns.subclass_safe_generic import SubClassSafeGeneric
 from krrood.symbol_graph.symbol_graph import Symbol
 from krrood import logger
@@ -1173,3 +1178,168 @@ class ActionWithMissingAggregationsMixin:
     """
 
     domain_object: Cabinet
+
+
+# %% Pieces whose scene reaches them directly, and that topple each other
+
+
+class DominoEnvironment(Enum):
+    """
+    Where a scene of pieces stands.
+    """
+
+    BIN = "bin"
+    TABLE = "table"
+
+
+class DominoBand(Enum):
+    """
+    How close a piece stands to the target.
+    """
+
+    NEAR = "near"
+    FAR = "far"
+
+
+@dataclass
+class DominoPiece:
+    """
+    A piece of a scene, which may be knocked over.
+    """
+
+    band: DominoBand
+    """
+    How close the piece stands to the target.
+    """
+
+    disturbed: bool
+    """
+    Whether the piece was knocked over.
+    """
+
+
+@dataclass
+class DominoScene:
+    """
+    A scene whose environment decides directly how close each of its pieces stands to
+    the target, not only through how many pieces there are.
+    """
+
+    environment: DominoEnvironment
+    """
+    Where the scene stands.
+    """
+
+    pieces: List[DominoPiece]
+    """
+    The pieces of the scene.
+    """
+
+    contacts: List[DominoContact] = field(default_factory=list)
+    """
+    The pairs of pieces that may touch.
+    """
+
+    target_lifted: bool = False
+    """
+    Whether the target came up when it was picked.
+    """
+
+
+@dataclass
+class DominoContact:
+    """
+    A pair of pieces of one scene that may touch.
+    """
+
+    first_piece: DominoPiece = field(metadata=PartReference().as_dict())
+    """
+    One piece of the pair.
+    """
+
+    second_piece: DominoPiece = field(metadata=PartReference().as_dict())
+    """
+    The other piece of the pair.
+    """
+
+    touching: bool
+    """
+    Whether the two pieces touch.
+    """
+
+
+@dataclass(eq=False)
+class DominoSceneAggregations(AggregationStatistic[DominoScene]):
+    """
+    Aggregation statistics of a :class:`DominoScene` over its pieces.
+    """
+
+    @aggregation_statistic(variable(DominoScene).pieces)
+    def piece_count(self) -> int:
+        """
+        The number of pieces.
+        """
+        [result] = count(variable(DominoPiece, self.pieces)).tolist()
+        return result
+
+    @aggregation_statistic(variable(DominoScene).contacts)
+    def touching_pair_count(self) -> int:
+        """
+        The number of pairs of pieces that touch.
+        """
+        touching = variable(DominoContact, self.contacts).touching
+        [result] = entity(count_range(touching)).where(touching == True).tolist()
+        return result
+
+
+@dataclass(eq=False)
+class DominoPieceExposures(ExposureStatistic[DominoPiece]):
+    """
+    What a piece of a :class:`DominoScene` is exposed to through the contacts that
+    involve it.
+    """
+
+    def touching_contacts(self) -> list[DominoContact]:
+        """
+        :return: The contacts of the scene that involve the piece.
+        """
+        return [
+            contact
+            for contact in self.instance.contacts
+            if contact.first_piece is self.role_taker
+            or contact.second_piece is self.role_taker
+        ]
+
+    @exposure_statistic(variable(DominoScene).pieces)
+    def touching_piece_count(self) -> int:
+        """
+        The number of pieces touching this one, or ``...`` if a contact of it is open.
+        """
+        touching = [contact.touching for contact in self.touching_contacts()]
+        if not all(isinstance(value, bool) for value in touching):
+            return ...
+        return sum(touching)
+
+    @exposure_statistic(variable(DominoScene).pieces)
+    def touching_near_piece_count(self) -> int:
+        """
+        The number of pieces near the target touching this one, or ``...`` if a contact
+        of it or the band of a piece it may touch is open.
+        """
+        contacts = self.touching_contacts()
+        others = [
+            (
+                contact.second_piece
+                if contact.first_piece is self.role_taker
+                else contact.first_piece
+            )
+            for contact in contacts
+        ]
+        if not all(isinstance(contact.touching, bool) for contact in contacts) or not all(
+            isinstance(other.band, DominoBand) for other in others
+        ):
+            return ...
+        return sum(
+            contact.touching and other.band is DominoBand.NEAR
+            for contact, other in zip(contacts, others)
+        )

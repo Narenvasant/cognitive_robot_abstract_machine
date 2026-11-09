@@ -25,6 +25,7 @@ from krrood.parametrization.feature_extraction.exceptions import (
     NoInstancesProvidedError,
     UnsupportedFeatureTypeError,
 )
+from krrood.parametrization.feature_extraction.part_reference import PartReference
 from krrood.symbolic_math.symbolic_math import SymbolicMathType
 from random_events.variable import compatible_types
 
@@ -259,7 +260,8 @@ class FeatureExtractor:
         relationships: tuple[SingleRelationship, ...],
     ) -> deque[Any]:
         """
-        Enqueues non-null single-valued relations for further BFS traversal.
+        Enqueues non-null single-valued relations for further BFS traversal, except those
+        marked as a :class:`PartReference`.
 
         :param instance: The domain object to inspect.
         :param symbolic_root: The symbolic variable rooted at ``instance``.
@@ -271,6 +273,8 @@ class FeatureExtractor:
             value = getattr(instance, relationship.key)
 
             if value is None:
+                continue
+            if PartReference.of_field(type(instance), relationship.key) is not None:
                 continue
 
             queue.append((value, getattr(symbolic_root, relationship.key)))

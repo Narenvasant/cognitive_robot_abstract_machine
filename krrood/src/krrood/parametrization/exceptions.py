@@ -414,3 +414,53 @@ class AttributeNotParameterized(InputError):
             "Assign the attribute in the query's pattern, with ..., a value or a "
             "variable, or constrain it in a where condition."
         )
+
+
+@dataclass
+class InterventionReachesEffectThroughSeveralStatisticsError(DataclassException):
+    """
+    Raised when the cause of a pairwise question changes more than one statistic its
+    effect depends on, which only a joint intervention on all of them answers.
+    """
+
+    statistic_names: list[str]
+    """
+    The statistics the cause changes.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The cause reaches the effect through several statistics: "
+            f"{', '.join(self.statistic_names)}."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            "Fit the part's template with only one of these statistics, or ask about a "
+            "cause that changes only one of them."
+        )
+
+
+@dataclass
+class ExposureInputNotEvidenceError(DataclassException):
+    """
+    Raised when the query of a pairwise question leaves open an input of the statistic
+    the intervention goes through, other than the cause itself.
+    """
+
+    statistic_name: str
+    """
+    The statistic whose input is open.
+    """
+
+    def error_message(self) -> str:
+        return (
+            f"The query leaves an input of {self.statistic_name} open, so setting the "
+            f"cause does not determine it."
+        )
+
+    def suggest_correction(self) -> str:
+        return (
+            f"Give every pair and part attribute {self.statistic_name} reads a value, "
+            f"except the cause."
+        )

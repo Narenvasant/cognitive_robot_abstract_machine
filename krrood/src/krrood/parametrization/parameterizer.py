@@ -42,6 +42,7 @@ from krrood.parametrization.random_events_translator import (
     WhereExpressionToRandomEventTranslator,
 )
 from krrood.parametrization.feature_extraction.aggregations import get_aggregation_class
+from krrood.parametrization.feature_extraction.exposures import exposure_class_of
 from krrood.parametrization.feature_extraction.feature_extractor import FeatureExtractor
 from krrood.symbol_graph.helpers import get_method_return_type
 from random_events.interval import singleton
@@ -491,7 +492,9 @@ class UnderspecifiedParameters(ModelQueryParameters):
             raise InvalidEllipsis(type_)
 
         cause_variable = variable_from_name_and_type(name=name, type_=type_)
-        self.search_cause_variables.append(cause_variable)
+        # a part a pair refers to is reached again through the pair
+        if name not in {known.name for known in self.search_cause_variables}:
+            self.search_cause_variables.append(cause_variable)
         return {name: cause_variable}
 
     def _handle_confounder_attribute_match(
@@ -515,7 +518,9 @@ class UnderspecifiedParameters(ModelQueryParameters):
             raise InvalidEllipsis(type_)
 
         confounder_variable = variable_from_name_and_type(name=name, type_=type_)
-        self.search_confounder_variables.append(confounder_variable)
+        # a part a pair refers to is reached again through the pair
+        if name not in {known.name for known in self.search_confounder_variables}:
+            self.search_confounder_variables.append(confounder_variable)
         return {name: confounder_variable}
 
     def _resolve_search_variable_name_and_type(
@@ -550,6 +555,13 @@ class UnderspecifiedParameters(ModelQueryParameters):
         owner_class = attribute_match.attribute._owner_class_
         if owner_class is None:
             return attribute_match.name_from_variable_access_path, None
+        exposure_class = exposure_class_of(owner_class)
+        if exposure_class is not None and attribute_match.attribute_name in dir(
+            exposure_class
+        ):
+            return attribute_match.name_from_variable_access_path, get_method_return_type(
+                exposure_class, attribute_match.attribute_name
+            )
         aggregation_class = get_aggregation_class(owner_class)
         if aggregation_class is None:
             return attribute_match.name_from_variable_access_path, None

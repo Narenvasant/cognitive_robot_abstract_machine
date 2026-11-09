@@ -18,6 +18,7 @@ import pandas as pd
 from typing_extensions import TYPE_CHECKING, Any, Callable, Hashable
 
 from krrood.class_diagrams.utils import common_base_class
+from krrood.entity_query_language.core.mapped_variable import Attribute
 from krrood.ormatic.data_access_objects.dao import (
     DataAccessObjectSchema,
     get_dao_schema,
@@ -26,7 +27,9 @@ from krrood.ormatic.data_access_objects.helper import get_data_access_object_cla
 from krrood.parametrization.feature_extraction.aggregations import (
     compute_aggregation_statistics,
 )
+from krrood.parametrization.feature_extraction.exposures import exposure_class_of
 from krrood.parametrization.feature_extraction.feature_extractor import FeatureExtractor
+from krrood.parametrization.feature_extraction.part_reference import PartReference
 from krrood.patterns.field_metadata import JSONMetadata
 
 if TYPE_CHECKING:
@@ -42,10 +45,13 @@ from probabilistic_model.probabilistic_circuit.groundable_circuit import (
 )
 from probabilistic_model.probabilistic_circuit.relational.exceptions import (
     CircuitNotFittedError,
+    ContinuousInterfaceAttributeError,
+    EndpointAttributeInRelationTemplateError,
     InstanceNotOfClassError,
     MixedCircuitTypesError,
     NoCommonSuperclassError,
     UnknownExchangeablePartsError,
+    UnknownInterfaceAttributeError,
 )
 from probabilistic_model.probabilistic_circuit.relational.exchangeable_grounding import (
     CircuitType,
@@ -53,13 +59,17 @@ from probabilistic_model.probabilistic_circuit.relational.exchangeable_grounding
     GroundingMode,
     RelationalGrounding,
 )
+from probabilistic_model.probabilistic_circuit.relational.part_interface import (
+    InterfaceAttribute,
+    PartInterface,
+)
 from probabilistic_model.probabilistic_circuit.relational.part_learning_methods import (
     PartLearningMethods,
 )
 from probabilistic_model.probabilistic_circuit.relational.template import (
     RelationalDistributionTemplate,
 )
-from random_events.variable import Variable
+from random_events.variable import Continuous, Variable
 
 
 @dataclass
@@ -83,10 +93,20 @@ class PartTrainingTable:
     The names of the aggregation statistic columns.
     """
 
+    exposure_names: list[str]
+    """
+    The names of the columns of the part's exposure statistics.
+    """
+
     example_positions: list[int]
     """
     Per row, the position among the training instances of the instance the part belongs
     to.
+    """
+
+    interface_names: list[str] = field(default_factory=list)
+    """
+    The names of the columns of the instance attributes the part's template sees.
     """
 
 
@@ -123,25 +143,64 @@ class ExchangeableDistributionTemplate(RelationalDistributionTemplate):
     conditioning but are not part of the final grounded distribution.
     """
 
+    interface_attributes: list[InterfaceAttribute] = field(default_factory=list)
+    """
+    The instance attributes among :attr:`latent_variables`.
+    """
+
+    exposure_names: list[str] = field(default_factory=list)
+    """
+    The names of the part's exposure statistics, which the template models as
+    variables of their own.
+    """
+
     def grounded_templates_of_parts(
-        self, parts: list[Match], ground: Callable[[Match], CircuitType]
+        self,
+        parts: list[Match],
+        ground: Callable[[Match], CircuitType],
+        exposures_of_parts: list[dict[str, Any]],
     ) -> list[GroundedPartTemplate[CircuitType]]:
         """
         :param parts: The query parts, one per child object of the relation.
         :param ground: Grounds the template for one query part.
-        :return: The grounded template of every part. Parts whose queries have the same
-            shape share one grounding.
+        :param exposures_of_parts: Per part, the exposure statistics the query
+            determines, by name.
+        :return: The grounded template of every part, conditioned on its determined
+            exposures. Parts whose queries have the same shape and the same exposures
+            share one grounding.
         """
         groundings: dict[Hashable, tuple[CircuitType, str]] = {}
         result = []
-        for index, part in enumerate(parts):
+        for index, (part, exposures) in enumerate(zip(parts, exposures_of_parts)):
             prefix = self._prefix_for_part(part, index)
-            shape = self.template_distribution.query_shape(part)
+            shape = (
+                self.template_distribution.query_shape(part),
+                frozenset(exposures.items()),
+            )
             if shape not in groundings:
-                groundings[shape] = (ground(part), prefix)
+                groundings[shape] = (self._grounded_on_exposures(part, ground, exposures), prefix)
             circuit, grounded_prefix = groundings[shape]
             result.append(GroundedPartTemplate(circuit, grounded_prefix, prefix))
         return result
+
+    def _grounded_on_exposures(
+        self,
+        part: Match,
+        ground: Callable[[Match], CircuitType],
+        exposures: dict[str, Any],
+    ) -> CircuitType:
+        """
+        :param part: A query part.
+        :param ground: Grounds the template for one query part.
+        :param exposures: The exposure statistics the query determines for the part.
+        :return: The template grounded for the part and conditioned on the exposures.
+        """
+        circuit = ground(part)
+        variable_of_name = {variable.name: variable for variable in circuit.variables}
+        circuit.condition_on_point_in_place(
+            {variable_of_name[name]: value for name, value in exposures.items()}
+        )
+        return circuit
 
     def variable_of_part(
         self, variable: Variable, part: GroundedPartTemplate[Any]
@@ -216,6 +275,12 @@ class RelationalProbabilisticCircuit:
     Its default must fit the same circuit type as :attr:`learning_method`.
     """
 
+    part_interface: PartInterface = field(default_factory=PartInterface)
+    """
+    The instance attributes the template of every exchangeable part sees beside the
+    aggregation statistics. Each must be discrete.
+    """
+
     schema_information: DataAccessObjectSchema | None = field(init=False, default=None)
     """
     The :class:`~krrood.ormatic.data_access_objects.dao.DataAccessObjectSchema`
@@ -282,12 +347,21 @@ class RelationalProbabilisticCircuit:
         :return: A dataframe with one row per child object across all instances.
         """
         rows = []
+        exposure_names = []
         for instance in instances:
             feature_vector = self.feature_extractor.apply_mapping(instance)
             aggregation_row = [feature_vector[index] for index in aggregation_indices]
             for child in getattr(instance, exchangeable_part):
                 child_features = child_feature_extractor.apply_mapping(child)
-                rows.append(aggregation_row + child_features)
+                exposures = self._exposures_of(instance, exchangeable_part, child)
+                exposure_names = self.part_interface.exposure_names_of(
+                    exchangeable_part
+                )
+                rows.append(
+                    aggregation_row
+                    + child_features
+                    + [exposures[name] for name in exposure_names]
+                )
         child_aggregation_features = child_feature_extractor.aggregation_features
         child_column_names = [
             (
@@ -297,7 +371,27 @@ class RelationalProbabilisticCircuit:
             )
             for feature in child_feature_extractor.features
         ]
-        return pd.DataFrame(columns=aggregation_names + child_column_names, data=rows)
+        return pd.DataFrame(
+            columns=aggregation_names + child_column_names + exposure_names, data=rows
+        )
+
+    @staticmethod
+    def _exposures_of(
+        instance: Any, exchangeable_part: str, part: Any
+    ) -> dict[str, Any]:
+        """
+        :param instance: An instance.
+        :param exchangeable_part: Field name of one of its one-to-many relations.
+        :param part: A part in that relation.
+        :return: The part's exposure statistics, by name; none if its class declares
+            none.
+        """
+        exposure_class = exposure_class_of(type(part))
+        if exposure_class is None:
+            return {}
+        return exposure_class(role_taker=part, instance=instance).values(
+            exchangeable_part
+        )
 
     def _part_training_table(
         self, exchangeable_part: str, instances: list[Any]
@@ -321,6 +415,14 @@ class RelationalProbabilisticCircuit:
             for aggregation_function in aggregation_functions
         ]
         aggregation_names = [function._name_ for function in aggregation_functions]
+        interface_indices = [
+            self._index_of_attribute(path)
+            for path in self.part_interface.attribute_paths_of(exchangeable_part)
+        ]
+        interface_names = [
+            self.feature_extractor.features[index]._name_
+            for index in interface_indices
+        ]
         parts_of_instances = [
             getattr(instance, exchangeable_part) for instance in instances
         ]
@@ -328,20 +430,37 @@ class RelationalProbabilisticCircuit:
         rows = self._build_child_joint_dataframe(
             exchangeable_part,
             instances,
-            aggregation_indices,
-            aggregation_names,
+            aggregation_indices + interface_indices,
+            aggregation_names + interface_names,
             FeatureExtractor.from_instances(part_instances),
         )
         return PartTrainingTable(
             part_instances=part_instances,
             rows=rows,
             aggregation_names=aggregation_names,
+            interface_names=interface_names,
+            exposure_names=self.part_interface.exposure_names_of(exchangeable_part),
             example_positions=[
                 position
                 for position, parts in enumerate(parts_of_instances)
                 for _ in parts
             ],
         )
+
+    def _index_of_attribute(self, path: str) -> int:
+        """
+        :param path: The path of an attribute of :attr:`class_`, such as
+            ``"environment"``.
+        :return: The position of the attribute's feature.
+        :raises UnknownInterfaceAttributeError: If no feature reads the attribute.
+        """
+        for index, feature in enumerate(self.feature_extractor.features):
+            if (
+                isinstance(feature, Attribute)
+                and PartLearningMethods.path_of(feature) == path
+            ):
+                return index
+        raise UnknownInterfaceAttributeError(self.class_, path)
 
     def training_tables(self, instances: list[Any]) -> RelationalTrainingTables:
         """
@@ -383,14 +502,14 @@ class RelationalProbabilisticCircuit:
             template.
         :return: A fitted ``ExchangeableDistributionTemplate`` for the given part.
         """
+        self._check_references_to_other_parts(exchangeable_part, instances)
         part_table = self._part_training_table(exchangeable_part, instances)
         child_instances = part_table.part_instances
         child_dataframe = part_table.rows
-        latent_variables = [
-            inferred.variable
+        variable_of_column = {
+            inferred.variable.name: inferred.variable
             for inferred in infer_variables_from_dataframe(child_dataframe)
-            if inferred.variable.name in part_table.aggregation_names
-        ]
+        }
         template = ExchangeableDistributionTemplate(
             RelationalProbabilisticCircuit(
                 learning_method=self.part_learning_methods.method_of_path(
@@ -399,8 +518,14 @@ class RelationalProbabilisticCircuit:
                 part_learning_methods=self.part_learning_methods.of_part(
                     exchangeable_part
                 ),
+                part_interface=self.part_interface.of_part(exchangeable_part),
             ),
-            latent_variables,
+            [
+                variable_of_column[name]
+                for name in part_table.aggregation_names + part_table.interface_names
+            ],
+            self._interface_attributes(exchangeable_part, variable_of_column),
+            part_table.exposure_names,
         )
         template.template_distribution.fit(
             child_instances, dataframe_from_parent=child_dataframe
@@ -416,6 +541,58 @@ class RelationalProbabilisticCircuit:
                 part_circuit_type,
             )
         return template
+
+    def _check_references_to_other_parts(
+        self, exchangeable_part: str, instances: list[Any]
+    ):
+        """
+        :param exchangeable_part: Field name of the one-to-many relation on each
+            instance.
+        :param instances: Training instances.
+        :raises EndpointAttributeInRelationTemplateError: If a part refers to a part of
+            another collection of its instance through a field not marked as a
+            :class:`PartReference`.
+        """
+        other_collections = [
+            relationship.key
+            for relationship in self.schema_information.collection_relationships
+            if relationship.key != exchangeable_part
+        ]
+        for instance in instances:
+            other_parts = {
+                id(part)
+                for collection in other_collections
+                for part in getattr(instance, collection)
+            }
+            for part in getattr(instance, exchangeable_part):
+                for relationship in get_dao_schema(
+                    get_data_access_object_class(type(part))
+                ).single_relationships:
+                    if PartReference.of_field(type(part), relationship.key) is not None:
+                        continue
+                    if id(getattr(part, relationship.key)) in other_parts:
+                        raise EndpointAttributeInRelationTemplateError(
+                            type(part), relationship.key
+                        )
+
+    def _interface_attributes(
+        self, exchangeable_part: str, variable_of_column: dict[str, Variable]
+    ) -> list[InterfaceAttribute]:
+        """
+        :param exchangeable_part: Field name of the one-to-many relation on each
+            instance.
+        :param variable_of_column: The variable of every column of the part's table.
+        :return: The instance attributes the part's template sees.
+        :raises ContinuousInterfaceAttributeError: If one of them is continuous.
+        """
+        result = []
+        for path in self.part_interface.attribute_paths_of(exchangeable_part):
+            feature = self.feature_extractor.features[self._index_of_attribute(path)]
+            variable = variable_of_column[feature._name_]
+            if isinstance(variable, Continuous):
+                raise ContinuousInterfaceAttributeError(self.class_, path)
+            result.append(InterfaceAttribute(variable, path, feature._type_))
+        return result
 
     @staticmethod
     def _class_of(instances: list[Any], class_: type | None) -> type:
@@ -494,7 +671,8 @@ class RelationalProbabilisticCircuit:
         """
         :param query: A query this circuit is grounded for.
         :return: What the structure of the grounding depends on: the aggregation
-            statistics and query parts of every exchangeable relation. Queries of the
+            statistics, the given interface attributes and query parts of every
+            exchangeable relation. Queries of the
             same shape are grounded into circuits that differ only in the names of their
             variables and, for sampled statistics, in the samples.
         """
@@ -506,6 +684,14 @@ class RelationalProbabilisticCircuit:
                     compute_aggregation_statistics(
                         instance, exchangeable_part_name, template.latent_variables
                     ).items()
+                ),
+                tuple(
+                    (
+                        attribute.value_of(instance)
+                        if attribute.is_determined_by(instance)
+                        else None
+                    )
+                    for attribute in template.interface_attributes
                 ),
                 tuple(
                     template.template_distribution.query_shape(part)

@@ -17,6 +17,7 @@ from typing_extensions import TYPE_CHECKING, Any, Generic, TypeVar
 from krrood.parametrization.feature_extraction.aggregations import (
     compute_aggregation_statistics,
 )
+from krrood.parametrization.feature_extraction.exposures import exposure_class_of
 from krrood.patterns.subclass_safe_generic import SubClassSafeGeneric
 from probabilistic_model.probabilistic_model import PartialPointType
 from probabilistic_model.probabilistic_circuit.groundable_circuit import (
@@ -420,11 +421,28 @@ class ExchangeablePartGrounder(Generic[NodeType], SubClassSafeGeneric):
         unique_rows = {tuple(row) for row in samples.tolist()}
         return [
             {
-                variable: row[index_of_variable[variable]]
+                variable: self._value_of_sample(
+                    variable, row[index_of_variable[variable]]
+                )
                 for variable in self.undetermined_latents
             }
             for row in (np.array(unique_row) for unique_row in unique_rows)
         ]
+
+    @staticmethod
+    def _value_of_sample(variable: Variable, sample: float) -> Any:
+        """
+        :param variable: A sampled variable.
+        :param sample: What a sample holds for it, the hash of the element for a
+            symbolic variable.
+        :return: The value the sample stands for.
+        """
+        if variable.is_numeric:
+            return sample
+        return {
+            float(element_hash): element
+            for element_hash, element in variable.domain.hash_map.items()
+        }[sample]
 
     def _node_local_latent_log_likelihoods(
         self, node: NodeType, latent_assignments: list[PartialPointType]
@@ -438,7 +456,16 @@ class ExchangeablePartGrounder(Generic[NodeType], SubClassSafeGeneric):
         subcircuit = self.circuit.subcircuit_at(node)
         subcircuit.marginal_in_place(self.undetermined_latents)
         index_of_variable = subcircuit.variable_to_index_map
-        events = np.full((len(latent_assignments), len(index_of_variable)), np.nan)
+        # an object array holds a symbolic value itself, whose hash its leaf looks up
+        events = np.full(
+            (len(latent_assignments), len(index_of_variable)),
+            np.nan,
+            dtype=(
+                float
+                if all(variable.is_numeric for variable in self.undetermined_latents)
+                else object
+            ),
+        )
         for row, assignment in enumerate(latent_assignments):
             for variable, value in assignment.items():
                 events[row, index_of_variable[variable]] = value
@@ -608,6 +635,10 @@ class RelationalGrounding:
             variable: value
             for variable, value in aggregation_statistics.items()
             if self._is_concrete_statistic(variable, value)
+        } | {
+            attribute.variable: attribute.value_of(instance)
+            for attribute in template.interface_attributes
+            if attribute.is_determined_by(instance)
         }
         undetermined_latents = SortedSet(
             variable
@@ -621,12 +652,55 @@ class RelationalGrounding:
             circuit=circuit,
             template=template,
             part_templates=template.grounded_templates_of_parts(
-                query._kwargs_[exchangeable_part_name], nested_grounding.ground
+                query._kwargs_[exchangeable_part_name],
+                nested_grounding.ground,
+                self._determined_exposures(
+                    template, exchangeable_part_name, query, instance
+                ),
             ),
             determined_statistics=determined_statistics,
             undetermined_latents=undetermined_latents,
             monte_carlo_sample_count=self.relational_circuit.monte_carlo_sample_count,
         )
+
+    @staticmethod
+    def _determined_exposures(
+        template: ExchangeableDistributionTemplate,
+        exchangeable_part_name: str,
+        query: Match,
+        instance: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        :param template: The fitted template of the relation.
+        :param exchangeable_part_name: Field name of the exchangeable relation.
+        :param query: The grounding query.
+        :param instance: The instance constructed from the query.
+        :return: Per part of the query, the exposure statistics it determines: those
+            whose inputs it gives and that it does not mark itself.
+        """
+        result = []
+        for part_query, part in zip(
+            query._kwargs_[exchangeable_part_name],
+            getattr(instance, exchangeable_part_name),
+        ):
+            exposure_class = exposure_class_of(type(part))
+            values = (
+                {}
+                if exposure_class is None
+                else exposure_class(role_taker=part, instance=instance).values(
+                    exchangeable_part_name
+                )
+            )
+            result.append(
+                {
+                    name: value
+                    for name, value in values.items()
+                    if name in template.exposure_names
+                    and value is not ...
+                    and name not in part_query._kwargs_
+                }
+            )
+        return result
 
     @staticmethod
     def _is_concrete_statistic(variable: Variable, value: Any) -> bool:

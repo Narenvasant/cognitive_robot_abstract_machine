@@ -41,7 +41,9 @@ class HasFactoryAndKwargs(Generic[T]):
 
     def construct_instance(self) -> T:
         """
-        Construct a python object from the CallableAndKwargs instance.
+        Construct a python object from the CallableAndKwargs instance. A nested instance
+        that appears more than once, such as a part a pair refers to, is constructed
+        once, so every reference to it is the same object.
 
         ..note:: This method may work with ellipsis, but it's not guaranteed to work with all types.
 
@@ -49,18 +51,29 @@ class HasFactoryAndKwargs(Generic[T]):
         :raises KeywordNamesNoFactoryParameter: If a keyword argument names no parameter
             of :attr:`_factory_` and is not kept out of construction.
         """
+        return self._construct_instance_once_({})
+
+    def _construct_instance_once_(self, constructed: dict[int, Any]) -> T:
+        """
+        :param constructed: The objects already constructed in this construction, by
+            the identity of what they were constructed from.
+        :return: The constructed object, the one already constructed if there is one.
+        """
+        if id(self) in constructed:
+            return constructed[id(self)]
         constructed_kwargs = {}
         for key, value in self._factory_keyword_arguments_.items():
             if isinstance(value, CollectionKind.ELEMENT_SEQUENCE.value):
                 constructed_kwargs[key] = type(value)(
-                    self._recurse_construct_instance_and_get_value(element)
+                    self._recurse_construct_instance_and_get_value(element, constructed)
                     for element in value
                 )
             else:
                 constructed_kwargs[key] = (
-                    self._recurse_construct_instance_and_get_value(value)
+                    self._recurse_construct_instance_and_get_value(value, constructed)
                 )
-        return self._factory_(**constructed_kwargs)
+        constructed[id(self)] = self._factory_(**constructed_kwargs)
+        return constructed[id(self)]
 
     @property
     def _factory_keyword_arguments_(self) -> dict[str, Any]:
@@ -136,15 +149,18 @@ class HasFactoryAndKwargs(Generic[T]):
         """
         return False
 
-    def _recurse_construct_instance_and_get_value(self, value: Any):
+    def _recurse_construct_instance_and_get_value(
+        self, value: Any, constructed: dict[int, Any]
+    ):
         """
         Recursively construct an instance and return it.
 
         :param value: The value to construct.
+        :param constructed: The objects already constructed in this construction.
         :return: The constructed instance.
         """
         if isinstance(value, HasFactoryAndKwargs):
-            return value.construct_instance()
+            return value._construct_instance_once_(constructed)
         return value
 
     def __deepcopy__(self, memo):
