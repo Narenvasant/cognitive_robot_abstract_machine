@@ -14,11 +14,12 @@ from __future__ import annotations
 import logging
 import math
 from functools import cached_property
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any, Callable
 
 import numpy as np
+import trimesh
 
 from coraplex.datastructures.dataclasses import Context
 from krrood.ormatic.utils import classproperty
@@ -52,7 +53,11 @@ from semantic_digital_twin.spatial_types.spatial_types import (
     Pose,
 )
 from semantic_digital_twin.world import World
-from semantic_digital_twin.world_description.geometry import VolumetricBoundingBox
+from semantic_digital_twin.world_description.geometry import (
+    Mesh,
+    VolumetricBoundingBox,
+)
+from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger(__name__)
@@ -194,6 +199,14 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     rested_at: np.ndarray | None = field(default=None, init=False)
     """
     Where the middle of the object sat when the kitchen was composed.
+    """
+
+    collides_as_its_convex_hull: bool = False
+    """
+    Whether the object collides as the convex hull of its collision pieces: RoboCasa
+    builds food out of overlapping convex pieces, and a finger pad squeezed between two
+    of them is held there once the hand opens, carrying the object off with it. An
+    object grasped by a rim it is hollow under, such as a bowl, keeps its pieces.
     """
 
     minimum_lift: float = 0.05
@@ -677,13 +690,48 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
 
     def prepare_contacts(self) -> None:
         """
-        Have the object's contacts resolve the twisting and rolling friction it is
-        given, so it neither turns in the hand nor rolls on once it is let go.
+        Have the object collide as its convex hull where
+        :attr:`collides_as_its_convex_hull` asks for it, and have its contacts resolve
+        the twisting and rolling friction it is given, so it neither turns in the hand
+        nor rolls on once it is let go.
         """
+        if self.collides_as_its_convex_hull:
+            self.collide_as_the_convex_hull(self.food.root)
         for shape in self.food.root.collision.shapes:
             shape.get_simulator_property_of_type(MujocoGeom).contact_dimensionality = (
                 ContactDimensionality.SLIDING_TWISTING_AND_ROLLING
             )
+
+    def collide_as_the_convex_hull(self, body: Body) -> None:
+        """
+        Replace the collision pieces of the body with their convex hull, which keeps
+        the simulator properties of the first piece.
+
+        :param body: A body with collision geometry.
+        """
+        hull = self.convex_hull_of(body)
+        hull.simulator_additional_properties = [
+            replace(simulator_property)
+            for simulator_property in body.collision.shapes[
+                0
+            ].simulator_additional_properties
+        ]
+        with self.world.modify_world():
+            body.collision = ShapeCollection([hull], reference_frame=body)
+
+    @staticmethod
+    def convex_hull_of(body: Body) -> Mesh:
+        """
+        :param body: A body with collision geometry.
+        :return: The convex hull of all of its collision geometry, in the body's frame.
+        """
+        pieces = trimesh.util.concatenate(
+            [shape.mesh_in_frame(body) for shape in body.collision.shapes]
+        )
+        return Mesh.from_trimesh(
+            pieces.convex_hull,
+            origin=HomogeneousTransformationMatrix(reference_frame=body),
+        )
 
 
 # %% the tasks
@@ -959,23 +1007,55 @@ class MoveAlongTheCounter(PickPlaceCounterToSink):
         """
         return float(self.counter.top.max_z)
 
+    @property
+    def counter_direction(self) -> np.ndarray:
+        """
+        :return: The unit vector the object is moved along the counter in: along x
+            where the piece of counter under it reaches at least as far along y as
+            along x, otherwise along y.
+        """
+        top = self.counter.top
+        direction = np.zeros(3)
+        direction[0 if top.width >= top.depth else 1] = 1.0
+        return direction
+
+    def release_shifts(self) -> tuple[float, ...]:
+        """
+        :return: How far along the counter from where it lay the object may be set
+            down, in metres, in the order they are tried.
+        """
+        return self.shifts
+
     def release_points(self) -> list[np.ndarray]:
         """
         :return: The places along the counter the object may be set down at, centred,
-            at :attr:`shifts` from where it lay.
+            at :meth:`release_shifts` from where it lay, leaving out those not over the
+            top of the counter, such as over a sink set into it.
         """
-        top = self.counter.top
-        along = np.zeros(3)
-        along[0 if top.width >= top.depth else 1] = 1.0
         height = (
             self.release_height
             + self.extent(self.food.root).height / 2
             + self.drop_from
         )
-        return [
-            np.array([*(self.rested_at[:2] + shift * along[:2]), height])
-            for shift in self.shifts
+        places = [
+            np.array(
+                [*(self.rested_at[:2] + shift * self.counter_direction[:2]), height]
+            )
+            for shift in self.release_shifts()
         ]
+        return [place for place in places if self.is_over_the_counter_top(place)]
+
+    def is_over_the_counter_top(self, place: np.ndarray) -> bool:
+        """
+        :param place: A point in the kitchen's frame.
+        :return: Whether a piece of the counter at the height of its top lies under it.
+        """
+        return any(
+            piece.min_x <= place[0] <= piece.max_x
+            and piece.min_y <= place[1] <= piece.max_y
+            and abs(piece.max_z - self.counter.top.max_z) <= self.contact_tolerance
+            for piece in self.receptacle_pieces
+        )
 
     @property
     def task_is_done(self) -> bool:

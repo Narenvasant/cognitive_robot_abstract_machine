@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from experiments.tiago_robocasa.composite import OrganizeSmallFruit
+from experiments.tiago_robocasa.pick_place import TiagoPickPlaceTask
 from semantic_digital_twin.datastructures.prefixed_name import PrefixedName
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
@@ -44,7 +44,7 @@ def test_the_hull_of_a_body_reaches_as_far_as_its_pieces_do():
     )
     turned_reach = turned_edge / math.sqrt(2)
 
-    hull = OrganizeSmallFruit.convex_hull_of(body).mesh
+    hull = TiagoPickPlaceTask.convex_hull_of(body).mesh
 
     assert hull.is_convex
     assert hull.bounds.tolist() == [

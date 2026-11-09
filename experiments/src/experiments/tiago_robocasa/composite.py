@@ -19,7 +19,6 @@ from enum import StrEnum
 from functools import cached_property
 
 import numpy as np
-import trimesh
 from typing_extensions import Callable
 
 from coraplex.datastructures.dataclasses import Context
@@ -45,8 +44,6 @@ from semantic_digital_twin.semantic_annotations.semantic_annotations import Coun
 from semantic_digital_twin.spatial_types.spatial_types import (
     HomogeneousTransformationMatrix,
 )
-from semantic_digital_twin.world_description.geometry import Mesh
-from semantic_digital_twin.world_description.shape_collection import ShapeCollection
 from semantic_digital_twin.world_description.world_entity import Body
 
 logger = logging.getLogger(__name__)
@@ -323,10 +320,18 @@ class MoveOffTheTray(MoveAlongTheCounter):
     metres.
     """
 
-    shifts: tuple[float, ...] = (0.45, -0.45, 0.35, -0.35)
+    tray_clearance: float = 0.03
     """
-    How far along the counter from where it lay the object may be set down, in
-    metres, the first the arm reaches being taken: past the edge of a baking tray.
+    How far past the tray's edge the side of the object is set down, in metres.
+    """
+
+    collides_as_its_convex_hull: bool = True
+
+    base_follows_the_arm: bool = True
+    """
+    The base comes along while the hand carries the object past the tray's edge: a
+    place there within reach on paper is one the arm, holding the object, stalls short
+    of in the physics.
     """
 
     counter_contact: float = 0.01
@@ -346,6 +351,19 @@ class MoveOffTheTray(MoveAlongTheCounter):
             super().task_is_done
             and underside - self.counter.top.max_z <= self.counter_contact
         )
+
+    def release_shifts(self) -> tuple[float, ...]:
+        """
+        :return: The shifts along the counter that set the object down just past
+            either end of the tray, the nearer first.
+        """
+        along_x = bool(self.counter_direction[0])
+        tray = self.extent(self.world.get_body_by_name(self.tray_name))
+        food = self.extent(self.food.root)
+        lower, upper = (tray.min_x, tray.max_x) if along_x else (tray.min_y, tray.max_y)
+        reach = (food.depth if along_x else food.width) / 2 + self.tray_clearance
+        centre = self.rested_at[0 if along_x else 1]
+        return tuple(sorted((upper + reach - centre, lower - reach - centre), key=abs))
 
     @property
     def handled_bodies(self) -> list[Body]:
@@ -452,6 +470,8 @@ class PutOnACuttingBoard(TiagoPickPlaceTask):
     object let go short of the middle of a board by more than this lands beside it.
     """
 
+    collides_as_its_convex_hull: bool = True
+
 
 # %% the tasks
 
@@ -548,42 +568,6 @@ class OrganizeSmallFruit(OrganizeVegetables):
             replace(step, arrival_tolerance=self.arrival_tolerance)
             for step in super().step_sequence()
         ]
-
-    def prepare_contacts(self) -> None:
-        """
-        Have every piece of fruit collide as the convex hull of its pieces, then set up
-        the contacts each step asks for.
-
-        RoboCasa builds a piece of fruit out of overlapping convex pieces, and a finger
-        pad squeezed between two of them is held there once the hand opens, carrying
-        the fruit off with it.
-        """
-        with self.world.modify_world():
-            for step in self.steps:
-                fruit = step.food.root
-                hull = self.convex_hull_of(fruit)
-                hull.simulator_additional_properties = [
-                    replace(simulator_property)
-                    for simulator_property in fruit.collision.shapes[
-                        0
-                    ].simulator_additional_properties
-                ]
-                fruit.collision = ShapeCollection([hull], reference_frame=fruit)
-        super().prepare_contacts()
-
-    @staticmethod
-    def convex_hull_of(body: Body) -> Mesh:
-        """
-        :param body: A body with collision geometry.
-        :return: The convex hull of all of its collision geometry, in the body's frame.
-        """
-        pieces = trimesh.util.concatenate(
-            [shape.mesh_in_frame(body) for shape in body.collision.shapes]
-        )
-        return Mesh.from_trimesh(
-            pieces.convex_hull,
-            origin=HomogeneousTransformationMatrix(reference_frame=body),
-        )
 
     @classproperty
     def task_name(cls) -> str:
