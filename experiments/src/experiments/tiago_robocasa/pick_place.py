@@ -789,6 +789,21 @@ class PickPlaceCounterToSink(TiagoPickPlaceTask):
         """
         return float(self.extent(self.receptacle).max_z)
 
+    @property
+    def object_is_in_the_receptacle(self) -> bool:
+        """
+        :return: Whether the middle of the object lies below the sink's rim and above a
+            piece of the sink: in one of its basins, whether it rests on the floor or
+            leans against a wall.
+        """
+        here = self.extent(self.food.root).center.to_np()[:3]
+        return here[2] < self.release_height and any(
+            piece.min_x <= here[0] <= piece.max_x
+            and piece.min_y <= here[1] <= piece.max_y
+            and piece.max_z < here[2]
+            for piece in self.receptacle_pieces
+        )
+
 
 @dataclass
 class PickPlaceCounterToStove(TiagoPickPlaceTask):
@@ -999,6 +1014,14 @@ class MoveAlongTheCounter(PickPlaceCounterToSink):
         :return: The counter the object lies on.
         """
         return self.counter.body
+
+    @property
+    def object_is_in_the_receptacle(self) -> bool:
+        """
+        :return: As :attr:`TiagoPickPlaceTask.object_is_in_the_receptacle`: the object
+            rests on the counter, which has no basin to fall into.
+        """
+        return TiagoPickPlaceTask.object_is_in_the_receptacle.fget(self)
 
     @property
     def release_height(self) -> float:

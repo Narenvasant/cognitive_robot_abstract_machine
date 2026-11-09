@@ -669,9 +669,12 @@ class TiagoRoboCasaTask(ABC):
     def drive_to(self, stand: Pose) -> list[NavigateAction]:
         """
         :param stand: Where Tiago is to end up.
-        :return: Driving there from where it stands, along :meth:`legs_between`.
+        :return: Driving there from where it stands, along :meth:`legs_between`, or
+            nothing if Tiago already stands there.
         :raises NoWayToTheStand: If the free space holds no way there.
         """
+        if np.allclose(stand.to_np(), self.stands_at.to_np()):
+            return []
         legs = self.legs_between(self.floor_plan(), self.stands_at, stand)
         if legs is None:
             raise NoWayToTheStand(stand=stand)
