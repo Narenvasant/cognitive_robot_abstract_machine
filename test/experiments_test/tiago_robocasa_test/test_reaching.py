@@ -17,7 +17,8 @@ import numpy as np
 from typing_extensions import Iterator
 
 from coraplex.robot_plans.motions.robot_body import MoveJointsMotion
-from experiments.tiago_robocasa.composite import CupcakeCleanup
+from experiments.tiago_robocasa.composite import CupcakeCleanup, DefrostByCategory
+from experiments.tiago_robocasa.exceptions import NoReachableStandingPose
 from experiments.tiago_robocasa.pick_place import PickPlaceCounterToSink
 from experiments.tiago_robocasa.robocasa_task import TiagoRoboCasaTask
 from robocasa.models.scenes.scene_registry import LayoutType
@@ -58,6 +59,34 @@ def states_along(
                 joint.position = position
             task.world.notify_state_change()
             yield
+
+
+def closest_to_the_margin(
+    task: TiagoRoboCasaTask, reach: list[MoveJointsMotion]
+) -> float:
+    """
+    :param task: A task whose kitchen is composed, Tiago standing where it reaches from.
+    :param reach: The motions, in order.
+    :return: How far outside the margin the collision avoidance holds it to Tiago comes
+        closest to the kitchen along the reach, in metres; negative inside it.
+    """
+    robot = set(task.robot.bodies_with_collision)
+    collision_manager = task.world.collision_manager
+    closest = np.inf
+    for _ in states_along(task, reach):
+        closest = min(
+            closest,
+            *(
+                contact.distance
+                - collision_manager.get_buffer_zone_distance(
+                    contact.body_a, contact.body_b
+                )
+                for contact in collision_manager.compute_collisions().contacts
+                if (contact.body_a in robot) != (contact.body_b in robot)
+            ),
+            np.inf,
+        )
+    return closest
 
 
 # %% the way to the object
@@ -155,23 +184,26 @@ def test_the_arm_keeps_the_margin_the_collision_avoidance_holds_it_to():
     task.seed = 52
     task.build_world()
     [step, _] = task.steps
-    reach = reach_to_the_pre_grasp(step)
-    robot = set(step.robot.bodies_with_collision)
-    collision_manager = task.world.collision_manager
 
-    closest = np.inf
-    for _ in states_along(step, reach):
-        closest = min(
-            closest,
-            *(
-                contact.distance
-                - collision_manager.get_buffer_zone_distance(
-                    contact.body_a, contact.body_b
-                )
-                for contact in collision_manager.compute_collisions().contacts
-                if (contact.body_a in robot) != (contact.body_b in robot)
-            ),
-            np.inf,
+    assert closest_to_the_margin(step, reach_to_the_pre_grasp(step)) > 0.0
+
+
+def test_an_object_reached_only_inside_the_margin_is_refused():
+    """
+    The first frozen vegetable of this kitchen lies in the counter's corner, and every
+    way to it from a stand clear of the kitchen passes the wall cabinets inside the
+    margin the collision avoidance holds the arm to: the plan is refused instead of
+    stalling there.
+    """
+    task = DefrostByCategory()
+    task.layout = LayoutType.LAYOUT001
+    task.seed = 1
+    task.build_world()
+    step = task.steps[2]
+    step.park_the_arms()
+    step.grasp_taken = step.grasp()
+
+    with pytest.raises(NoReachableStandingPose):
+        step.drive_to_where_the_hand_arrives(
+            step.reaches_the_pre_grasp, preferred=step.can_let_go_over_the_receptacle
         )
-
-    assert closest > 0.0

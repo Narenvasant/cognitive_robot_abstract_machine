@@ -1229,7 +1229,7 @@ class TiagoRoboCasaTask(ABC):
         """
         :param reach: Motions in joint space, in order.
         :return: Whether the hand stays between :attr:`lowest_hand_height` and the top
-            of the head, and nothing :meth:`collides`, while each motion moves its joints
+            of the head, and Tiago never :meth:`comes_too_close`, while each motion moves its joints
             straight to their goals, from where they are now.
         """
         tool_frame = self.arm.end_effector.tool_frame
@@ -1251,22 +1251,35 @@ class TiagoRoboCasaTask(ABC):
                     )[2, 3]
                     if (
                         not self.lowest_hand_height <= height <= ceiling
-                        or self.collides()
+                        or self.comes_too_close()
                     ):
                         return False
         return True
 
-    def collides(self) -> bool:
+    def comes_too_close(self) -> bool:
         """
-        :return: Whether a part of Tiago reaches into another part of it or into anything
-            in the kitchen it is not allowed to touch.
+        :return: Whether a part of Tiago reaches into another part of it, or comes
+            within the margin the collision avoidance holds it to of anything in the
+            kitchen it is not allowed to touch: a plan that passes inside that margin
+            stalls there.
         """
+        collision_manager = self.world.collision_manager
         robot_bodies = set(self.robot.bodies_with_collision)
-        return any(
-            contact.distance < 0.0
-            for contact in self.world.collision_manager.compute_collisions().contacts
-            if contact.body_a in robot_bodies or contact.body_b in robot_bodies
-        )
+        for contact in collision_manager.compute_collisions().contacts:
+            touches_a = contact.body_a in robot_bodies
+            touches_b = contact.body_b in robot_bodies
+            if not (touches_a or touches_b):
+                continue
+            margin = (
+                0.0
+                if touches_a and touches_b
+                else collision_manager.get_buffer_zone_distance(
+                    contact.body_a, contact.body_b
+                )
+            )
+            if contact.distance < margin:
+                return True
+        return False
 
     @property
     def arm_joints(self) -> list[ActiveConnection1DOF]:
