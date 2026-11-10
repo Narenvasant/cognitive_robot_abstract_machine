@@ -183,6 +183,12 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
     reaches above a release it may already be at full stretch for.
     """
 
+    release_stands_to_try: int = 15
+    """
+    How many stands clear of the kitchen are tried, nearest first, to let the object
+    go from when the arm does not reach the receptacle from where it picked it up.
+    """
+
     places_to_try: int = 4
     """
     How many of the places over the receptacle are tried from each stand, nearest
@@ -450,6 +456,7 @@ class TiagoPickPlaceTask(TiagoRoboCasaTask):
             self.receptacle_floor.center.to_np()[:3],
             self.placing_reach,
             headings=self.headings_to_face_the_receptacle,
+            clear_limit=self.release_stands_to_try,
         )
         if search.stand is None:
             raise NoPlaceToLetGo(

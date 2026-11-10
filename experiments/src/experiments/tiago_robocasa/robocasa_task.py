@@ -832,6 +832,7 @@ class TiagoRoboCasaTask(ABC):
         target: np.ndarray | None = None,
         reach: float | None = None,
         headings: tuple[float, ...] | None = None,
+        clear_limit: int | None = None,
     ) -> StandSearch:
         """
         Move Tiago among the clear stands until the arm can do what the task needs, and
@@ -849,6 +850,8 @@ class TiagoRoboCasaTask(ABC):
         :param reach: How far in front of the base that target is to be, or nothing for
             the task's own.
         :param headings: Which ways to try facing, or nothing for the task's own.
+        :param clear_limit: How many stands clear of the kitchen are tried at most, or
+            nothing for all of them.
         :return: What the search found.
         """
         target = self.first_target if target is None else target
@@ -863,6 +866,8 @@ class TiagoRoboCasaTask(ABC):
             drive.origin = stand.homogeneous_matrix
             if not self.keeps_clear_of_the_kitchen():
                 continue
+            if clear == clear_limit:
+                break
             clear += 1
             if arrives():
                 return StandSearch(

@@ -86,3 +86,25 @@ def test_a_floor_the_object_barely_fits_on_is_let_go_at_over_its_middle():
     task = PickPlaceCounterToSink()
 
     assert task.places_across(0.2, 0.3, inset=0.2) == [pytest.approx(0.25)]
+
+
+# %% how far a search goes
+
+
+def test_a_search_tries_no_more_clear_stands_than_its_limit():
+    """
+    Every clear stand costs the arm a solve, so a search given a limit gives up after
+    that many.
+    """
+    task = PickPlaceCounterToSink()
+    task.build_world()
+    task.park_the_arms()
+    tried = []
+
+    def never_arrives() -> bool:
+        tried.append(task.stands_at)
+        return False
+
+    search = task.stand_that_reaches(never_arrives, clear_limit=3)
+
+    assert (search.stand, search.clear, len(tried)) == (None, 3, 3)
